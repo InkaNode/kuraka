@@ -1,3 +1,4 @@
 credentials*.txt
 *.local.*
 .env
+bin/
