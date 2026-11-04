@@ -43,6 +43,7 @@ Type: system UI stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
 | `#/users` | superadmin | table + create/edit (role, tenant, disable, reset password) |
 | `#/audit` | all | table: time, user, action, target, result badge, IP; "load more" |
 | `#/account` | all | change password; enable/disable two-step verification with QR code |
+| `#/docs` | all | bilingual documentation, table of contents, section links via `?s=<id>` |
 
 Layout: left sidebar (logo "Kuraka", nav, language switch, user menu with logout), content area with page title and primary action on the right. Footer line: "Powered by InkaNode".
 

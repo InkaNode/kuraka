@@ -16,6 +16,8 @@ First release, planned as 0.1.0.
 - Alert emails to enabled superadmins from the mailbox in `KURAKA_ALERT_EMAIL_FROM`.
 - Multi-tenant JSON API on top of Stalwart's JMAP management API: tenants, users, domains, alias domains, mailboxes, aliases, quotas. Tenant isolation enforced in one place (`internal/authz`).
 - Embedded web panel in Spanish and English.
+- Guided domain setup: one "Add domain" form that can create the tenant inline and imports domains that already exist in Stalwart (API error code `domain_in_stalwart`), then a "Getting started" checklist on the domain page.
+- In-app documentation page (`#/docs`).
 - Authentication with argon2id passwords, sessions, CSRF/Origin checks, login rate limiting and TOTP two-factor authentication.
 - Audit log of every mutating action, including denied attempts.
 - Cloudflare DNS: plan, apply and check the records Stalwart requires, conflict detection, alias-domain records and web redirects.
