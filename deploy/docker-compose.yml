@@ -31,7 +31,9 @@ services:
 
   stalwart:
     # Pinned: update together with InkaNode/stalwart-webui (CI also tests v1).
-    image: stalwartlabs/stalwart:v1.0.2
+    # Integrations > Updates sets STALWART_VERSION in deploy/.env; keep the
+    # default here in sync with KURAKA_STALWART_VERSION below.
+    image: stalwartlabs/stalwart:${STALWART_VERSION:-v1.0.2}
     restart: unless-stopped
     # SMTP, SMTPS and IMAPS only. The HTTP listener (8080) stays on the
     # private network: Caddy proxies the public paths, Kuraka uses JMAP.
@@ -43,6 +45,9 @@ services:
       # Only needed for the first setup. Remove it from .env afterwards and
       # run `docker compose up -d stalwart`.
       STALWART_RECOVERY_ADMIN: ${STALWART_RECOVERY_ADMIN:-}
+      # Set to true only for the first start after an update, by
+      # deploy/apply-updates.sh: adds new permissions to the default roles.
+      STALWART_UPDATE_ROLE_PERMISSIONS: ${STALWART_UPDATE_ROLE_PERMISSIONS:-}
     volumes:
       - stalwart_etc:/etc/stalwart
       - stalwart_data:/var/lib/stalwart
@@ -65,8 +70,10 @@ services:
       KURAKA_ALERT_WEBHOOK_URL: ${KURAKA_ALERT_WEBHOOK_URL:-}
       KURAKA_ALERT_EMAIL_FROM: ${KURAKA_ALERT_EMAIL_FROM:-}
       KURAKA_MAIL_HOST: ${MAIL_HOST}
-      # Libredesk update requests, applied on the host by kuraka-updates.timer.
+      # Stalwart and Libredesk update requests, applied on the host by
+      # kuraka-updates.timer.
       KURAKA_UPDATES_DIR: /updates
+      KURAKA_STALWART_VERSION: ${STALWART_VERSION:-v1.0.2}
     volumes:
       - kuraka_data:/data
       - ./updates:/updates

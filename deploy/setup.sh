@@ -143,12 +143,13 @@ load_env() {
   [[ $MAIL_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "MAIL_HOST must be a plain hostname"
 }
 
-# Kuraka asks for Libredesk updates by writing files in deploy/updates; this
-# timer applies them as root, so Kuraka never needs the Docker socket.
+# Kuraka asks for Stalwart and Libredesk updates by writing files in
+# deploy/updates; this timer applies them as root, so Kuraka never needs the
+# Docker socket.
 install_update_timer() {
   install -d -m 0750 -o "$KURAKA_UID" -g "$KURAKA_UID" "$DEPLOY_DIR/updates"
   if ! command -v systemctl >/dev/null; then
-    warn "systemctl not found: Libredesk updates from Kuraka need $DEPLOY_DIR/apply-updates.sh run as root every minute"
+    warn "systemctl not found: Stalwart and Libredesk updates from Kuraka need $DEPLOY_DIR/apply-updates.sh run as root every minute"
     return 0
   fi
   chmod 700 "$DEPLOY_DIR/apply-updates.sh"
