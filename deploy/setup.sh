@@ -280,6 +280,19 @@ main() {
     env_set KURAKA_STALWART_API_KEY "$secret"
     unset resp secret
     log "API key stored as KURAKA_STALWART_API_KEY in deploy/.env"
+
+    # All web traffic comes from Caddy: trust the internal network so Stalwart
+    # never bans the proxy, and read the visitor's IP from X-Forwarded-For.
+    log "trusting the internal network in Stalwart"
+    body=$(jq -nc --argjson using "$USING" --arg subnet "$SUBNET" '
+      {using: $using, methodCalls: [
+        ["x:AllowedIp/set", {create: {a: {address: $subnet}}}, "a"],
+        ["x:Http/set", {update: {singleton: {clientIpSource: "xForwardedFor"}}}, "h"],
+        ["x:Action/set", {create: {s: {"@type": "ReloadSettings"}, b: {"@type": "ReloadBlockedIps"}}}, "r"]]}')
+    resp=$(jmap "$admin" "$body") &&
+      jq -e '[.methodResponses[] | select(.[0] == "x:AllowedIp/set") | .[1].created.a] | first' <<<"$resp" >/dev/null &&
+      jq -e '[.methodResponses[] | select(.[0] == "x:Http/set") | .[1].updated | has("singleton")] | first' <<<"$resp" >/dev/null ||
+      die "could not trust the internal network ($(jmap_error "${resp:-}" a a); $(jmap_error "${resp:-}" h singleton))"
   fi
 
   # Web interface from the InkaNode fork: it hides the views Kuraka manages.
