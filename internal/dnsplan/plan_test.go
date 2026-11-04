@@ -78,9 +78,7 @@ func TestPlan(t *testing.T) {
 			if len(got) != len(tt.ops) {
 				t.Fatalf("got %d changes, want %d", len(got), len(tt.ops))
 			}
-			wantCounts := map[Op]int{}
 			for i, c := range got {
-				wantCounts[tt.ops[i]]++
 				if c.Op != tt.ops[i] || c.Desired != tt.desired[i] {
 					t.Errorf("change %d = %+v, want %s for %+v", i, c, tt.ops[i], tt.desired[i])
 				}
@@ -98,9 +96,6 @@ func TestPlan(t *testing.T) {
 				if len(c.Conflicts) != len(conflicts) || (len(conflicts) > 0 && !reflect.DeepEqual(c.Conflicts, conflicts)) {
 					t.Errorf("conflicts = %+v, want %+v", c.Conflicts, conflicts)
 				}
-			}
-			if counts := Summary(got); !reflect.DeepEqual(counts, wantCounts) {
-				t.Errorf("Summary = %v, want %v", counts, wantCounts)
 			}
 			if !reflect.DeepEqual(tt.actual, before) {
 				t.Fatal("Plan modified actual")

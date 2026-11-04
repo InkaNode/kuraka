@@ -102,14 +102,6 @@ func Plan(desired []stalwart.Record, actual []Existing) []Change {
 	return out
 }
 
-func Summary(changes []Change) map[Op]int {
-	counts := make(map[Op]int)
-	for _, c := range changes {
-		counts[c.Op]++
-	}
-	return counts
-}
-
 func recordType(s string) string { return strings.ToUpper(s) }
 
 func dnsName(s string) string { return strings.ToLower(strings.TrimRight(s, ".")) }

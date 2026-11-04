@@ -118,7 +118,7 @@ func TestHTTPErrorProblemJSON(t *testing.T) {
 		w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"You are not allowed"}`))
 	}))
 	defer srv.Close()
-	_, err := New(srv.URL, testKey).ListDomains(context.Background())
+	_, err := New(srv.URL, testKey).GetDomain(context.Background(), "d1")
 	var he *HTTPError
 	if !errors.As(err, &he) {
 		t.Fatalf("err = %v, want *HTTPError", err)

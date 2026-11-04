@@ -7,19 +7,6 @@ import (
 
 const objDomain = "x:Domain"
 
-// ListDomains returns every domain.
-func (c *Client) ListDomains(ctx context.Context) ([]Domain, error) {
-	ws, err := queryGet[wireDomain](ctx, c, objDomain, nil)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Domain, 0, len(ws))
-	for _, w := range ws {
-		out = append(out, w.domain())
-	}
-	return out, nil
-}
-
 // GetDomain returns the domain with the given id, or ErrNotFound.
 func (c *Client) GetDomain(ctx context.Context, id string) (Domain, error) {
 	w, err := getOne[wireDomain](ctx, c, objDomain, id)

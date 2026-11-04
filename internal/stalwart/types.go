@@ -2,10 +2,12 @@ package stalwart
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
+	"maps"
 	"slices"
-	"sort"
 	"strconv"
+	"strings"
 )
 
 // Account kinds, from the wire "@type".
@@ -87,45 +89,21 @@ func (l list[T]) MarshalJSON() ([]byte, error) {
 }
 
 func (l *list[T]) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	switch {
-	case bytes.Equal(b, []byte("null")):
-		*l = nil
-		return nil
-	case len(b) > 0 && b[0] == '[':
-		var s []T
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		*l = s
-		return nil
+	if b = bytes.TrimSpace(b); len(b) > 0 && b[0] == '[' {
+		return json.Unmarshal(b, (*[]T)(l))
 	}
 	var m map[string]T
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		a, errA := strconv.Atoi(keys[i])
-		c, errC := strconv.Atoi(keys[j])
-		switch {
-		case errA == nil && errC == nil:
-			return a < c
-		case errA == nil:
-			return true
-		case errC == nil:
-			return false
-		}
-		return keys[i] < keys[j]
+	// Shorter first orders decimal keys numerically ("2" before "10").
+	keys := slices.SortedFunc(maps.Keys(m), func(a, b string) int {
+		return cmp.Or(cmp.Compare(len(a), len(b)), strings.Compare(a, b))
 	})
-	out := make([]T, 0, len(keys))
+	*l = make(list[T], 0, len(keys))
 	for _, k := range keys {
-		out = append(out, m[k])
+		*l = append(*l, m[k])
 	}
-	*l = out
 	return nil
 }
 

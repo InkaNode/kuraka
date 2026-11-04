@@ -8,33 +8,6 @@ import (
 	"testing"
 )
 
-func TestListDomains(t *testing.T) {
-	c := newFake(t, func(calls []fakeCall) []any {
-		assertNames(t, calls, "x:Domain/query", "x:Domain/get")
-		assertJSON(t, "query args", calls[0].Args, `{}`)
-		assertJSON(t, "get args", calls[1].Args, fmt.Sprintf(idsRef, "x:Domain"))
-		return []any{
-			resp("x:Domain/query", "q", `{"ids":["d1","d2"]}`),
-			resp("x:Domain/get", "g", `{"list":[
-				{"id":"d1","name":"cliente1.test","aliases":{"b.test":true,"a.test":true,"off.test":false},
-				 "enable":true,"description":"Cliente 1","dnsZoneFile":"zone"},
-				{"id":"d2","name":"other.test","aliases":{},"enable":false,"description":null}
-			],"notFound":[]}`),
-		}
-	})
-	got, err := c.ListDomains(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []Domain{
-		{ID: "d1", Name: "cliente1.test", Aliases: []string{"a.test", "b.test"}, Enable: true, Description: "Cliente 1", ZoneFile: "zone"},
-		{ID: "d2", Name: "other.test", Aliases: []string{}},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v\nwant %+v", got, want)
-	}
-}
-
 func TestGetDomain(t *testing.T) {
 	c := newFake(t, func(calls []fakeCall) []any {
 		assertNames(t, calls, "x:Domain/get")
@@ -42,11 +15,15 @@ func TestGetDomain(t *testing.T) {
 			return []any{resp("x:Domain/get", "g", `{"list":[],"notFound":["missing"]}`)}
 		}
 		assertJSON(t, "get args", calls[0].Args, `{"ids":["d1"]}`)
-		return []any{resp("x:Domain/get", "g", `{"list":[{"id":"d1","name":"a.test","enable":true}],"notFound":[]}`)}
+		return []any{resp("x:Domain/get", "g", `{"list":[
+			{"id":"d1","name":"cliente1.test","aliases":{"b.test":true,"a.test":true,"off.test":false},
+			 "enable":true,"description":"Cliente 1","dnsZoneFile":"zone"}
+		],"notFound":[]}`)}
 	})
 	d, err := c.GetDomain(context.Background(), "d1")
-	if err != nil || d.ID != "d1" || d.Name != "a.test" || !d.Enable {
-		t.Fatalf("GetDomain = %+v, %v", d, err)
+	want := Domain{ID: "d1", Name: "cliente1.test", Aliases: []string{"a.test", "b.test"}, Enable: true, Description: "Cliente 1", ZoneFile: "zone"}
+	if err != nil || !reflect.DeepEqual(d, want) {
+		t.Fatalf("GetDomain = %+v, %v; want %+v", d, err, want)
 	}
 	if _, err := c.GetDomain(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing err = %v", err)
