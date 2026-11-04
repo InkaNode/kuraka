@@ -263,9 +263,23 @@ main() {
       fi
     fi
   fi
+  local metrics_set=0
+  if [[ -n $admin && -z $(env_get KURAKA_STALWART_METRICS_SECRET) ]]; then
+    secret=$(openssl rand -hex 24)
+    body=$(printf '%s' "$secret" | jq -Rsc --argjson using "$USING" '{using: $using, methodCalls: [["x:Metrics/set", {update: {singleton: {prometheus: {"@type": "Enabled", authUsername: "kuraka-metrics", authSecret: {"@type": "Value", secret: .}}}}}, "m"]]}')
+    if resp=$(jmap "$admin" "$body") &&
+      jq -e '.methodResponses[] | select(.[0] == "x:Metrics/set" and .[2] == "m") | .[1].updated | has("singleton")' <<<"$resp" >/dev/null; then
+      env_set KURAKA_STALWART_METRICS_SECRET "$secret"
+      metrics_set=1
+      log "Stalwart Prometheus metrics enabled"
+    else
+      die "could not enable metrics ($(jmap_error "${resp:-}" m singleton))"
+    fi
+    unset secret body resp
+  fi
   unset admin
-  # Stalwart serves a new web interface only after a restart.
-  if (( cert_created || webui_set )); then
+  # Certificates, the web interface and metrics need a Stalwart restart.
+  if (( cert_created || webui_set || metrics_set )); then
     restart_stalwart
   fi
 
