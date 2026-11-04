@@ -2,24 +2,30 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"time"
 )
 
 type Domain struct {
-	ID         int64
-	TenantID   int64
-	Name       string
-	StalwartID string
-	CreatedAt  time.Time
+	ID            int64
+	TenantID      int64
+	Name          string
+	StalwartID    string
+	DNSProviderID *int64
+	CreatedAt     time.Time
 }
 
-const domainColumns = `id, tenant_id, name, stalwart_id, created_at`
+const domainColumns = `id, tenant_id, name, stalwart_id, dns_provider_id, created_at`
 
 func scanDomain(row scanner) (Domain, error) {
 	var domain Domain
+	var provider sql.NullInt64
 	var created int64
-	err := row.Scan(&domain.ID, &domain.TenantID, &domain.Name, &domain.StalwartID, &created)
+	err := row.Scan(&domain.ID, &domain.TenantID, &domain.Name, &domain.StalwartID, &provider, &created)
+	if provider.Valid {
+		domain.DNSProviderID = &provider.Int64
+	}
 	domain.CreatedAt = utcTime(created)
 	return domain, err
 }
@@ -71,6 +77,11 @@ func (s *Store) ListDomains(ctx context.Context, tenantID *int64) ([]Domain, err
 		domains = append(domains, domain)
 	}
 	return domains, storeError("list domains", rows.Err())
+}
+
+// SetDomainDNSProvider assigns a DNS provider, or clears it when providerID is nil.
+func (s *Store) SetDomainDNSProvider(ctx context.Context, id int64, providerID *int64) error {
+	return s.execOne(ctx, "set domain DNS provider", `UPDATE domains SET dns_provider_id = ? WHERE id = ?`, providerID, id)
 }
 
 func (s *Store) DeleteDomain(ctx context.Context, id int64) error {

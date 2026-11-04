@@ -96,7 +96,7 @@ func TestOpenMigrationsAndReopen(t *testing.T) {
 	mustOK(t, err)
 	mustEqual(t, got, tenant)
 	var appliedAgain int64
-	mustOK(t, s.db.QueryRow(`SELECT count(*), applied_at FROM schema_migrations`).Scan(&count, &appliedAgain))
+	mustOK(t, s.db.QueryRow(`SELECT count(*), applied_at FROM schema_migrations WHERE version = 1`).Scan(&count, &appliedAgain))
 	mustEqual(t, count, 1)
 	mustEqual(t, appliedAgain, applied)
 	// Closing the Store closes the underlying pool.
