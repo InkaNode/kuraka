@@ -30,9 +30,60 @@ type fakeStalwart struct {
 	appDescriptions   []string
 	appCreated        int
 	appDeleted        int
+	queued            map[string]stalwart.QueuedMessage
 }
 
 var _ Stalwart = (*fakeStalwart)(nil)
+
+func (f *fakeStalwart) ListQueue(context.Context) ([]stalwart.QueuedMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]stalwart.QueuedMessage, 0, len(f.queued))
+	for _, message := range f.queued {
+		out = append(out, message)
+	}
+	return out, f.fail
+}
+
+func (f *fakeStalwart) GetQueued(_ context.Context, id string) (stalwart.QueuedMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return stalwart.QueuedMessage{}, f.fail
+	}
+	message, ok := f.queued[id]
+	if !ok {
+		return message, stalwart.ErrNotFound
+	}
+	return message, nil
+}
+
+func (f *fakeStalwart) RetryQueued(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	if _, ok := f.queued[id]; !ok {
+		return stalwart.ErrNotFound
+	}
+	f.mutations++
+	return nil
+}
+
+func (f *fakeStalwart) CancelQueued(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	if _, ok := f.queued[id]; !ok {
+		return stalwart.ErrNotFound
+	}
+	delete(f.queued, id)
+	f.mutations++
+	return nil
+}
 
 func (f *fakeStalwart) CreateAppPassword(_ context.Context, accountID, desc string) (string, string, error) {
 	f.mu.Lock()

@@ -44,6 +44,10 @@ type Stalwart interface {
 	ListDkim(context.Context, string) ([]stalwart.DkimKey, error)
 	CreateAppPassword(context.Context, string, string) (string, string, error)
 	DeleteAppPassword(context.Context, string, string) error
+	ListQueue(context.Context) ([]stalwart.QueuedMessage, error)
+	GetQueued(context.Context, string) (stalwart.QueuedMessage, error)
+	RetryQueued(context.Context, string) error
+	CancelQueued(context.Context, string) error
 }
 
 var _ Stalwart = (*stalwart.Client)(nil)
@@ -155,6 +159,13 @@ func (s *Server) Handler() http.Handler {
 	route("PATCH /api/v1/domains/{id}/mailboxes/{mid}", "mailbox.update", false, false, s.updateMailbox)
 	route("DELETE /api/v1/domains/{id}/mailboxes/{mid}", "mailbox.delete", false, false, s.deleteMailbox)
 	route("GET /api/v1/audit", "audit.list", false, false, s.audit)
+	route("GET /api/v1/queue", "queue.list", false, false, s.queue)
+	route("POST /api/v1/queue/{id}/retry", "queue.retry", false, false, s.retryQueued)
+	route("DELETE /api/v1/queue/{id}", "queue.cancel", false, false, s.cancelQueued)
+	route("GET /api/v1/metrics", "metrics.get", false, true, s.metrics)
+	route("GET /api/v1/alerts", "alert.list", false, true, s.alerts)
+	route("POST /api/v1/alerts", "alert.create", false, true, s.createAlert)
+	route("DELETE /api/v1/alerts/{id}", "alert.delete", false, true, s.deleteAlert)
 	s.integrationRoutes(route)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {

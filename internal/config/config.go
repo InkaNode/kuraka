@@ -15,17 +15,19 @@ import (
 
 // Environment variable names.
 const (
-	EnvListen            = "KURAKA_LISTEN"
-	EnvDB                = "KURAKA_DB"
-	EnvPublicURL         = "KURAKA_PUBLIC_URL"
-	EnvSecretKey         = "KURAKA_SECRET_KEY"
-	EnvStalwartURL       = "KURAKA_STALWART_URL"
-	EnvStalwartAPIKey    = "KURAKA_STALWART_API_KEY"
-	EnvInsecureCookies   = "KURAKA_INSECURE_COOKIES"
-	EnvMailHost          = "KURAKA_MAIL_HOST"
-	EnvMailTLSSkipVerify = "KURAKA_MAIL_TLS_SKIP_VERIFY"
-	EnvDNSResolver       = "KURAKA_DNS_RESOLVER"
-	EnvMigrationWorkers  = "KURAKA_MIGRATION_WORKERS"
+	EnvListen                = "KURAKA_LISTEN"
+	EnvDB                    = "KURAKA_DB"
+	EnvPublicURL             = "KURAKA_PUBLIC_URL"
+	EnvSecretKey             = "KURAKA_SECRET_KEY"
+	EnvStalwartURL           = "KURAKA_STALWART_URL"
+	EnvStalwartAPIKey        = "KURAKA_STALWART_API_KEY"
+	EnvStalwartMetricsSecret = "KURAKA_STALWART_METRICS_SECRET"
+	EnvAlertWebhookURL       = "KURAKA_ALERT_WEBHOOK_URL"
+	EnvInsecureCookies       = "KURAKA_INSECURE_COOKIES"
+	EnvMailHost              = "KURAKA_MAIL_HOST"
+	EnvMailTLSSkipVerify     = "KURAKA_MAIL_TLS_SKIP_VERIFY"
+	EnvDNSResolver           = "KURAKA_DNS_RESOLVER"
+	EnvMigrationWorkers      = "KURAKA_MIGRATION_WORKERS"
 )
 
 // Defaults for optional variables.
@@ -39,17 +41,19 @@ const (
 
 // Config is the validated runtime configuration.
 type Config struct {
-	Listen            string
-	DBPath            string
-	PublicURL         string // scheme://host[:port], no trailing slash
-	SecretKeyHex      string // 64 hex chars
-	StalwartURL       string // no trailing slash
-	StalwartAPIKey    string
-	InsecureCookies   bool
-	MailHost          string
-	MailTLSSkipVerify bool
-	DNSResolver       string
-	MigrationWorkers  int
+	Listen                string
+	DBPath                string
+	PublicURL             string // scheme://host[:port], no trailing slash
+	SecretKeyHex          string // 64 hex chars
+	StalwartURL           string // no trailing slash
+	StalwartAPIKey        string
+	StalwartMetricsSecret string
+	AlertWebhookURL       string
+	InsecureCookies       bool
+	MailHost              string
+	MailTLSSkipVerify     bool
+	DNSResolver           string
+	MigrationWorkers      int
 }
 
 // Load reads the configuration from the process environment.
@@ -99,6 +103,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 
 	if c.StalwartAPIKey = get(EnvStalwartAPIKey, ""); c.StalwartAPIKey == "" {
 		errs = append(errs, fmt.Errorf("%s is required", EnvStalwartAPIKey))
+	}
+	c.StalwartMetricsSecret = get(EnvStalwartMetricsSecret, "")
+	c.AlertWebhookURL = get(EnvAlertWebhookURL, "")
+	if c.AlertWebhookURL != "" {
+		if _, err := parseHTTPURL(c.AlertWebhookURL); err != nil {
+			errs = append(errs, fmt.Errorf("%s %w", EnvAlertWebhookURL, err))
+		}
 	}
 
 	if raw := get(EnvInsecureCookies, ""); raw != "" {

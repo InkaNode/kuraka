@@ -26,3 +26,24 @@ func TestIntegrationConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestMonitoringConfig(t *testing.T) {
+	for _, webhook := range []string{"", "http://localhost:9000/alerts", "https://hooks.example.test/alerts"} {
+		c, err := LoadFrom(env(with(EnvStalwartMetricsSecret, " metrics-secret ", EnvAlertWebhookURL, webhook)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.StalwartMetricsSecret != "metrics-secret" || c.AlertWebhookURL != webhook {
+			t.Fatal("monitoring config did not round-trip")
+		}
+	}
+	for _, webhook := range []string{"relative/path", "ftp://hooks.example.test", "https://user:secret@hooks.example.test", "https://hooks.example.test/?secret=value", "https://hooks.example.test/#fragment"} {
+		_, err := LoadFrom(env(with(EnvAlertWebhookURL, webhook)))
+		if err == nil || !strings.Contains(err.Error(), EnvAlertWebhookURL) {
+			t.Fatalf("webhook validation = %v", err)
+		}
+		if strings.Contains(err.Error(), webhook) {
+			t.Fatal("webhook value leaked in validation error")
+		}
+	}
+}
