@@ -49,6 +49,8 @@ type Stalwart interface {
 	GetQueued(context.Context, string) (stalwart.QueuedMessage, error)
 	RetryQueued(context.Context, string) error
 	CancelQueued(context.Context, string) error
+	ListBlockedIPs(context.Context) ([]stalwart.BlockedIP, error)
+	UnblockIP(context.Context, string, string) error
 	UpdateApps(context.Context) error
 }
 
@@ -175,6 +177,7 @@ func (s *Server) Handler() http.Handler {
 	s.integrationRoutes(route)
 	s.updateRoutes(route)
 	s.brandingRoutes(route)
+	s.securityRoutes(route)
 	mux.HandleFunc("GET /branding/assets/{id}", s.brandingAsset)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {

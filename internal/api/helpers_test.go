@@ -32,6 +32,8 @@ type fakeStalwart struct {
 	appDeleted        int
 	queued            map[string]stalwart.QueuedMessage
 	appsUpdated       int
+	blocked           []stalwart.BlockedIP
+	unblocked         []string
 }
 
 var _ Stalwart = (*fakeStalwart)(nil)
@@ -92,6 +94,23 @@ func (f *fakeStalwart) CancelQueued(_ context.Context, id string) error {
 		return stalwart.ErrNotFound
 	}
 	delete(f.queued, id)
+	f.mutations++
+	return nil
+}
+
+func (f *fakeStalwart) ListBlockedIPs(context.Context) ([]stalwart.BlockedIP, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]stalwart.BlockedIP{}, f.blocked...), f.fail
+}
+
+func (f *fakeStalwart) UnblockIP(_ context.Context, id, trust string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.unblocked = append(f.unblocked, id+" "+trust)
 	f.mutations++
 	return nil
 }
