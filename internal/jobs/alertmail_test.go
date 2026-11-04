@@ -1,10 +1,16 @@
 package jobs
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/InkaNode/kuraka/internal/config"
 	"github.com/InkaNode/kuraka/internal/store"
 )
 
@@ -36,5 +42,30 @@ func TestAlertMessage(t *testing.T) {
 	rule.Metric = "queue_size\r\nBcc: evil@example.com"
 	if _, err := alertMessage("alertas@example.com", []string{"a@example.com"}, "abc@mail.example.com", rule, 1, "firing", at); err == nil {
 		t.Error("header injection accepted")
+	}
+}
+
+func TestAlertWebhookRetries(t *testing.T) {
+	webhookBackoff = []time.Duration{0, 0}
+	for _, tc := range []struct {
+		statuses []int
+		calls    int
+	}{
+		{[]int{503, 429, 200}, 3},
+		{[]int{500, 500, 500, 500}, 3},
+		{[]int{404, 200}, 1},
+		{[]int{200}, 1},
+	} {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.statuses[calls])
+			calls++
+		}))
+		cfg := config.Config{AlertWebhookURL: srv.URL}
+		notifyAlert(context.Background(), srv.Client(), nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), store.AlertRule{ID: 1, Metric: "queue_size"}, 1, "firing", 0)
+		srv.Close()
+		if calls != tc.calls {
+			t.Errorf("statuses %v: %d calls, want %d", tc.statuses, calls, tc.calls)
+		}
 	}
 }

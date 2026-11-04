@@ -139,24 +139,46 @@ func notifyAlert(ctx context.Context, client *http.Client, st *store.Store, sw *
 	text := fmt.Sprintf("[Kuraka] %s: %s = %g (threshold %g)", state, rule.Metric, value, rule.Threshold)
 	body, err := json.Marshal(map[string]any{"rule_id": rule.ID, "metric": rule.Metric, "threshold": rule.Threshold, "value": value, "state": state, "at": at, "text": text, "content": text})
 	if err == nil {
-		var req *http.Request
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
-			var resp *http.Response
-			resp, err = client.Do(req)
-			if err == nil {
-				_, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-				resp.Body.Close()
-				if resp.StatusCode < 200 || resp.StatusCode > 299 {
-					err = fmt.Errorf("http %d", resp.StatusCode)
-				} else {
-					err = readErr
-				}
+		for i := 0; ; i++ {
+			var retry bool
+			if retry, err = postWebhook(ctx, client, webhook, body); err == nil || !retry || i == len(webhookBackoff) {
+				break
+			}
+			log.Warn("alert webhook failed, retrying", "rule_id", rule.ID, "error", err)
+			select {
+			case <-ctx.Done():
+			case <-time.After(webhookBackoff[i]):
+			}
+			if ctx.Err() != nil {
+				break
 			}
 		}
 	}
 	if err != nil {
 		log.Error("alert webhook failed", "rule_id", rule.ID, "error", err)
 	}
+}
+
+// webhookBackoff holds the waits between webhook attempts.
+// frugal: a firing alert is sent once; a persistent outbox would survive longer outages.
+var webhookBackoff = []time.Duration{2 * time.Second, 8 * time.Second}
+
+// postWebhook reports whether a failed attempt is worth retrying: network
+// errors, 429 and 5xx are; other statuses are not.
+func postWebhook(ctx context.Context, client *http.Client, url string, body []byte) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return true, err
+	}
+	_, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500, fmt.Errorf("http %d", resp.StatusCode)
+	}
+	return false, readErr
 }
