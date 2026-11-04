@@ -195,14 +195,15 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		}
 		return &APIError{Status: resp.StatusCode, Message: msg}
 	}
+	// A 2xx can still carry an error envelope, even for calls without output.
+	if jsonErr == nil && env.Status == "error" {
+		return &APIError{Status: resp.StatusCode, Message: env.Message}
+	}
 	if out == nil {
 		return nil
 	}
 	if jsonErr != nil {
 		return fmt.Errorf("libredesk: decode response: %w", jsonErr)
-	}
-	if env.Status == "error" {
-		return &APIError{Status: resp.StatusCode, Message: env.Message}
 	}
 	if err := json.Unmarshal(env.Data, out); err != nil {
 		return fmt.Errorf("libredesk: decode data: %w", err)

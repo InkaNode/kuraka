@@ -156,6 +156,8 @@ func TestDeleteInbox(t *testing.T) {
 		case "/api/v1/inboxes/6":
 			w.WriteHeader(http.StatusNotFound)
 			io.WriteString(w, `{"status":"error","message":"Inbox not found"}`)
+		case "/api/v1/inboxes/7":
+			io.WriteString(w, `{"status":"error","message":"Inbox in use"}`)
 		default:
 			t.Errorf("path = %s", r.URL.Path)
 		}
@@ -165,5 +167,8 @@ func TestDeleteInbox(t *testing.T) {
 	}
 	if err := c.DeleteInbox(context.Background(), 6); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeleteInbox(6) = %v, want ErrNotFound", err)
+	}
+	if _, ok := errors.AsType[*APIError](c.DeleteInbox(context.Background(), 7)); !ok {
+		t.Fatal("DeleteInbox(7) ignored an error envelope with status 200")
 	}
 }
