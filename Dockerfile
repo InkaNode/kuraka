@@ -7,7 +7,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/kuraka ./cmd/kuraka \
+# Set by the release workflow and apply-updates.sh; the panel compares it
+# with the latest release to offer updates.
+ARG KURAKA_COMMIT=
+RUN go build -trimpath -ldflags="-s -w -X github.com/InkaNode/kuraka/internal/version.Commit=${KURAKA_COMMIT}" -o /out/kuraka ./cmd/kuraka \
     && mkdir -p /out/data \
     && chown 65532:65532 /out/data
 
