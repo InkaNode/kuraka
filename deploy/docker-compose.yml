@@ -1,0 +1,82 @@
+# Kuraka single-VPS stack: Caddy (HTTPS), Stalwart (mail) and Kuraka (panel).
+# Run deploy/setup.sh for the first install; see docs/install.md.
+name: kuraka
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      PANEL_HOST: ${PANEL_HOST:?set PANEL_HOST in deploy/.env}
+      MAIL_HOST: ${MAIL_HOST:?set MAIL_HOST in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
+      CADDY_EXTRA_GLOBAL: ${CADDY_EXTRA_GLOBAL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [mail]
+    logging: *logging
+
+  stalwart:
+    image: stalwartlabs/stalwart:v1
+    restart: unless-stopped
+    # SMTP, SMTPS and IMAPS only. The HTTP listener (8080) stays on the
+    # private network: Caddy proxies the public paths, Kuraka uses JMAP.
+    ports:
+      - "25:25"
+      - "465:465"
+      - "993:993"
+    environment:
+      # Only needed for the first setup. Remove it from .env afterwards and
+      # run `docker compose up -d stalwart`.
+      STALWART_RECOVERY_ADMIN: ${STALWART_RECOVERY_ADMIN:-}
+    volumes:
+      - stalwart_etc:/etc/stalwart
+      - stalwart_data:/var/lib/stalwart
+      # Certificates issued by Caddy for MAIL_HOST, used for SMTP and IMAP.
+      - caddy_data:/caddy-data:ro
+    networks: [mail]
+    logging: *logging
+
+  kuraka:
+    image: ghcr.io/inkanode/kuraka:${KURAKA_VERSION:-latest}
+    restart: unless-stopped
+    depends_on: [stalwart]
+    environment:
+      KURAKA_PUBLIC_URL: https://${PANEL_HOST}
+      KURAKA_DB: /data/kuraka.db
+      KURAKA_SECRET_KEY: ${KURAKA_SECRET_KEY:-}
+      KURAKA_STALWART_URL: http://stalwart:8080
+      KURAKA_STALWART_API_KEY: ${KURAKA_STALWART_API_KEY:-}
+      KURAKA_MAIL_HOST: ${MAIL_HOST}
+    volumes:
+      - kuraka_data:/data
+    networks: [mail]
+    logging: *logging
+
+networks:
+  mail:
+    # Fixed name and subnet: Libredesk bundles join it as external network
+    # kuraka_mail, and the Stalwart API key only accepts this subnet.
+    name: kuraka_mail
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:
+  stalwart_etc:
+  stalwart_data:
+  kuraka_data:
