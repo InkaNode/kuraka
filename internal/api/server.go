@@ -343,6 +343,10 @@ func classify(err error) (int, string, string) {
 	var he *stalwart.HTTPError
 	var me *stalwart.MethodError
 	var se *stalwart.SetError
+	// Stalwart refuses changes to accounts holding permissions Kuraka's key lacks.
+	if errors.As(err, &se) && se.Type == "forbidden" {
+		return 403, "upstream_forbidden", "The mail server does not allow Kuraka to change this resource"
+	}
 	if errors.As(err, &ue) || errors.As(err, &he) || errors.As(err, &me) || errors.As(err, &se) {
 		return 502, "upstream_error", "Mail service unavailable"
 	}

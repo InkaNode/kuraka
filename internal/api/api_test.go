@@ -14,6 +14,7 @@ import (
 
 	"github.com/InkaNode/kuraka/internal/auth"
 	"github.com/InkaNode/kuraka/internal/authz"
+	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 )
 
@@ -571,5 +572,14 @@ func TestConcurrentLastSuperadmin(t *testing.T) {
 	}
 	if enabled != 1 {
 		t.Fatal("last superadmin lost")
+	}
+}
+
+func TestClassifyUpstreamForbidden(t *testing.T) {
+	if status, code, _ := classify(upstream(&stalwart.SetError{Type: "forbidden"})); status != 403 || code != "upstream_forbidden" {
+		t.Fatal(status, code)
+	}
+	if status, code, _ := classify(upstream(&stalwart.SetError{Type: "invalidProperties"})); status != 502 || code != "upstream_error" {
+		t.Fatal(status, code)
 	}
 }
