@@ -14,7 +14,7 @@ export function renderLayout(me, content) {
     ['/domains', 'nav.domains', 'globe'],
     ['/queue', 'nav.queue', 'inbox'],
     ...(me?.role === 'superadmin' ? [['/dashboard', 'nav.dashboard', 'list']] : []),
-    ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users'], ['/branding', 'nav.branding', 'image']] : []),
+    ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users'], ['/branding', 'nav.branding', 'image'], ['/security', 'nav.security', 'shield']] : []),
     ['/audit', 'nav.audit', 'list'], ['/integrations', 'nav.integrations', 'link'], ['/docs', 'nav.docs', 'book'], ['/account', 'nav.account', 'user'],
   ];
   const toggle = button({ icon: 'menu', variant: 'ghost', ariaLabel: t('nav.menu'), onClick: () => {
