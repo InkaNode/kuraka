@@ -87,11 +87,24 @@ func TestLoadFromValid(t *testing.T) {
 				UpdatesDir: "/updates",
 			},
 		},
+		{
+			name: "stalwart version",
+			env:  with(EnvStalwartVersion, "v1.0.3"),
+			want: Config{
+				Listen: ":8080", DBPath: "kuraka.db",
+				PublicURL: "https://panel.inkanode.com", SecretKeyHex: testKey,
+				StalwartURL: "http://stalwart:8080", StalwartAPIKey: "API_supersecretvalue",
+				StalwartVersion: "v1.0.3",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.want.DNSResolver = DefaultDNSResolver
 			tt.want.MigrationWorkers = DefaultMigrationWorkers
+			if tt.want.StalwartVersion == "" {
+				tt.want.StalwartVersion = DefaultStalwartVersion
+			}
 			got, err := LoadFrom(env(tt.env))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

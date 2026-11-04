@@ -20,6 +20,7 @@ import (
 const (
 	libredeskRepo = "abhinavxd/libredesk"
 	webuiRepo     = "InkaNode/stalwart-webui"
+	stalwartRepo  = "stalwartlabs/stalwart"
 	webuiSetting  = "webui_applied"
 )
 
@@ -29,11 +30,12 @@ var stableTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 // updateState caches the latest release tags read from GitHub.
 type updateState struct {
 	checkMu   sync.Mutex // serializes checks
-	requestMu sync.Mutex // serializes helpdesk update requests
+	requestMu sync.Mutex // serializes Stalwart and helpdesk update requests
 	mu        sync.Mutex // guards the fields below
 	checkedAt time.Time
 	libredesk string
 	webui     string
+	stalwart  string
 	err       string
 }
 
@@ -41,6 +43,7 @@ func (s *Server) updateRoutes(route func(string, string, bool, bool, endpoint)) 
 	route("GET /api/v1/updates", "update.list", false, true, s.updatesStatus)
 	route("POST /api/v1/updates/check", "update.check", false, true, s.checkUpdatesNow)
 	route("POST /api/v1/updates/webui", "update.webui", false, true, s.updateWebUI)
+	route("POST /api/v1/updates/stalwart", "update.stalwart", false, true, s.updateStalwart)
 	route("POST /api/v1/helpdesks/{id}/update", "helpdesk.update", false, true, s.updateHelpdesk)
 }
 
@@ -79,10 +82,11 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	}
 	libredesk, libredeskErr := s.releases.Latest(ctx, libredeskRepo)
 	webui, webuiErr := s.releases.Latest(ctx, webuiRepo)
+	stalwart, stalwartErr := s.releases.Latest(ctx, stalwartRepo)
 	if ctx.Err() != nil {
 		return
 	}
-	err := errors.Join(libredeskErr, webuiErr)
+	err := errors.Join(libredeskErr, webuiErr, stalwartErr)
 	if err != nil {
 		s.log.Warn("update check failed", "error", err)
 	}
@@ -98,12 +102,15 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	if webuiErr == nil {
 		u.webui = webui
 	}
+	if stalwartErr == nil {
+		u.stalwart = stalwart
+	}
 }
 
-func (s *Server) latestTags() (libredesk, webui string) {
+func (s *Server) latestTags() (libredesk, webui, stalwart string) {
 	s.updates.mu.Lock()
 	defer s.updates.mu.Unlock()
-	return s.updates.libredesk, s.updates.webui
+	return s.updates.libredesk, s.updates.webui, s.updates.stalwart
 }
 
 func versionState(current, latest string) string {
@@ -126,9 +133,9 @@ func deskContainer(h store.Helpdesk) string {
 	return u.Hostname()
 }
 
-// deskResult is written by deploy/apply-updates.sh. Current is the tag the
-// compose file runs after the attempt.
-type deskResult struct {
+// updateResult is written by deploy/apply-updates.sh. Current is the tag the
+// compose project runs after the attempt.
+type updateResult struct {
 	Tag     string `json:"tag"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
@@ -136,20 +143,21 @@ type deskResult struct {
 	Current string `json:"current"`
 }
 
-// deskVersion reads the pending request or last result the host timer left
-// in the updates directory for container.
-func (s *Server) deskVersion(container, latest string) (current, status, message string) {
-	current = provision.LibredeskVersion
+// requestVersion reads the pending request <name>.json or last result
+// <name>.result.json the host timer left in the updates directory. installed
+// is the version shown when there is no result.
+func (s *Server) requestVersion(name, installed, latest string) (current, status, message string) {
+	current = installed
 	if s.cfg.UpdatesDir == "" {
 		return current, versionState(current, latest), ""
 	}
-	base := filepath.Join(s.cfg.UpdatesDir, "libredesk-"+container)
-	var result deskResult
+	base := filepath.Join(s.cfg.UpdatesDir, name)
+	var result updateResult
 	if f, err := os.Open(base + ".result.json"); err == nil {
 		err = json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&result)
 		f.Close()
 		if err != nil || !stableTag.MatchString(result.Tag) {
-			result = deskResult{}
+			result = updateResult{}
 		}
 	}
 	switch {
@@ -173,7 +181,7 @@ func (s *Server) deskVersion(container, latest string) (current, status, message
 
 func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	s.updates.mu.Lock()
-	checkedAt, libredesk, webui, checkErr := s.updates.checkedAt, s.updates.libredesk, s.updates.webui, s.updates.err
+	checkedAt, libredesk, webui, stalwart, checkErr := s.updates.checkedAt, s.updates.libredesk, s.updates.webui, s.updates.stalwart, s.updates.err
 	s.updates.mu.Unlock()
 	applied, err := s.st.GetSetting(ctx, webuiSetting)
 	if err != nil {
@@ -189,16 +197,22 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		if container == "" {
 			continue
 		}
-		current, status, message := s.deskVersion(container, libredesk)
+		current, status, message := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, libredesk)
 		row := map[string]any{"id": h.ID, "name": h.Name, "current": current, "state": status}
 		if message != "" {
 			row["message"] = message
 		}
 		desks = append(desks, row)
 	}
+	current, status, message := s.requestVersion("stalwart", s.cfg.StalwartVersion, stalwart)
+	server := map[string]any{"latest": stalwart, "current": current, "state": status}
+	if message != "" {
+		server["message"] = message
+	}
 	out := map[string]any{
 		"checked_at":  nil,
 		"updates_dir": s.cfg.UpdatesDir != "",
+		"stalwart":    server,
 		"webui":       map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui)},
 		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks},
 	}
@@ -223,7 +237,7 @@ func (s *Server) checkUpdatesNow(_ http.ResponseWriter, r *http.Request) (any, e
 // updateWebUI makes Stalwart download webui.zip again: its resource URL
 // always points to the latest stalwart-webui release.
 func (s *Server) updateWebUI(_ http.ResponseWriter, r *http.Request) (any, error) {
-	_, latest := s.latestTags()
+	_, latest, _ := s.latestTags()
 	if latest == "" {
 		return nil, conflict("Latest release unknown; check for updates first")
 	}
@@ -257,11 +271,11 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 	if s.cfg.UpdatesDir == "" {
 		return nil, &apiError{status: 409, code: "updates_disabled", message: "KURAKA_UPDATES_DIR is not set"}
 	}
-	latest, _ := s.latestTags()
+	latest, _, _ := s.latestTags()
 	s.updates.requestMu.Lock()
 	defer s.updates.requestMu.Unlock()
 	// A failed attempt can be retried; it is reported as "error".
-	switch _, status, _ := s.deskVersion(container, latest); status {
+	switch _, status, _ := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, latest); status {
 	case "updating":
 		return nil, conflict("Helpdesk update already in progress")
 	case "available", "error":
@@ -277,6 +291,36 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 		return nil, err
 	}
 	if err := writeFileAtomic(filepath.Join(s.cfg.UpdatesDir, "libredesk-"+container+".json"), data); err != nil {
+		return nil, err
+	}
+	return s.updatesBody(r.Context())
+}
+
+// updateStalwart leaves a request for deploy/apply-updates.sh. Kuraka only
+// writes the tag; the host validates it and updates its own compose project.
+func (s *Server) updateStalwart(_ http.ResponseWriter, r *http.Request) (any, error) {
+	if s.cfg.UpdatesDir == "" {
+		return nil, &apiError{status: 409, code: "updates_disabled", message: "KURAKA_UPDATES_DIR is not set"}
+	}
+	_, _, latest := s.latestTags()
+	s.updates.requestMu.Lock()
+	defer s.updates.requestMu.Unlock()
+	switch _, status, _ := s.requestVersion("stalwart", s.cfg.StalwartVersion, latest); status {
+	case "updating":
+		return nil, conflict("Stalwart update already in progress")
+	case "available", "error":
+	default:
+		return nil, conflict("No Stalwart update available")
+	}
+	if !stableTag.MatchString(latest) {
+		return nil, invalid("release tag")
+	}
+	state(r).detail = latest
+	data, err := json.Marshal(map[string]string{"tag": latest})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(filepath.Join(s.cfg.UpdatesDir, "stalwart.json"), data); err != nil {
 		return nil, err
 	}
 	return s.updatesBody(r.Context())

@@ -48,12 +48,13 @@ func (f *fakeGitHub) hitCount() int {
 func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) {
 	t.Helper()
 	h := newHarness(t, true)
-	gh := &fakeGitHub{tags: map[string]string{libredeskRepo: "v2.10.0", webuiRepo: "v2.0.4-kuraka.2"}}
+	gh := &fakeGitHub{tags: map[string]string{libredeskRepo: "v2.10.0", webuiRepo: "v2.0.4-kuraka.2", stalwartRepo: "v1.0.3"}}
 	srv := httptest.NewServer(gh)
 	t.Cleanup(srv.Close)
 	h.s.releases = &releases.Client{BaseURL: srv.URL}
 	dir := t.TempDir()
 	h.s.cfg.UpdatesDir = dir
+	h.s.cfg.StalwartVersion = "v1.0.2"
 	tenant := h.tenant("Acme")
 	ctx := context.Background()
 	desk, err := h.st.CreateHelpdesk(ctx, store.Helpdesk{TenantID: tenant, Kind: "libredesk", Name: "desk.acme.test", URL: "http://kuraka-acme-desk:9000"})
@@ -67,7 +68,7 @@ func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) 
 	return h, gh, dir, desk.ID, other.ID
 }
 
-type versionReply struct{ Latest, Current, State string }
+type versionReply struct{ Latest, Current, State, Message string }
 
 type deskReply struct {
 	ID      int64
@@ -86,6 +87,7 @@ type updatesReply struct {
 	CheckedAt  *time.Time     `json:"checked_at"`
 	Error      string         `json:"error"`
 	UpdatesDir bool           `json:"updates_dir"`
+	Stalwart   versionReply   `json:"stalwart"`
 	WebUI      versionReply   `json:"webui"`
 	Libredesk  libredeskReply `json:"libredesk"`
 }
@@ -102,7 +104,8 @@ func decodeUpdates(t *testing.T, b []byte) updatesReply {
 func TestUpdatesStatusAndCheck(t *testing.T) {
 	h, gh, _, desk, _ := updatesHarness(t)
 	v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200))
-	if v.CheckedAt != nil || !v.UpdatesDir || v.WebUI.State != "unknown" || len(v.Libredesk.Helpdesks) != 1 {
+	if v.CheckedAt != nil || !v.UpdatesDir || v.WebUI.State != "unknown" || len(v.Libredesk.Helpdesks) != 1 ||
+		v.Stalwart.Current != "v1.0.2" || v.Stalwart.State != "unknown" {
 		t.Fatalf("before check: %+v", v)
 	}
 	if d := v.Libredesk.Helpdesks[0]; d.ID != desk || d.Current != provision.LibredeskVersion || d.State != "unknown" {
@@ -110,13 +113,14 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	}
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
 	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != "v2.10.0" || v.Libredesk.Helpdesks[0].State != "available" ||
-		v.WebUI.Latest != "v2.0.4-kuraka.2" || v.WebUI.Current != "" || v.WebUI.State != "available" {
+		v.WebUI.Latest != "v2.0.4-kuraka.2" || v.WebUI.Current != "" || v.WebUI.State != "available" ||
+		v.Stalwart.Latest != "v1.0.3" || v.Stalwart.State != "available" {
 		t.Fatalf("after check: %+v", v)
 	}
 	// Within 30 seconds the cached result is returned.
 	h.root.do("POST", "/updates/check", nil, 200)
-	if n := gh.hitCount(); n != 2 {
-		t.Fatalf("GitHub hits = %d, want 2", n)
+	if n := gh.hitCount(); n != 3 {
+		t.Fatalf("GitHub hits = %d, want 3", n)
 	}
 	h.s.updates.mu.Lock()
 	h.s.updates.checkedAt = time.Now().Add(-time.Minute)
@@ -125,8 +129,8 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	delete(gh.tags, webuiRepo)
 	gh.mu.Unlock()
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
-	if n := gh.hitCount(); n != 4 {
-		t.Fatalf("GitHub hits = %d, want 4", n)
+	if n := gh.hitCount(); n != 6 {
+		t.Fatalf("GitHub hits = %d, want 6", n)
 	}
 	if v.Error == "" || v.WebUI.Latest != "v2.0.4-kuraka.2" {
 		t.Fatalf("failed check must keep the previous tag: %+v", v)
@@ -134,6 +138,7 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	admin := h.admin(h.tenant("Second"), "admin@second.test")
 	admin.do("GET", "/updates", nil, 403)
 	admin.do("POST", "/updates/check", nil, 403)
+	admin.do("POST", "/updates/stalwart", nil, 403)
 }
 
 func TestUpdateWebUI(t *testing.T) {
@@ -209,5 +214,59 @@ func TestUpdateHelpdesk(t *testing.T) {
 	assertCode(t, h.root.do("POST", path, nil, 409), "updates_disabled")
 	if v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)); v.UpdatesDir {
 		t.Fatal("updates_dir must be false")
+	}
+}
+
+func TestUpdateStalwart(t *testing.T) {
+	h, _, dir, _, _ := updatesHarness(t)
+	h.root.do("POST", "/updates/stalwart", nil, 409) // latest unknown
+	h.root.do("POST", "/updates/check", nil, 200)
+
+	v := decodeUpdates(t, h.root.do("POST", "/updates/stalwart", nil, 200))
+	if v.Stalwart.State != "updating" || v.Stalwart.Current != "v1.0.2" {
+		t.Fatalf("state: %+v", v.Stalwart)
+	}
+	request := filepath.Join(dir, "stalwart.json")
+	data, err := os.ReadFile(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(data, &got); err != nil || len(got) != 1 || got["tag"] != "v1.0.3" {
+		t.Fatalf("request file: %s", data)
+	}
+	assertCode(t, h.root.do("POST", "/updates/stalwart", nil, 409), "conflict")
+
+	result := filepath.Join(dir, "stalwart.result.json")
+	if err := os.Remove(request); err != nil {
+		t.Fatal(err)
+	}
+	writeResult := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(result, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeResult(`{"tag":"v1.0.3","status":"error","message":"pull failed","at":"2026-11-04T10:00:00Z","current":"v1.0.2"}`)
+	s := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Stalwart
+	if s.State != "error" || s.Message != "pull failed" || s.Current != "v1.0.2" {
+		t.Fatalf("error result: %+v", s)
+	}
+	// A failed update can be retried.
+	h.root.do("POST", "/updates/stalwart", nil, 200)
+	if err := os.Remove(request); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(`{"tag":"v1.0.3","status":"ok","message":"","at":"2026-11-04T10:05:00Z","current":"v1.0.3"}`)
+	s = decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Stalwart
+	if s.State != "current" || s.Current != "v1.0.3" || s.Message != "" {
+		t.Fatalf("ok result: %+v", s)
+	}
+	h.root.do("POST", "/updates/stalwart", nil, 409) // nothing to update
+
+	h.s.cfg.UpdatesDir = ""
+	assertCode(t, h.root.do("POST", "/updates/stalwart", nil, 409), "updates_disabled")
+	if s := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Stalwart; s.Current != "v1.0.2" || s.State != "available" {
+		t.Fatalf("without updates dir: %+v", s)
 	}
 }

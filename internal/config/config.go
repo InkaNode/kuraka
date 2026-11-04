@@ -32,6 +32,7 @@ const (
 	EnvDNSResolver           = "KURAKA_DNS_RESOLVER"
 	EnvMigrationWorkers      = "KURAKA_MIGRATION_WORKERS"
 	EnvUpdatesDir            = "KURAKA_UPDATES_DIR"
+	EnvStalwartVersion       = "KURAKA_STALWART_VERSION"
 )
 
 // Defaults for optional variables.
@@ -41,6 +42,7 @@ const (
 	DefaultStalwartURL      = "http://stalwart:8080"
 	DefaultDNSResolver      = "1.1.1.1:53"
 	DefaultMigrationWorkers = 2
+	DefaultStalwartVersion  = "v1.0.2"
 )
 
 // Config is the validated runtime configuration.
@@ -59,7 +61,8 @@ type Config struct {
 	MailTLSSkipVerify     bool
 	DNSResolver           string
 	MigrationWorkers      int
-	UpdatesDir            string // absolute; empty disables Libredesk updates
+	UpdatesDir            string // absolute; empty disables Stalwart and Libredesk updates
+	StalwartVersion       string // image tag the compose file runs
 }
 
 // Load reads the configuration from the process environment.
@@ -159,6 +162,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	if c.UpdatesDir != "" && !filepath.IsAbs(c.UpdatesDir) {
 		errs = append(errs, fmt.Errorf("%s must be an absolute path", EnvUpdatesDir))
 	}
+	c.StalwartVersion = get(EnvStalwartVersion, DefaultStalwartVersion)
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
