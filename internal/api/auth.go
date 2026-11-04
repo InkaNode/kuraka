@@ -16,7 +16,7 @@ import (
 const cookieName = "kuraka_session"
 
 func userJSON(u store.User) map[string]any {
-	return map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "role": u.Role, "tenant_id": u.TenantID, "totp_enabled": u.TOTPEnabled, "disabled": u.Disabled}
+	return map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "role": u.Role, "tenant_id": u.TenantID, "totp_enabled": u.TOTPEnabled, "disabled": u.Disabled, "created_at": u.CreatedAt, "last_login_at": u.LastLoginAt}
 }
 func validEmail(email string) bool {
 	a, err := mail.ParseAddress(email)
