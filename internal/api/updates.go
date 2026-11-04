@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/InkaNode/kuraka/internal/addons"
 	"github.com/InkaNode/kuraka/internal/provision"
 	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/store"
@@ -21,7 +22,7 @@ import (
 
 const (
 	libredeskRepo = "abhinavxd/libredesk"
-	webuiRepo     = "InkaNode/stalwart-webui"
+	webuiRepo     = "stalwartlabs/webui"
 	stalwartRepo  = "stalwartlabs/stalwart"
 	kurakaRepo    = "InkaNode/kuraka"
 	webuiSetting  = "webui_applied"
@@ -136,6 +137,13 @@ func versionState(current, latest string) string {
 	return "available"
 }
 
+func addonCompatibility(row map[string]any, component, latest string) {
+	if row["state"] == "available" && !addons.Allows(component, latest) {
+		row["state"] = "waiting"
+		row["supported"] = addons.Supported[component]
+	}
+}
+
 // deskContainer returns the container of a helpdesk provisioned by Kuraka,
 // or "" for helpdesks connected by URL.
 func deskContainer(h store.Helpdesk) string {
@@ -240,6 +248,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		}
 		current, status, message := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, libredesk)
 		row := map[string]any{"id": h.ID, "name": h.Name, "current": current, "state": status}
+		addonCompatibility(row, "libredesk", libredesk)
 		if message != "" {
 			row["message"] = message
 		}
@@ -247,6 +256,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	}
 	current, status, message := s.requestVersion("stalwart", s.cfg.StalwartVersion, stalwart)
 	server := map[string]any{"latest": stalwart, "current": current, "state": status}
+	addonCompatibility(server, "stalwart", stalwart)
 	if message != "" {
 		server["message"] = message
 	}
@@ -268,12 +278,14 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if status == "error" {
 		self["message"] = message
 	}
+	web := map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui)}
+	addonCompatibility(web, "webui", webui)
 	out := map[string]any{
 		"checked_at":  nil,
 		"updates_dir": s.cfg.UpdatesDir != "",
 		"stalwart":    server,
 		"kuraka":      self,
-		"webui":       map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui)},
+		"webui":       web,
 		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks},
 	}
 	if !checkedAt.IsZero() {
@@ -295,13 +307,16 @@ func (s *Server) checkUpdatesNow(_ http.ResponseWriter, r *http.Request) (any, e
 }
 
 // updateWebUI makes Stalwart download webui.zip again: its resource URL
-// always points to the latest stalwart-webui release.
+// always points to the latest official webui release.
 func (s *Server) updateWebUI(_ http.ResponseWriter, r *http.Request) (any, error) {
 	_, latest, _ := s.latestTags()
 	if latest == "" {
 		return nil, conflict("Latest release unknown; check for updates first")
 	}
 	state(r).detail = latest
+	if !addons.Allows("webui", latest) {
+		return nil, conflict("Waiting for a Kuraka update that supports " + latest)
+	}
 	if err := s.sw.UpdateApps(r.Context()); err != nil {
 		return nil, upstream(err)
 	}
@@ -342,10 +357,13 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 	default:
 		return nil, conflict("No helpdesk update available")
 	}
+	state(r).detail = latest
+	if !addons.Allows("libredesk", latest) {
+		return nil, conflict("Waiting for a Kuraka update that supports " + latest)
+	}
 	if !stableTag.MatchString(latest) {
 		return nil, invalid("release tag")
 	}
-	state(r).detail = latest
 	data, err := json.Marshal(map[string]string{"container": container, "tag": latest})
 	if err != nil {
 		return nil, err
@@ -372,10 +390,13 @@ func (s *Server) updateStalwart(_ http.ResponseWriter, r *http.Request) (any, er
 	default:
 		return nil, conflict("No Stalwart update available")
 	}
+	state(r).detail = latest
+	if !addons.Allows("stalwart", latest) {
+		return nil, conflict("Waiting for a Kuraka update that supports " + latest)
+	}
 	if !stableTag.MatchString(latest) {
 		return nil, invalid("release tag")
 	}
-	state(r).detail = latest
 	data, err := json.Marshal(map[string]string{"tag": latest})
 	if err != nil {
 		return nil, err

@@ -52,7 +52,7 @@ func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) 
 	t.Helper()
 	h := newHarness(t, true)
 	gh := &fakeGitHub{
-		tags:    map[string]string{libredeskRepo: "v2.10.0", webuiRepo: "v2.0.4-kuraka.2", stalwartRepo: "v1.0.3", kurakaRepo: "v99.0.0"},
+		tags:    map[string]string{libredeskRepo: "v2.9.3", webuiRepo: "v2.0.4", stalwartRepo: "v1.0.3", kurakaRepo: "v99.0.0"},
 		commits: map[string]string{kurakaRepo: strings.Repeat("a", 40)},
 		urls:    map[string]string{kurakaRepo: "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0"},
 	}
@@ -75,7 +75,7 @@ func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) 
 	return h, gh, dir, desk.ID, other.ID
 }
 
-type versionReply struct{ Latest, Current, State, Message string }
+type versionReply struct{ Latest, Current, State, Message, Supported string }
 
 type kurakaReply struct {
 	Latest, Current, Commit, URL, State, Kind, Message string
@@ -83,11 +83,12 @@ type kurakaReply struct {
 }
 
 type deskReply struct {
-	ID      int64
-	Name    string
-	Current string
-	State   string
-	Message string
+	ID        int64
+	Name      string
+	Current   string
+	State     string
+	Message   string
+	Supported string
 }
 
 type libredeskReply struct {
@@ -115,6 +116,9 @@ func decodeUpdates(t *testing.T, b []byte) updatesReply {
 }
 
 func TestUpdatesStatusAndCheck(t *testing.T) {
+	if webuiRepo != "stalwartlabs/webui" {
+		t.Fatalf("webui repo = %q", webuiRepo)
+	}
 	h, gh, _, desk, _ := updatesHarness(t)
 	v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200))
 	if v.CheckedAt != nil || !v.UpdatesDir || v.WebUI.State != "unknown" || len(v.Libredesk.Helpdesks) != 1 ||
@@ -125,8 +129,8 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 		t.Fatalf("desk before check: %+v", d)
 	}
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
-	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != "v2.10.0" || v.Libredesk.Helpdesks[0].State != "available" ||
-		v.WebUI.Latest != "v2.0.4-kuraka.2" || v.WebUI.Current != "" || v.WebUI.State != "available" ||
+	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != "v2.9.3" || v.Libredesk.Helpdesks[0].State != "available" ||
+		v.WebUI.Latest != "v2.0.4" || v.WebUI.Current != "" || v.WebUI.State != "available" ||
 		v.Stalwart.Latest != "v1.0.3" || v.Stalwart.State != "available" {
 		t.Fatalf("after check: %+v", v)
 	}
@@ -146,7 +150,7 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	if n := gh.hitCount(); n != 8 {
 		t.Fatalf("GitHub hits = %d, want 8", n)
 	}
-	if v.Error == "" || v.WebUI.Latest != "v2.0.4-kuraka.2" || v.Kuraka.Latest != "v99.0.0" ||
+	if v.Error == "" || v.WebUI.Latest != "v2.0.4" || v.Kuraka.Latest != "v99.0.0" ||
 		v.Kuraka.LatestCommit != strings.Repeat("a", 40) || v.Kuraka.URL != "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0" ||
 		!strings.Contains(v.Error, webuiRepo) || !strings.Contains(v.Error, kurakaRepo) {
 		t.Fatalf("failed check must keep the previous tag: %+v", v)
@@ -158,12 +162,77 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	admin.do("POST", "/updates/kuraka", nil, 403)
 }
 
+func TestAddonUpdatesWaiting(t *testing.T) {
+	h, gh, dir, desk, _ := updatesHarness(t)
+	gh.mu.Lock()
+	gh.tags[stalwartRepo] = "v1.1.0"
+	gh.tags[webuiRepo] = "v2.1.0"
+	gh.tags[libredeskRepo] = "v2.10.0"
+	gh.mu.Unlock()
+	v := decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
+	if v.Stalwart.State != "waiting" || v.Stalwart.Supported != "1.0" ||
+		v.WebUI.State != "waiting" || v.WebUI.Supported != "2.0" ||
+		len(v.Libredesk.Helpdesks) != 1 || v.Libredesk.Helpdesks[0].State != "waiting" ||
+		v.Libredesk.Helpdesks[0].Supported != "2.9" || v.Kuraka.State != "available" {
+		t.Fatalf("waiting: %+v", v)
+	}
+	for _, tc := range []struct{ path, tag string }{
+		{"/updates/stalwart", "v1.1.0"},
+		{"/updates/webui", "v2.1.0"},
+		{fmt.Sprintf("/helpdesks/%d/update", desk), "v2.10.0"},
+	} {
+		body := h.root.do("POST", tc.path, nil, 409)
+		assertCode(t, body, "conflict")
+		got := object(t, body)["error"].(map[string]any)["message"]
+		if want := "Waiting for a Kuraka update that supports " + tc.tag; got != want {
+			t.Fatalf("%s: %v, want %s", tc.path, got, want)
+		}
+	}
+	for _, name := range []string{"stalwart.json", "libredesk-kuraka-acme-desk.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("blocked update wrote %s: %v", name, err)
+		}
+	}
+	h.sw.mu.Lock()
+	n := h.sw.appsUpdated
+	h.sw.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("blocked webui called UpdateApps %d times", n)
+	}
+	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != "" {
+		t.Fatalf("blocked webui applied setting: %q %v", applied, err)
+	}
+	// Disabling an addon does not bypass update compatibility.
+	h.root.do("PUT", "/addons/stalwart", map[string]bool{"disabled": true}, 200)
+	h.root.do("POST", "/updates/stalwart", nil, 409)
+	h.root.do("POST", "/updates/kuraka", nil, 200)
+}
+
+func TestAddonCompatibilityStates(t *testing.T) {
+	for _, status := range []string{"unknown", "current", "updating", "error"} {
+		row := map[string]any{"state": status}
+		addonCompatibility(row, "stalwart", "v99.0.0")
+		if len(row) != 1 || row["state"] != status {
+			t.Fatalf("%s: %v", status, row)
+		}
+	}
+	for _, tc := range []struct{ component, tag string }{
+		{"stalwart", "v1.0.99"}, {"webui", "v2.0.99"}, {"libredesk", "v2.9.99"},
+	} {
+		row := map[string]any{"state": "available"}
+		addonCompatibility(row, tc.component, tc.tag)
+		if len(row) != 1 || row["state"] != "available" {
+			t.Fatalf("supported %s: %v", tc.component, row)
+		}
+	}
+}
+
 func TestUpdateWebUI(t *testing.T) {
 	h, _, _, _, _ := updatesHarness(t)
 	h.root.do("POST", "/updates/webui", nil, 409)
 	h.root.do("POST", "/updates/check", nil, 200)
 	v := decodeUpdates(t, h.root.do("POST", "/updates/webui", nil, 200))
-	if v.WebUI.Current != "v2.0.4-kuraka.2" || v.WebUI.State != "current" {
+	if v.WebUI.Current != "v2.0.4" || v.WebUI.State != "current" {
 		t.Fatalf("webui: %+v", v.WebUI)
 	}
 	h.sw.mu.Lock()
@@ -172,7 +241,7 @@ func TestUpdateWebUI(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("UpdateApps calls = %d", n)
 	}
-	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != "v2.0.4-kuraka.2" {
+	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != "v2.0.4" {
 		t.Fatalf("applied = %q %v", applied, err)
 	}
 }
@@ -195,7 +264,7 @@ func TestUpdateHelpdesk(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]string
-	if err := json.Unmarshal(data, &got); err != nil || len(got) != 2 || got["container"] != "kuraka-acme-desk" || got["tag"] != "v2.10.0" {
+	if err := json.Unmarshal(data, &got); err != nil || len(got) != 2 || got["container"] != "kuraka-acme-desk" || got["tag"] != "v2.9.3" {
 		t.Fatalf("request file: %s", data)
 	}
 	assertCode(t, h.root.do("POST", path, nil, 409), "conflict")
@@ -210,7 +279,7 @@ func TestUpdateHelpdesk(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeResult(`{"tag":"v2.10.0","status":"error","message":"pull failed","at":"2026-11-04T10:00:00Z","current":"v2.9.2"}`)
+	writeResult(`{"tag":"v2.9.3","status":"error","message":"pull failed","at":"2026-11-04T10:00:00Z","current":"v2.9.2"}`)
 	d := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Libredesk.Helpdesks[0]
 	if d.State != "error" || d.Message != "pull failed" || d.Current != "v2.9.2" {
 		t.Fatalf("error result: %+v", d)
@@ -220,9 +289,9 @@ func TestUpdateHelpdesk(t *testing.T) {
 	if err := os.Remove(request); err != nil {
 		t.Fatal(err)
 	}
-	writeResult(`{"tag":"v2.10.0","status":"ok","message":"","at":"2026-11-04T10:05:00Z","current":"v2.10.0"}`)
+	writeResult(`{"tag":"v2.9.3","status":"ok","message":"","at":"2026-11-04T10:05:00Z","current":"v2.9.3"}`)
 	d = decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Libredesk.Helpdesks[0]
-	if d.State != "current" || d.Current != "v2.10.0" || d.Message != "" {
+	if d.State != "current" || d.Current != "v2.9.3" || d.Message != "" {
 		t.Fatalf("ok result: %+v", d)
 	}
 	h.root.do("POST", path, nil, 409) // nothing to update
