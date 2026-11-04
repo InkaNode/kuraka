@@ -12,7 +12,7 @@ export function renderLayout(me, content) {
   const links = [
     ['/domains', 'nav.domains', 'globe'],
     ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users']] : []),
-    ['/audit', 'nav.audit', 'list'], ['/account', 'nav.account', 'user'],
+    ['/audit', 'nav.audit', 'list'], ['/integrations', 'nav.integrations', 'link'], ['/account', 'nav.account', 'user'],
   ];
   const toggle = button({ icon: 'menu', variant: 'ghost', ariaLabel: t('nav.menu'), onClick: () => {
     const open = root.classList.toggle('menu-open');
