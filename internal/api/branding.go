@@ -42,8 +42,8 @@ func resolveBranding(app string, tenant, global map[string]store.Branding) store
 	}
 	var out store.Branding
 	for _, l := range layers {
-		dst := []*string{&out.Name, &out.Logo, &out.Icon, &out.Color, &out.GradientFrom, &out.GradientTo, &out.Banner}
-		src := []string{l.Name, l.Logo, l.Icon, l.Color, l.GradientFrom, l.GradientTo, l.Banner}
+		dst := []*string{&out.Name, &out.Logo, &out.Icon, &out.Color, &out.GradientFrom, &out.GradientTo, &out.Banner, &out.MaintenanceMessage}
+		src := []string{l.Name, l.Logo, l.Icon, l.Color, l.GradientFrom, l.GradientTo, l.Banner, l.MaintenanceMessage}
 		for i, p := range dst {
 			if *p == "" {
 				*p = src[i]
@@ -171,6 +171,16 @@ func (s *Server) updateBranding(_ http.ResponseWriter, r *http.Request) (any, er
 	if utf8.RuneCountInString(b.Name) > 64 || strings.IndexFunc(b.Name, unicode.IsControl) >= 0 {
 		return nil, invalid("name")
 	}
+	if app != "kuraka" && b.MaintenanceMessage != "" {
+		return nil, invalid("maintenance_message: only Kuraka branding applies")
+	}
+	if strings.IndexFunc(b.MaintenanceMessage, func(r rune) bool { return r != '\n' && unicode.IsControl(r) }) >= 0 {
+		return nil, invalid("maintenance_message")
+	}
+	b.MaintenanceMessage = strings.TrimSpace(b.MaintenanceMessage)
+	if utf8.RuneCountInString(b.MaintenanceMessage) > 500 {
+		return nil, invalid("maintenance_message")
+	}
 	for _, c := range []*string{&b.Color, &b.GradientFrom, &b.GradientTo} {
 		if *c != "" && !brandingColor.MatchString(*c) {
 			return nil, invalid("color")
@@ -195,6 +205,11 @@ func (s *Server) updateBranding(_ http.ResponseWriter, r *http.Request) (any, er
 	}
 	if err := s.st.SetBranding(r.Context(), tenant, app, b); err != nil {
 		return nil, err
+	}
+	if tenant == nil && (app == "kuraka" || app == "default") {
+		if err := s.writeMaintenancePage(r.Context()); err != nil {
+			s.log.Warn("maintenance page render failed", "error", err)
+		}
 	}
 	// Uploads younger than an hour may belong to a form not saved yet.
 	if err := s.st.DeleteUnusedBrandingAssets(r.Context(), s.now().Add(-time.Hour)); err != nil {

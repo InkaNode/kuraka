@@ -84,6 +84,14 @@ func TestBrandingValidation(t *testing.T) {
 		{"/branding/kuraka", map[string]string{"logo": strings.Repeat("0", 32)}},
 		{"/branding/kuraka", map[string]string{"icon": "../x"}},
 		{"/branding/desk", map[string]string{"color": "#000000"}},
+		{"/branding/default", map[string]string{"maintenance_message": "Maintenance"}},
+		{"/branding/stalwart", map[string]string{"maintenance_message": "Maintenance"}},
+		{"/branding/desk", map[string]string{"maintenance_message": "Maintenance"}},
+		{"/branding/kuraka", map[string]string{"maintenance_message": strings.Repeat("界", 501)}},
+		{"/branding/kuraka", map[string]string{"maintenance_message": "a\tb"}},
+		{"/branding/kuraka", map[string]string{"maintenance_message": "a\rb"}},
+		{"/branding/kuraka", map[string]string{"maintenance_message": "\x00text"}},
+		{"/branding/kuraka", map[string]string{"maintenance_message": "text\x7f"}},
 	} {
 		assertCode(t, h.root.do("PUT", c.path, c.body, 422), "invalid_input")
 	}
@@ -94,6 +102,31 @@ func TestBrandingValidation(t *testing.T) {
 	saved := out["saved"].(map[string]any)
 	if len(saved) != 3 || saved["name"] != "Inka" || saved["color"] != "#abcdef" || saved["logo"] != id || len(out["desks"].([]any)) != 0 {
 		t.Fatalf("saved: %v", out)
+	}
+}
+
+func TestBrandingMaintenanceMessage(t *testing.T) {
+	h := newHarness(t, true)
+	message := strings.Repeat("界", 498) + "\nX"
+	out := object(t, h.root.do("PUT", "/branding/kuraka", map[string]string{"maintenance_message": "  " + message + "  \n"}, 200))
+	if saved := out["saved"].(map[string]any); saved["maintenance_message"] != message {
+		t.Fatalf("saved: %v", saved)
+	}
+	global, err := h.st.GetBranding(context.Background(), nil)
+	if err != nil || global["kuraka"].MaintenanceMessage != message {
+		t.Fatalf("stored message: %+v %v", global, err)
+	}
+	tenant := map[string]store.Branding{"kuraka": {Name: "Tenant"}}
+	if got := resolveBranding("kuraka", tenant, global); got.MaintenanceMessage != message {
+		t.Fatalf("inherited message: %+v", got)
+	}
+	tenant["kuraka"] = store.Branding{MaintenanceMessage: "Tenant message"}
+	if got := resolveBranding("kuraka", tenant, global); got.MaintenanceMessage != "Tenant message" {
+		t.Fatalf("tenant message: %+v", got)
+	}
+	h.root.do("PUT", "/branding/kuraka", map[string]string{"maintenance_message": "  \n  "}, 200)
+	if got := object(t, h.root.do("GET", "/branding/kuraka", nil, 200)); got["maintenance_message"] != nil {
+		t.Fatalf("empty message: %v", got)
 	}
 }
 
