@@ -314,3 +314,31 @@ func TestMigrationJobs(t *testing.T) {
 	_, err = s.GetMigrationJob(testContext, jobC.ID)
 	mustOK(t, err)
 }
+
+func TestActivateHelpdesk(t *testing.T) {
+	s := newTestStore(t)
+	tenant := makeTenant(t, s, "Tenant")
+	desk, err := s.CreateHelpdesk(testContext, Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: "desk",
+		URL: "http://kuraka-tenant-desk:9000", Status: "pending", SetupSecretEnc: "setup-enc"})
+	mustOK(t, err)
+	got, err := s.GetHelpdesk(testContext, desk.ID)
+	mustOK(t, err)
+	mustEqual(t, got, desk)
+	mustOK(t, s.ActivateHelpdesk(testContext, desk.ID, "api-key", "api-secret-enc"))
+	got, err = s.GetHelpdesk(testContext, desk.ID)
+	mustOK(t, err)
+	mustEqual(t, got.Status, "ready")
+	mustEqual(t, got.SetupSecretEnc, "")
+	mustEqual(t, got.APIKey, "api-key")
+	mustEqual(t, got.APISecretEnc, "api-secret-enc")
+	mustErrorIs(t, s.ActivateHelpdesk(testContext, desk.ID, "replacement", "replacement"), ErrNotFound)
+	mustErrorIs(t, s.ActivateHelpdesk(testContext, 999, "replacement", "replacement"), ErrNotFound)
+	again, err := s.GetHelpdesk(testContext, desk.ID)
+	mustOK(t, err)
+	mustEqual(t, again, got)
+	manual, err := s.CreateHelpdesk(testContext, Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: "manual", URL: "u"})
+	mustOK(t, err)
+	mustEqual(t, manual.Status, "ready")
+	_, err = s.CreateHelpdesk(testContext, Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: "bad", URL: "u", Status: "invalid"})
+	mustErrorIs(t, err, ErrConflict)
+}

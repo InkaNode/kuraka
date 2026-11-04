@@ -27,7 +27,8 @@ func unzip(t *testing.T, b []byte) map[string]string {
 			t.Fatal(err)
 		}
 		out[f.Name] = string(data)
-		if f.Mode().Perm() != 0600 {
+		mode := f.Mode().Perm()
+		if mode != 0600 && (f.Name != "install.sh" || mode != 0700) {
 			t.Fatalf("public secrets: %v", f.Mode())
 		}
 	}
@@ -35,24 +36,24 @@ func unzip(t *testing.T, b []byte) map[string]string {
 }
 
 func TestBundle(t *testing.T) {
-	a, err := Bundle("../Á Team: ONE\n", Options{})
+	a, err := Bundle("../Á Team: ONE\n", "desk.example.com", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Bundle("../Á Team: ONE\n", Options{})
+	b, err := Bundle("../Á Team: ONE\n", "desk.example.com", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, other := unzip(t, a), unzip(t, b)
-	if len(files) != 4 {
+	files, other := unzip(t, a.Zip), unzip(t, b.Zip)
+	if len(files) != 6 {
 		t.Fatalf("files: %v", files)
 	}
-	for _, name := range []string{"docker-compose.yml", "config.toml", ".env", "README.txt"} {
+	for _, name := range []string{"docker-compose.yml", "config.toml", ".env", "README.txt", "desk.caddy", "install.sh"} {
 		if files[name] == "" {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	for _, want := range []string{"name: kuraka-team-one", "libredesk/libredesk:latest", "postgres:17-alpine", "redis:7-alpine", "127.0.0.1:9000:9000", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
+	for _, want := range []string{"name: kuraka-team-one", "libredesk/libredesk:v2.9.2", "postgres:17-alpine", "redis:7-alpine", "container_name: kuraka-team-one-desk", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
 		if !strings.Contains(files["docker-compose.yml"], want) {
 			t.Errorf("missing %s", want)
 		}
@@ -66,6 +67,9 @@ func TestBundle(t *testing.T) {
 		values[k] = v
 	}
 	pass := values["LIBREDESK_SYSTEM_USER_PASSWORD"]
+	if pass != a.SystemPassword {
+		t.Fatal("system password mismatch")
+	}
 	if len(pass) < 10 || !strings.ContainsAny(pass, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") || !strings.ContainsAny(pass, "abcdefghijklmnopqrstuvwxyz") || !strings.ContainsAny(pass, "0123456789") || !strings.ContainsAny(pass, "!@#$%^&*") {
 		t.Fatal("weak system password")
 	}
@@ -81,24 +85,39 @@ func TestBundle(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"docker compose up -d", "System", "Admin > Agents", "POST /api/v1/agents/1/api-key", "Kuraka > Integraciones", "ENGLISH", "ESPAÑOL"} {
+	for _, want := range []string{"sh install.sh", "Activar", "Activate", "CNAME", "desk.example.com", "Kuraka > Integraciones", "ENGLISH", "ESPAÑOL"} {
 		if !strings.Contains(files["README.txt"], want) {
 			t.Errorf("README missing %s", want)
 		}
 	}
+	if a.InternalURL != "http://kuraka-team-one-desk:9000" || strings.Contains(files["docker-compose.yml"], "ports:") {
+		t.Fatal("app must use only the internal network")
+	}
+	if !strings.Contains(files["config.toml"], "disable_secure_cookies = false") {
+		t.Fatal("insecure cookies")
+	}
+	if files["desk.caddy"] != "desk.example.com {\n\timport security_headers\n\treverse_proxy kuraka-team-one-desk:9000\n}\n" {
+		t.Fatal("Caddy site mismatch")
+	}
+	for _, want := range []string{"set -eu", `cd "$(dirname "$0")"`, "KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}", "docker compose up -d", `cp desk.caddy "$KURAKA_DEPLOY/sites/team-one-desk.caddy"`, `docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile`, "Listo.", "Done."} {
+		if !strings.Contains(files["install.sh"], want) {
+			t.Errorf("installer missing %s", want)
+		}
+	}
+
 }
 
 func TestBundleOptions(t *testing.T) {
-	b, err := Bundle("", Options{MailNetwork: "lab_mail", HTTPPort: 9876})
+	b, err := Bundle("", "desk.example.com", Options{MailNetwork: "lab_mail"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := unzip(t, b)
-	if !strings.Contains(files["docker-compose.yml"], "127.0.0.1:9876:9000") || !strings.Contains(files["docker-compose.yml"], "name: lab_mail") {
+	files := unzip(t, b.Zip)
+	if !strings.Contains(files["docker-compose.yml"], "name: lab_mail") {
 		t.Fatal("options ignored")
 	}
-	for _, opts := range []Options{{HTTPPort: -1}, {HTTPPort: 65536}, {MailNetwork: "bad\nnetwork"}, {MailNetwork: "${PASSWORD}"}} {
-		if _, err := Bundle("test", opts); err == nil {
+	for _, opts := range []Options{{MailNetwork: "bad\nnetwork"}, {MailNetwork: "${PASSWORD}"}} {
+		if _, err := Bundle("test", "desk.example.com", opts); err == nil {
 			t.Fatal("accepted invalid options")
 		}
 	}

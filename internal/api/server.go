@@ -62,6 +62,7 @@ type Server struct {
 	now         func() time.Time
 	adminMu     sync.Mutex // serializes setup and last-enabled-superadmin checks
 	domainMu    sync.Mutex // serializes domain and alias name reservations
+	helpdeskMu  sync.Mutex // serializes activation and pending deletion
 	setupToken  string
 	limiter     failureLimiter
 	ipLimiter   failureLimiter

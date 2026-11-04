@@ -26,6 +26,7 @@ type DNSAPI interface {
 }
 
 type HelpdeskAPI interface {
+	SystemAPIKey(context.Context, string) (string, string, error)
 	Ping(context.Context) error
 	ListInboxes(context.Context) ([]libredesk.Inbox, error)
 	CreateEmailInbox(context.Context, libredesk.NewEmailInbox) (int64, error)
@@ -47,7 +48,8 @@ func (s *Server) integrationRoutes(route func(string, string, bool, bool, endpoi
 	route("GET /api/v1/helpdesks", "helpdesk.list", false, false, s.helpdesks)
 	route("POST /api/v1/helpdesks", "helpdesk.create", false, false, s.createHelpdesk)
 	route("DELETE /api/v1/helpdesks/{id}", "helpdesk.delete", false, false, s.deleteHelpdesk)
-	route("GET /api/v1/helpdesks/bundle", "helpdesk.bundle", false, true, s.helpdeskBundle)
+	route("POST /api/v1/helpdesks/provision", "helpdesk.provision", false, true, s.provisionHelpdesk)
+	route("POST /api/v1/helpdesks/{id}/activate", "helpdesk.activate", false, false, s.activateHelpdesk)
 	route("GET /api/v1/domains/{id}/mailboxes/{mid}/helpdesk", "mailbox.helpdesk.list", false, false, s.mailboxHelpdesks)
 	route("POST /api/v1/domains/{id}/mailboxes/{mid}/helpdesk", "mailbox.helpdesk.connect", false, false, s.connectHelpdesk)
 	route("DELETE /api/v1/domains/{id}/mailboxes/{mid}/helpdesk/{link}", "mailbox.helpdesk.disconnect", false, false, s.disconnectHelpdesk)
@@ -196,7 +198,7 @@ func (s *Server) assignDNSProvider(_ http.ResponseWriter, r *http.Request) (any,
 }
 
 func helpdeskJSON(h store.Helpdesk) map[string]any {
-	return map[string]any{"id": h.ID, "tenant_id": h.TenantID, "kind": h.Kind, "name": h.Name, "url": h.URL, "created_at": h.CreatedAt}
+	return map[string]any{"id": h.ID, "tenant_id": h.TenantID, "kind": h.Kind, "name": h.Name, "url": h.URL, "status": h.Status, "created_at": h.CreatedAt}
 }
 
 func (s *Server) helpdesks(_ http.ResponseWriter, r *http.Request) (any, error) {
@@ -255,6 +257,8 @@ func (s *Server) helpdeskClient(h store.Helpdesk) (HelpdeskAPI, error) {
 }
 
 func (s *Server) deleteHelpdesk(_ http.ResponseWriter, r *http.Request) (any, error) {
+	s.helpdeskMu.Lock()
+	defer s.helpdeskMu.Unlock()
 	id, err := pathID(r)
 	if err != nil {
 		return nil, err
@@ -267,6 +271,9 @@ func (s *Server) deleteHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 		return nil, err
 	}
 	state(r).tenant = &h.TenantID
+	if h.Status == "pending" {
+		return reply{204, nil}, s.st.DeleteHelpdesk(r.Context(), id)
+	}
 	// Revoke credentials before the store cascades the link rows.
 	domains, err := s.st.ListDomains(r.Context(), &h.TenantID)
 	if err != nil {
@@ -297,15 +304,120 @@ type download struct {
 	data        []byte
 }
 
-func (s *Server) helpdeskBundle(_ http.ResponseWriter, r *http.Request) (any, error) {
-	id, err := positiveID(r.URL.Query().Get("tenant_id"), "tenant_id")
+func (s *Server) provisionHelpdesk(w http.ResponseWriter, r *http.Request) (any, error) {
+	var in struct {
+		TenantID int64  `json:"tenant_id"`
+		Host     string `json:"host"`
+	}
+	if err := decode(r, &in); err != nil {
+		return nil, err
+	}
+	host, err := hostname(in.Host, "helpdesk")
+	if err != nil || !strings.Contains(host, ".") || in.TenantID <= 0 {
+		return nil, invalid("helpdesk")
+	}
+	tenant, err := s.st.GetTenant(r.Context(), in.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	tenant, err := s.st.GetTenant(r.Context(), id)
+	state(r).tenant = &tenant.ID
+	bundle, err := provision.Bundle(tenant.Name, host, provision.Options{})
 	if err != nil {
 		return nil, err
 	}
-	data, err := provision.Bundle(tenant.Name, provision.Options{})
-	return download{"application/zip", data}, err
+	enc, err := s.box.Seal([]byte(bundle.SystemPassword))
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.st.CreateHelpdesk(r.Context(), store.Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: host,
+		URL: bundle.InternalURL, Status: "pending", SetupSecretEnc: enc})
+	if err != nil {
+		return nil, err
+	}
+	w.Header().Set("X-Kuraka-DNS", s.provisionHelpdeskDNS(r.Context(), tenant.ID, host))
+	return download{"application/zip", bundle.Zip}, nil
+}
+
+func (s *Server) provisionHelpdeskDNS(ctx context.Context, tenantID int64, host string) string {
+	domains, err := s.st.ListDomains(ctx, &tenantID)
+	if err != nil {
+		return "error"
+	}
+	var domain *store.Domain
+	for _, d := range domains {
+		if d.DNSProviderID != nil && strings.HasSuffix(host, "."+d.Name) && (domain == nil || len(d.Name) > len(domain.Name)) {
+			domain = &d
+		}
+	}
+	if domain == nil {
+		return "manual"
+	}
+	if s.cfg.MailHost == "" {
+		return "error"
+	}
+	client, err := s.dnsClient(ctx, *domain)
+	if err != nil {
+		return "error"
+	}
+	zone, err := client.FindZone(ctx, domain.Name)
+	if err != nil {
+		return "error"
+	}
+	records, err := client.ListRecords(ctx, zone.ID)
+	if err != nil {
+		return "error"
+	}
+	for _, record := range records {
+		if dnsName(record.Name) == host {
+			return "exists"
+		}
+	}
+	_, err = client.CreateRecord(ctx, zone.ID, cloudflare.Record{Type: "CNAME", Name: host,
+		Content: s.cfg.MailHost, TTL: 1, Proxied: false, Comment: managedComment})
+	if err != nil {
+		return "error"
+	}
+	return "created"
+}
+
+var helpdeskNotReady = &apiError{status: 409, code: "helpdesk_not_ready", message: "Libredesk is not ready"}
+
+func (s *Server) activateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, error) {
+	s.helpdeskMu.Lock()
+	defer s.helpdeskMu.Unlock()
+	id, err := pathID(r)
+	if err != nil {
+		return nil, err
+	}
+	h, err := s.st.GetHelpdesk(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if err := ownerScope(r, &h.TenantID); err != nil {
+		return nil, err
+	}
+	state(r).tenant = &h.TenantID
+	if h.Status == "ready" {
+		return helpdeskJSON(h), nil
+	}
+	password, err := s.box.Open(h.SetupSecretEnc)
+	if err != nil {
+		return nil, err
+	}
+	key, secret, err := s.newHelpdesk(h.URL, "", "").SystemAPIKey(r.Context(), string(password))
+	if err != nil {
+		return nil, helpdeskNotReady
+	}
+	if err := s.newHelpdesk(h.URL, key, secret).Ping(r.Context()); err != nil {
+		return nil, helpdeskNotReady
+	}
+	enc, err := s.box.Seal([]byte(secret))
+	if err != nil {
+		return nil, err
+	}
+	if err := s.st.ActivateHelpdesk(r.Context(), id, key, enc); err != nil {
+		return nil, err
+	}
+	h, err = s.st.GetHelpdesk(r.Context(), id)
+	return helpdeskJSON(h), err
 }

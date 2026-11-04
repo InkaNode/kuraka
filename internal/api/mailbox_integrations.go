@@ -64,6 +64,9 @@ func (s *Server) connectHelpdesk(_ http.ResponseWriter, r *http.Request) (any, e
 	if h.TenantID != d.TenantID {
 		return nil, authz.ErrNotFound
 	}
+	if h.Status == "pending" {
+		return nil, helpdeskNotReady
+	}
 	links, err := s.st.ListHelpdeskLinks(r.Context(), d.ID, a.ID)
 	if err != nil {
 		return nil, err

@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ type fakeDNS struct {
 	created, updated, deleted []cloudflare.Record
 	redirects                 map[string]string
 	verifyErr                 error
+	listErr                   error
 	next                      int
 }
 
@@ -36,7 +39,7 @@ func (f *fakeDNS) FindZone(_ context.Context, name string) (cloudflare.Zone, err
 func (f *fakeDNS) ListRecords(_ context.Context, zone string) ([]cloudflare.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]cloudflare.Record{}, f.records[zone]...), nil
+	return append([]cloudflare.Record{}, f.records[zone]...), f.listErr
 }
 func (f *fakeDNS) CreateRecord(_ context.Context, zone string, r cloudflare.Record) (cloudflare.Record, error) {
 	f.mu.Lock()
@@ -91,8 +94,16 @@ type fakeHelpdesk struct {
 	created                       []libredesk.NewEmailInbox
 	deleted                       []int64
 	pingErr, createErr, deleteErr error
+	setupErr                      error
+	setupPasswords                []string
 }
 
+func (f *fakeHelpdesk) SystemAPIKey(_ context.Context, password string) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setupPasswords = append(f.setupPasswords, password)
+	return "generated-key", "generated-secret", f.setupErr
+}
 func (f *fakeHelpdesk) Ping(context.Context) error { return f.pingErr }
 func (f *fakeHelpdesk) ListInboxes(context.Context) ([]libredesk.Inbox, error) {
 	return []libredesk.Inbox{}, nil
@@ -394,16 +405,13 @@ func TestMailHostAndBundle(t *testing.T) {
 	parts := strings.Split(path, "/")
 	body := map[string]any{"account_id": parts[len(parts)-1], "source_host": "source.test", "source_port": 993, "source_password": "secret", "source_user": "user"}
 	assertCode(t, h.root.do("POST", fmt.Sprintf("/domains/%d/migrations", domain), body, 409), "mail_host_not_configured")
-	status, data, headers := h.root.raw("GET", fmt.Sprintf("/helpdesks/bundle?tenant_id=%d", tenant), "", "", "")
-	if status != 200 || headers.Get("Content-Type") != "application/zip" {
-		t.Fatalf("bundle status %d", status)
-	}
+	data := h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.a.test"}, 200)
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil || len(z.File) != 4 {
+	if err != nil || len(z.File) != 6 {
 		t.Fatalf("bundle: %v", err)
 	}
 	c := h.admin(tenant, "admin@a.test")
-	c.do("GET", fmt.Sprintf("/helpdesks/bundle?tenant_id=%d", tenant), nil, 403)
+	c.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.a.test"}, 403)
 }
 
 func TestMigrationsCreateListCancel(t *testing.T) {
@@ -458,4 +466,166 @@ func TestMigrationsCreateListCancel(t *testing.T) {
 	deniedAudit(t, cb, "migration.cancel")
 	deniedAudit(t, cb, "migration.list")
 	deniedAudit(t, ca, "migration.create")
+}
+
+func TestProvisionAndActivateHelpdesk(t *testing.T) {
+	h, _, hd := integrations(t)
+	tenant := h.tenant("Provision")
+	foreign := h.tenant("Other")
+	body := fmt.Sprintf(`{"tenant_id":%d,"host":"  DESK.EXAMPLE.COM  "}`, tenant)
+	status, data, headers := h.root.raw("POST", "/helpdesks/provision", body, "http://kuraka.test", "application/json")
+	if status != 200 || headers.Get("Content-Type") != "application/zip" || headers.Get("X-Kuraka-DNS") != "manual" {
+		t.Fatalf("provision: %d %v", status, headers)
+	}
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, file := range z.File {
+		r, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[file.Name] = string(b)
+	}
+	if files["desk.caddy"] == "" || files["install.sh"] == "" {
+		t.Fatal("missing installer files")
+	}
+	rows, err := h.st.ListHelpdesks(context.Background(), &tenant)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("pending rows: %v", err)
+	}
+	desk := rows[0]
+	if desk.Name != "desk.example.com" || desk.URL != "http://kuraka-provision-desk:9000" || desk.Status != "pending" || desk.APIKey != "" || desk.APISecretEnc != "" {
+		t.Fatalf("invalid pending helpdesk: id=%d status=%s", desk.ID, desk.Status)
+	}
+	password, err := h.s.box.Open(desk.SetupSecretEnc)
+	if err != nil || !strings.Contains(files[".env"], "LIBREDESK_SYSTEM_USER_PASSWORD="+string(password)+"\n") || strings.Contains(desk.SetupSecretEnc, string(password)) {
+		t.Fatal("setup password not encrypted or mismatched")
+	}
+	path := fmt.Sprintf("/helpdesks/%d/activate", desk.ID)
+	h.admin(foreign, "other@admin.test").do("POST", path, nil, 404)
+	domain := h.domain(tenant, "example.com")
+	mailbox := mailboxPath(t, h, domain)
+	assertCode(t, h.root.do("POST", mailbox+"/helpdesk", map[string]any{"helpdesk_id": desk.ID}, 409), "helpdesk_not_ready")
+	if h.sw.appCreated != 0 || len(hd.created) != 0 {
+		t.Fatal("pending connection created resources")
+	}
+	hd.setupErr = errors.New("not listening")
+	assertCode(t, h.root.do("POST", path, nil, 409), "helpdesk_not_ready")
+	hd.setupErr = nil
+	hd.pingErr = errors.New("not ready")
+	assertCode(t, h.root.do("POST", path, nil, 409), "helpdesk_not_ready")
+	still, err := h.st.GetHelpdesk(context.Background(), desk.ID)
+	if err != nil || still.Status != "pending" || still.SetupSecretEnc != desk.SetupSecretEnc {
+		t.Fatal("failed activation lost setup")
+	}
+	hd.pingErr = nil
+	client := h.admin(tenant, "owner@admin.test")
+	result := client.do("POST", path, nil, 200)
+	if object(t, result)["status"] != "ready" || strings.Contains(string(result), "generated-") {
+		t.Fatalf("activation response: %s", result)
+	}
+	ready, err := h.st.GetHelpdesk(context.Background(), desk.ID)
+	if err != nil || ready.Status != "ready" || ready.SetupSecretEnc != "" || ready.APIKey != "generated-key" {
+		t.Fatal("activation did not persist")
+	}
+	secret, err := h.s.box.Open(ready.APISecretEnc)
+	if err != nil || string(secret) != "generated-secret" {
+		t.Fatal("API secret not encrypted")
+	}
+	if len(hd.setupPasswords) != 3 || hd.setupPasswords[2] != string(password) {
+		t.Fatal("invalid setup password")
+	}
+	client.do("POST", path, nil, 200)
+	if len(hd.setupPasswords) != 3 {
+		t.Fatal("ready activation regenerated API key")
+	}
+	h.root.do("POST", mailbox+"/helpdesk", map[string]any{"helpdesk_id": desk.ID}, 201)
+}
+
+func TestProvisionHelpdeskDNS(t *testing.T) {
+	for _, mode := range []string{"created", "exists", "error", "manual"} {
+		t.Run(mode, func(t *testing.T) {
+			h, dns, _ := integrations(t)
+			tenant := h.tenant("DNS")
+			domain := h.domain(tenant, "example.com")
+			if mode != "manual" {
+				id := provider(t, h.root, tenant)
+				h.root.do("PUT", fmt.Sprintf("/domains/%d/dns-provider", domain), map[string]any{"provider_id": id}, 200)
+			}
+			if mode == "exists" {
+				dns.records["example.com"] = []cloudflare.Record{{Name: "desk.example.com", Type: "A", Content: "192.0.2.1"}}
+			}
+			if mode == "error" {
+				dns.listErr = errors.New("Cloudflare unavailable")
+			}
+			body := fmt.Sprintf(`{"tenant_id":%d,"host":"desk.example.com"}`, tenant)
+			status, data, headers := h.root.raw("POST", "/helpdesks/provision", body, "http://kuraka.test", "application/json")
+			if status != 200 || headers.Get("X-Kuraka-DNS") != mode {
+				t.Fatalf("DNS result: %d %v", status, headers)
+			}
+			if _, err := zip.NewReader(bytes.NewReader(data), int64(len(data))); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "created" {
+				if len(dns.created) != 1 {
+					t.Fatal("missing CNAME")
+				}
+				r := dns.created[0]
+				if r.Name != "desk.example.com" || r.Type != "CNAME" || r.Content != "mail.test" || r.Proxied || r.Comment != managedComment {
+					t.Fatalf("CNAME: %+v", r)
+				}
+			} else if len(dns.created) != 0 || len(dns.deleted) != 0 {
+				t.Fatal("unexpected DNS mutation")
+			}
+		})
+	}
+}
+
+func TestProvisionHelpdeskValidationAndPendingDelete(t *testing.T) {
+	h, _, _ := integrations(t)
+	tenant := h.tenant("Validation")
+	for _, host := range []string{"localhost", "desk.test:9000", "https://desk.test", "desk..test", "desk.test/path", "desk.test.", "desk.test\nmalicious", "-desk.test", strings.Repeat("a", 64) + ".test", strings.Repeat("a.", 127) + "test"} {
+		h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": host}, 422)
+	}
+	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": 999, "host": "desk.test"}, 404)
+	h.admin(tenant, "tenant@admin.test").do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 403)
+	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 200)
+	rows, err := h.st.ListHelpdesks(context.Background(), &tenant)
+	if err != nil || len(rows) != 1 {
+		t.Fatal("pending row missing")
+	}
+	h.s.newHelpdesk = func(string, string, string) HelpdeskAPI { t.Fatal("pending deletion created a client"); return nil }
+	h.root.do("DELETE", fmt.Sprintf("/helpdesks/%d", rows[0].ID), nil, 204)
+}
+
+func TestConcurrentHelpdeskActivation(t *testing.T) {
+	h, _, hd := integrations(t)
+	tenant := h.tenant("Concurrent")
+	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 200)
+	rows, err := h.st.ListHelpdesks(context.Background(), &tenant)
+	if err != nil || len(rows) != 1 {
+		t.Fatal("pending row missing")
+	}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			status, body, _ := h.root.raw("POST", fmt.Sprintf("/helpdesks/%d/activate", rows[0].ID), "", "http://kuraka.test", "application/json")
+			var result map[string]any
+			if status != 200 || json.Unmarshal(body, &result) != nil || result["status"] != "ready" {
+				t.Errorf("activation: %d %s", status, body)
+			}
+		})
+	}
+	wg.Wait()
+	if len(hd.setupPasswords) != 1 {
+		t.Fatalf("API key regenerated %d times", len(hd.setupPasswords))
+	}
 }

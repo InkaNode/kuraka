@@ -7,14 +7,16 @@ import (
 
 // Helpdesk is a Libredesk instance. It always belongs to exactly one tenant.
 type Helpdesk struct {
-	ID           int64
-	TenantID     int64
-	Kind         string
-	Name         string
-	URL          string
-	APIKey       string
-	APISecretEnc string
-	CreatedAt    time.Time
+	ID             int64
+	TenantID       int64
+	Kind           string
+	Name           string
+	URL            string
+	APIKey         string
+	APISecretEnc   string
+	Status         string
+	SetupSecretEnc string
+	CreatedAt      time.Time
 }
 
 // HelpdeskLink connects a mailbox to a helpdesk inbox through an app password.
@@ -28,28 +30,36 @@ type HelpdeskLink struct {
 	CreatedAt     time.Time
 }
 
-const helpdeskColumns = `id, tenant_id, kind, name, url, api_key, api_secret_enc, created_at`
+const helpdeskColumns = `id, tenant_id, kind, name, url, api_key, api_secret_enc, status, setup_secret_enc, created_at`
 
 func scanHelpdesk(row scanner) (Helpdesk, error) {
 	var helpdesk Helpdesk
 	var created int64
 	err := row.Scan(&helpdesk.ID, &helpdesk.TenantID, &helpdesk.Kind, &helpdesk.Name,
-		&helpdesk.URL, &helpdesk.APIKey, &helpdesk.APISecretEnc, &created)
+		&helpdesk.URL, &helpdesk.APIKey, &helpdesk.APISecretEnc, &helpdesk.Status, &helpdesk.SetupSecretEnc, &created)
 	helpdesk.CreatedAt = utcTime(created)
 	return helpdesk, err
 }
 
 func (s *Store) CreateHelpdesk(ctx context.Context, helpdesk Helpdesk) (Helpdesk, error) {
+	if helpdesk.Status == "" {
+		helpdesk.Status = "ready"
+	}
 	helpdesk.CreatedAt = creationTime(helpdesk.CreatedAt)
 	result, err := s.db.ExecContext(ctx, `INSERT INTO helpdesks
-		(tenant_id, kind, name, url, api_key, api_secret_enc, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, helpdesk.TenantID, helpdesk.Kind, helpdesk.Name,
-		helpdesk.URL, helpdesk.APIKey, helpdesk.APISecretEnc, helpdesk.CreatedAt.Unix())
+		(tenant_id, kind, name, url, api_key, api_secret_enc, status, setup_secret_enc, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, helpdesk.TenantID, helpdesk.Kind, helpdesk.Name,
+		helpdesk.URL, helpdesk.APIKey, helpdesk.APISecretEnc, helpdesk.Status, helpdesk.SetupSecretEnc, helpdesk.CreatedAt.Unix())
 	if err != nil {
 		return Helpdesk{}, storeError("create helpdesk", err)
 	}
 	helpdesk.ID, err = result.LastInsertId()
 	return helpdesk, storeError("create helpdesk", err)
+}
+
+func (s *Store) ActivateHelpdesk(ctx context.Context, id int64, apiKey, apiSecretEnc string) error {
+	return s.execOne(ctx, "activate helpdesk", `UPDATE helpdesks SET api_key = ?, api_secret_enc = ?,
+		status = 'ready', setup_secret_enc = '' WHERE id = ? AND status = 'pending'`, apiKey, apiSecretEnc, id)
 }
 
 func (s *Store) GetHelpdesk(ctx context.Context, id int64) (Helpdesk, error) {

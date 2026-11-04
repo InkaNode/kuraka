@@ -13,7 +13,12 @@ import (
 
 type Options struct {
 	MailNetwork string
-	HTTPPort    int
+}
+
+type Result struct {
+	Zip            []byte
+	InternalURL    string
+	SystemPassword string
 }
 
 var unsafeName = regexp.MustCompile(`[^a-z0-9]+`)
@@ -29,15 +34,12 @@ func randomHex(n int) (string, error) {
 
 // Bundle returns a zip with fresh credentials on every call. The service and
 // configuration keys follow Libredesk's upstream compose and config sample.
-func Bundle(tenantName string, opts Options) ([]byte, error) {
+func Bundle(tenantName, host string, opts Options) (Result, error) {
 	if opts.MailNetwork == "" {
 		opts.MailNetwork = "kuraka_mail"
 	}
-	if opts.HTTPPort == 0 {
-		opts.HTTPPort = 9000
-	}
-	if !networkName.MatchString(opts.MailNetwork) || opts.HTTPPort < 1 || opts.HTTPPort > 65535 {
-		return nil, fmt.Errorf("invalid bundle options")
+	if !networkName.MatchString(opts.MailNetwork) {
+		return Result{}, fmt.Errorf("invalid bundle options")
 	}
 	name := strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(tenantName), "-"), "-")
 	if len(name) > 48 {
@@ -48,24 +50,24 @@ func Bundle(tenantName string, opts Options) ([]byte, error) {
 	}
 	key, err := randomHex(16)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	dbPass, err := randomHex(24)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	systemPass, err := randomHex(24)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	systemPass = "Aa9!" + systemPass
 	compose := fmt.Sprintf(`name: kuraka-%s
 services:
   app:
-    image: libredesk/libredesk:latest
+    # Update deliberately; --upgrade runs on every start.
+    image: libredesk/libredesk:v2.9.2
+    container_name: kuraka-%s-desk
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:%d:9000"
     environment:
       LIBREDESK_SYSTEM_USER_PASSWORD: ${LIBREDESK_SYSTEM_USER_PASSWORD}
     networks: [default, mail]
@@ -105,14 +107,14 @@ volumes:
   uploads:
   postgres-data:
   redis-data:
-`, name, opts.HTTPPort, opts.MailNetwork)
+`, name, name, opts.MailNetwork)
 	config := fmt.Sprintf(`[app]
 env = "prod"
 log_level = "info"
 encryption_key = "%s"
 [app.server]
 address = "0.0.0.0:9000"
-disable_secure_cookies = true
+disable_secure_cookies = false
 session_lifetime = "9h"
 read_timeout = "60s"
 write_timeout = "60s"
@@ -140,50 +142,57 @@ provider = "fs"
 upload_path = "uploads"
 expiry = "1h"
 `, key, dbPass)
+	caddy := fmt.Sprintf("%s {\n\timport security_headers\n\treverse_proxy kuraka-%s-desk:9000\n}\n", host, name)
+	install := fmt.Sprintf(`#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}
+docker compose up -d
+cp desk.caddy "$KURAKA_DEPLOY/sites/%s-desk.caddy"
+(cd "$KURAKA_DEPLOY" && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile)
+printf '%%s\n' 'Listo. En Kuraka > Integraciones pulse Activar.' 'Done. In Kuraka > Integrations press Activate.'
+`, name)
 	readme := fmt.Sprintf(`Libredesk / Kuraka: %s
 
 ESPAÑOL
+Descomprima el ZIP en el servidor y ejecute: sh install.sh
+Luego, en Kuraka > Integraciones pulse Activar.
+El host %s debe apuntar al servidor. Kuraka crea el CNAME DNS cuando
+el dominio tiene Cloudflare; en otro caso, créelo manualmente.
 La red Docker externa %s debe existir y permitir acceso a Stalwart.
-Ejecute: docker compose up -d
-Abra http://127.0.0.1:%d y entre como System usando
-LIBREDESK_SYSTEM_USER_PASSWORD del archivo .env.
-Cree una clave API de agente en Admin > Agents o mediante
-POST /api/v1/agents/1/api-key, y registre URL, clave y secreto en
-Kuraka > Integraciones para este tenant.
 Los archivos .env y config.toml contienen secretos: guárdelos de forma privada.
-Para publicar con HTTPS, use un proxy y cambie disable_secure_cookies a false.
 
 ENGLISH
+Unzip on the server and run: sh install.sh
+Then, in Kuraka > Integrations press Activate.
+Host %s must point to the server. Kuraka creates the DNS CNAME when
+the domain has Cloudflare; otherwise create it manually.
 The external Docker network %s must exist and provide access to Stalwart.
-Run: docker compose up -d
-Open http://127.0.0.1:%d and log in as System with
-LIBREDESK_SYSTEM_USER_PASSWORD from .env.
-Create an agent API key in Admin > Agents or via
-POST /api/v1/agents/1/api-key, then register the URL, key and secret in
-Kuraka > Integraciones for this tenant.
 Keep .env and config.toml private: they contain deployment secrets.
-For HTTPS publication, use a proxy and set disable_secure_cookies to false.
-`, name, opts.MailNetwork, opts.HTTPPort, opts.MailNetwork, opts.HTTPPort)
+`, name, host, opts.MailNetwork, host, opts.MailNetwork)
 	files := []struct{ name, body string }{
 		{"docker-compose.yml", compose}, {"config.toml", config},
 		{".env", fmt.Sprintf("POSTGRES_PASSWORD=%s\nLIBREDESK_SYSTEM_USER_PASSWORD=%s\n", dbPass, systemPass)},
-		{"README.txt", readme},
+		{"README.txt", readme}, {"desk.caddy", caddy}, {"install.sh", install},
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, file := range files {
 		h := &zip.FileHeader{Name: file.name, Method: zip.Deflate}
 		h.SetMode(0600)
+		if file.name == "install.sh" {
+			h.SetMode(0700)
+		}
 		w, err := zw.CreateHeader(h)
 		if err != nil {
-			return nil, err
+			return Result{}, err
 		}
 		if _, err := w.Write([]byte(file.body)); err != nil {
-			return nil, err
+			return Result{}, err
 		}
 	}
 	if err := zw.Close(); err != nil {
-		return nil, err
+		return Result{}, err
 	}
-	return buf.Bytes(), nil
+	return Result{Zip: buf.Bytes(), InternalURL: "http://kuraka-" + name + "-desk:9000", SystemPassword: systemPass}, nil
 }
