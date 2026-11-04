@@ -95,6 +95,35 @@ func (s *Store) DeleteHelpdesk(ctx context.Context, id int64) error {
 	return s.execOne(ctx, "delete helpdesk", `DELETE FROM helpdesks WHERE id = ?`, id)
 }
 
+// HelpdeskAgent is a Libredesk agent whose password follows a Kuraka user's.
+type HelpdeskAgent struct {
+	HelpdeskID int64
+	AgentID    int64
+}
+
+func (s *Store) LinkHelpdeskAgent(ctx context.Context, helpdeskID, userID, agentID int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO helpdesk_agents (helpdesk_id, user_id, agent_id) VALUES (?, ?, ?)
+		ON CONFLICT(helpdesk_id, user_id) DO UPDATE SET agent_id = excluded.agent_id`, helpdeskID, userID, agentID)
+	return storeError("link helpdesk agent", err)
+}
+
+func (s *Store) ListUserHelpdeskAgents(ctx context.Context, userID int64) ([]HelpdeskAgent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT helpdesk_id, agent_id FROM helpdesk_agents WHERE user_id = ? ORDER BY helpdesk_id`, userID)
+	if err != nil {
+		return nil, storeError("list helpdesk agents", err)
+	}
+	defer rows.Close()
+	agents := make([]HelpdeskAgent, 0)
+	for rows.Next() {
+		var agent HelpdeskAgent
+		if err := rows.Scan(&agent.HelpdeskID, &agent.AgentID); err != nil {
+			return nil, storeError("list helpdesk agents", err)
+		}
+		agents = append(agents, agent)
+	}
+	return agents, storeError("list helpdesk agents", rows.Err())
+}
+
 const helpdeskLinkColumns = `id, domain_id, account_id, helpdesk_id, inbox_id, app_password_id, created_at`
 
 func scanHelpdeskLink(row scanner) (HelpdeskLink, error) {

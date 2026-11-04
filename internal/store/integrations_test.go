@@ -177,6 +177,27 @@ func TestHelpdesks(t *testing.T) {
 	mustEqual(t, links, []HelpdeskLink{link4})
 }
 
+func TestHelpdeskAgents(t *testing.T) {
+	s := newTestStore(t)
+	tenant := makeTenant(t, s, "Tenant")
+	desk, err := s.CreateHelpdesk(testContext, Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: "Desk", URL: "u"})
+	mustOK(t, err)
+	other, err := s.CreateHelpdesk(testContext, Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: "Other", URL: "o"})
+	mustOK(t, err)
+	user := makeAdmin(t, s, "root@example.com", nil)
+	mustOK(t, s.LinkHelpdeskAgent(testContext, desk.ID, user.ID, 7))
+	mustOK(t, s.LinkHelpdeskAgent(testContext, desk.ID, user.ID, 8))
+	mustOK(t, s.LinkHelpdeskAgent(testContext, other.ID, user.ID, 9))
+	mustErrorIs(t, s.LinkHelpdeskAgent(testContext, 999, user.ID, 1), ErrConflict)
+	agents, err := s.ListUserHelpdeskAgents(testContext, user.ID)
+	mustOK(t, err)
+	mustEqual(t, agents, []HelpdeskAgent{{desk.ID, 8}, {other.ID, 9}})
+	mustOK(t, s.DeleteHelpdesk(testContext, other.ID))
+	agents, err = s.ListUserHelpdeskAgents(testContext, user.ID)
+	mustOK(t, err)
+	mustEqual(t, agents, []HelpdeskAgent{{desk.ID, 8}})
+}
+
 func newJob(domainID int64, account string) MigrationJob {
 	return MigrationJob{DomainID: domainID, AccountID: account, SourceHost: "imap.old.example",
 		SourcePort: 993, SourceTLS: "tls", SourceUser: account + "@old.example", SourceSecretEnc: "secret-" + account}

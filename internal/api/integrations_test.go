@@ -17,6 +17,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/cloudflare"
 	"github.com/InkaNode/kuraka/internal/libredesk"
 	"github.com/InkaNode/kuraka/internal/stalwart"
+	"github.com/InkaNode/kuraka/internal/store"
 )
 
 type fakeDNS struct {
@@ -102,6 +103,17 @@ type fakeHelpdesk struct {
 	agentIDs                      []int64
 	agentPasswords                []string
 	agentErr, passwordErr         error
+	syncIDs                       []int64
+	syncPasswords                 []string
+	syncErr                       error
+}
+
+func (f *fakeHelpdesk) SyncAgentPassword(_ context.Context, id int64, password string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncIDs = append(f.syncIDs, id)
+	f.syncPasswords = append(f.syncPasswords, password)
+	return f.syncErr
 }
 
 func (f *fakeHelpdesk) CreateAgent(_ context.Context, a libredesk.NewAgent) (int64, error) {
@@ -417,6 +429,53 @@ func TestCreateHelpdeskAgent(t *testing.T) {
 	if !found {
 		t.Fatal("missing agent audit")
 	}
+}
+
+func TestHelpdeskPasswordSync(t *testing.T) {
+	h, _, hd := integrations(t)
+	tenant := h.tenant("Sync")
+	path := fmt.Sprintf("/helpdesks/%d/agents", helpdesk(t, h.root, tenant))
+	const strong = "Strong Pass 123!"
+	h.root.do("POST", "/users", map[string]any{"email": "boss@example.test", "name": "Boss", "role": "superadmin", "password": strong}, 201)
+	boss := h.newClient()
+	boss.login("boss@example.test", strong, 200)
+	userID := func(c *testClient) int64 { return int64(object(t, c.do("GET", "/auth/me", nil, 200))["id"].(float64)) }
+	links := func(c *testClient) []store.HelpdeskAgent {
+		t.Helper()
+		rows, err := h.st.ListUserHelpdeskAgents(context.Background(), userID(c))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	boss.do("POST", path, map[string]any{"mode": "self", "password": strong}, 201)
+	h.root.do("POST", path, map[string]any{"mode": "self", "password": rootPassword, "sync": false}, 201)
+	h.root.do("POST", path, map[string]any{"mode": "other", "name": "Ada", "email": "ada@example.test", "sync": true}, 201)
+	if got := links(boss); len(got) != 1 || got[0].AgentID != 1 || len(links(h.root)) != 0 {
+		t.Fatalf("invalid sync links: %v", got)
+	}
+	change := func(current, next string) map[string]any {
+		t.Helper()
+		return object(t, boss.do("POST", "/auth/password", map[string]string{"current": current, "new": next}, 200))
+	}
+	counts := func(out map[string]any, synced, failed, weak float64) {
+		t.Helper()
+		if out["ok"] != true || out["helpdesk_synced"] != synced || out["helpdesk_failed"] != failed || out["helpdesk_weak"] != weak {
+			t.Fatalf("invalid sync result: %v", out)
+		}
+	}
+	const next = "Newer Pass 456?"
+	counts(change(strong, next), 1, 0, 0)
+	if len(hd.syncIDs) != 1 || hd.syncIDs[0] != 1 || hd.syncPasswords[0] != next {
+		t.Fatal("Libredesk password not synced")
+	}
+	counts(change(next, rootPassword), 0, 0, 1)
+	if len(hd.syncIDs) != 1 {
+		t.Fatal("weak password sent to Libredesk")
+	}
+	hd.syncErr = errors.New("unavailable")
+	counts(change(rootPassword, strong), 0, 1, 0)
+	h.newClient().login("boss@example.test", strong, 200)
 }
 
 func TestHelpdeskVerificationAndDeleteRevokesLinks(t *testing.T) {

@@ -218,6 +218,54 @@ func TestCreateAgentAndSetPassword(t *testing.T) {
 	}
 }
 
+func TestSyncAgentPassword(t *testing.T) {
+	calls := 0
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		calls++
+		if r.URL.Path != "/api/v1/agents/42" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		if calls == 1 {
+			if r.Method != http.MethodGet {
+				t.Errorf("read: %s", r.Method)
+			}
+			io.WriteString(w, `{"status":"success","data":{"id":42,"first_name":"Ada","last_name":"Lovelace","email":"ada@example.test",
+				"roles":["Agent","Billing"],"enabled":false,"availability_status":"away","teams":[{"id":3,"name":"Support","emoji":"x"},{"id":4,"name":"Sales"}]}}`)
+			return
+		}
+		if r.Method != http.MethodPut {
+			t.Errorf("update: %s", r.Method)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		want := map[string]any{
+			"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.test",
+			"roles": []any{"Agent", "Billing"}, "teams": []any{"Support", "Sales"}, "enabled": false,
+			"availability_status": "away", "new_password": "Strong Pass 123!",
+		}
+		if !reflect.DeepEqual(body, want) {
+			t.Errorf("invalid agent request body: %v", body)
+		}
+		io.WriteString(w, `{"status":"success","data":{}}`)
+	})
+	if err := c.SyncAgentPassword(context.Background(), 42, "Strong Pass 123!"); err != nil || calls != 2 {
+		t.Fatalf("SyncAgentPassword: calls=%d err=%v", calls, err)
+	}
+	c = newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Error("updated an agent it could not read")
+		}
+		w.WriteHeader(404)
+		io.WriteString(w, `{"status":"error","message":"Not found"}`)
+	})
+	if err := c.SyncAgentPassword(context.Background(), 42, "Strong Pass 123!"); err == nil {
+		t.Fatal("missing agent ignored")
+	}
+}
+
 func TestAgentErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

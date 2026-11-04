@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -284,7 +285,41 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) (any, error) {
 	if err := s.newSession(w, r, u, false); err != nil {
 		return nil, err
 	}
-	return map[string]bool{"ok": true}, nil
+	synced, failed, weak := s.syncHelpdeskPasswords(r.Context(), u.ID, in.New)
+	return map[string]any{"ok": true, "helpdesk_synced": synced, "helpdesk_failed": failed, "helpdesk_weak": weak}, nil
+}
+
+// syncHelpdeskPasswords follows a Kuraka password change in linked Libredesk
+// accounts. Failures are counted, never returned: the Kuraka change stands.
+func (s *Server) syncHelpdeskPasswords(ctx context.Context, userID int64, password string) (synced, failed, weak int) {
+	agents, err := s.st.ListUserHelpdeskAgents(ctx, userID)
+	if err != nil {
+		s.log.Error("helpdesk agent list failed", "user_id", userID, "error", err)
+		return 0, 1, 0
+	}
+	for _, a := range agents {
+		h, err := s.st.GetHelpdesk(ctx, a.HelpdeskID)
+		if err != nil || h.Status != "ready" {
+			continue
+		}
+		if !strongHelpdeskPassword(password) {
+			weak++
+			continue
+		}
+		client, err := s.helpdeskClient(h)
+		if err == nil {
+			call, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err = client.SyncAgentPassword(call, a.AgentID, password)
+			cancel()
+		}
+		if err != nil {
+			s.log.Error("helpdesk password sync failed", "helpdesk_id", h.ID, "agent_id", a.AgentID, "error", err)
+			failed++
+			continue
+		}
+		synced++
+	}
+	return synced, failed, weak
 }
 func (s *Server) enroll(_ http.ResponseWriter, r *http.Request) (any, error) {
 	u := state(r).user

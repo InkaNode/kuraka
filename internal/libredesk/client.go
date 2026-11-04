@@ -127,6 +127,44 @@ func (c *Client) SetAgentPassword(ctx context.Context, id int64, a NewAgent, pas
 	return c.do(ctx, http.MethodPut, "/api/v1/agents/"+strconv.FormatInt(id, 10), body, nil)
 }
 
+// SyncAgentPassword changes an existing agent's password. v2.9.2 replaces
+// teams and enabled from the PUT body, so the current values are sent back.
+func (c *Client) SyncAgentPassword(ctx context.Context, id int64, password string) error {
+	path := "/api/v1/agents/" + strconv.FormatInt(id, 10)
+	var cur struct {
+		FirstName          string   `json:"first_name"`
+		LastName           string   `json:"last_name"`
+		Email              string   `json:"email"`
+		Roles              []string `json:"roles"`
+		Enabled            bool     `json:"enabled"`
+		AvailabilityStatus string   `json:"availability_status"`
+		Teams              []struct {
+			Name string `json:"name"`
+		} `json:"teams"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &cur); err != nil {
+		return err
+	}
+	teams := make([]string, 0, len(cur.Teams))
+	for _, t := range cur.Teams {
+		teams = append(teams, t.Name)
+	}
+	roles := cur.Roles
+	if roles == nil {
+		roles = []string{}
+	}
+	return c.do(ctx, http.MethodPut, path, map[string]any{
+		"first_name":          cur.FirstName,
+		"last_name":           cur.LastName,
+		"email":               cur.Email,
+		"roles":               roles,
+		"enabled":             cur.Enabled,
+		"availability_status": cur.AvailabilityStatus,
+		"teams":               teams,
+		"new_password":        password,
+	}, nil)
+}
+
 type envelope struct {
 	Status  string          `json:"status"`
 	Message string          `json:"message"`

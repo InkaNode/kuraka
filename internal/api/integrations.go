@@ -36,6 +36,7 @@ type HelpdeskAPI interface {
 	DeleteInbox(context.Context, int64) error
 	CreateAgent(context.Context, libredesk.NewAgent) (int64, error)
 	SetAgentPassword(context.Context, int64, libredesk.NewAgent, string) error
+	SyncAgentPassword(context.Context, int64, string) error
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)
@@ -429,6 +430,7 @@ func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (an
 		Name     string `json:"name"`
 		Email    string `json:"email"`
 		Role     string `json:"role"`
+		Sync     *bool  `json:"sync"`
 	}
 	if err := decode(r, &in); err != nil {
 		return nil, err
@@ -501,6 +503,12 @@ func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (an
 	}
 	if err := client.SetAgentPassword(r.Context(), agentID, a, password); err != nil {
 		return nil, integrationFailure("Helpdesk agent creation failed", err)
+	}
+	// The account exists either way; a lost link only disables the sync.
+	if in.Mode == "self" && (in.Sync == nil || *in.Sync) {
+		if err := s.st.LinkHelpdeskAgent(r.Context(), h.ID, state(r).user.ID, agentID); err != nil {
+			s.log.Error("helpdesk agent link failed", "helpdesk_id", h.ID, "agent_id", agentID, "error", err)
+		}
 	}
 	out := map[string]any{"email": email, "url": "https://" + h.Name}
 	if generated {
