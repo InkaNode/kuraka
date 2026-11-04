@@ -2,7 +2,7 @@ import '../i18n/integrations.js';
 import { h, mount } from '../core/h.js';
 import { api, ApiError, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, card, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast } from '../core/ui.js';
+import { button, card, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
 
 export async function integrationsView(ctx) {
   const { me } = ctx;
@@ -57,6 +57,7 @@ export async function integrationsView(ctx) {
         ...(!isDNS ? [{ label: t('integrations.status'), render: row => t(`integrations.${row.status}`) }] : []),
         { label: t('integrations.actions'), render: row => h('div', { class: 'row gap-1' },
           !isDNS && row.status === 'pending' ? button({ label: t('integrations.activate'), disabled: activating.has(row.id), onClick: () => activate(row) }) : null,
+          admin && !isDNS && row.status === 'ready' ? button({ label: t('integrations.account'), onClick: () => createAccount(row) }) : null,
           button({
             label: t('delete'), icon: 'trash', variant: 'danger',
             ariaLabel: t('integrations.deleteLabel', { name: row.name }), onClick: event => remove(kind, row, event),
@@ -144,6 +145,51 @@ export async function integrationsView(ctx) {
     admin && !isDNS && !tenants.length ? h('p', { class: 'help' }, t('integrations.noTenants')) : null, submit);
     const dialog = modal({ title, body: form, onClose: () => { closed = true; secret.value = ''; if (key) key.value = ''; },
       actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
+  }
+
+  function createAccount(row) {
+    let busy = false;
+    let closed = false;
+    const mode = select({ name: 'mode', value: 'self', options: [
+      { value: 'self', label: t('integrations.accountSelf', { email: me.email }) }, { value: 'other', label: t('integrations.accountOther') },
+    ] });
+    const password = h('input', { type: 'password', name: 'password', autocomplete: 'current-password' });
+    const name = textInput({ name: 'name', maxlength: 200, autocomplete: 'off' });
+    const email = h('input', { type: 'email', name: 'email', autocomplete: 'off', spellcheck: 'false' });
+    const role = select({ name: 'role', value: 'Admin', options: ['Admin', 'Agent'].map(value => ({ value, label: t(`integrations.role.${value}`) })) });
+    const selfFields = field({ label: t('integrations.accountPassword'), input: password, help: t('integrations.accountPasswordHelp') });
+    const otherFields = h('div', { class: 'stack gap-2' }, field({ label: t('integrations.name'), input: name }), field({ label: t('integrations.accountEmail'), input: email }));
+    function sync() {
+      const self = mode.value === 'self';
+      selfFields.hidden = !self; otherFields.hidden = self;
+      password.required = self; name.required = !self; email.required = !self;
+    }
+    mode.addEventListener('change', sync); sync();
+    const submit = button({ label: t('create'), variant: 'primary', type: 'submit' });
+    const inputs = h('div', { class: 'stack gap-2' }, h('p', { class: 'muted' }, t('integrations.systemHelp')),
+      field({ label: t('integrations.accountFor'), input: mode }), selfFields, otherFields, field({ label: t('integrations.accountRole'), input: role }));
+    const form = h('form', { class: 'stack gap-2', onsubmit: async event => {
+      event.preventDefault();
+      if (busy || !form.reportValidity()) return;
+      const self = mode.value === 'self';
+      busy = true; submit.disabled = true; inputs.inert = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
+      try {
+        const body = self ? { mode: 'self', password: password.value, role: role.value }
+          : { mode: 'other', name: name.value.trim(), email: email.value.trim(), role: role.value };
+        const result = await api('POST', `/helpdesks/${encodeURIComponent(row.id)}/agents`, body);
+        if (!closed) dialog.close();
+        if (!root.isConnected) return;
+        if (result.password) {
+          secretOnce({ title: t('integrations.accountCreated', { email: result.email }), label: t('integrations.password'), secret: result.password });
+          toast(t('integrations.accountSignIn', { url: result.url, email: result.email }));
+        } else toast(t('integrations.accountSame', { url: result.url, email: result.email }));
+      } catch (err) {
+        if (!closed) formError(form, err.code === 'conflict' ? new Error(t('integrations.accountExists'))
+          : self && err.code === 'invalid_input' ? new Error(t('integrations.wrongPassword')) : err);
+      } finally { busy = false; submit.disabled = false; inputs.inert = false; form.removeAttribute('aria-busy'); }
+    } }, inputs, submit);
+    const dialog = modal({ title: t('integrations.accountTitle', { name: row.name }), body: form,
+      onClose: () => { closed = true; password.value = ''; }, actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
   }
 
   function bundleForm() {
