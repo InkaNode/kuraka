@@ -20,7 +20,7 @@ STALWART_GID=2000
 ISSUER_DIR=acme-v02.api.letsencrypt.org-directory
 # Overridden to "local" below when CADDY_EXTRA_GLOBAL=local_certs (local testing).
 USING='["urn:ietf:params:jmap:core","urn:stalwart:jmap"]'
-WEBUI_URL=https://github.com/InkaNode/webui/releases/latest/download/webui.zip
+WEBUI_URL=https://github.com/InkaNode/stalwart-webui/releases/latest/download/webui.zip
 # Keep in sync with ServiceKeyDisabled in internal/stalwart/apppasswords.go.
 SERVICE_KEY_DISABLED=(
   sysDomainDestroy
