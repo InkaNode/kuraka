@@ -174,6 +174,8 @@ func (s *Server) Handler() http.Handler {
 	route("DELETE /api/v1/alerts/{id}", "alert.delete", false, true, s.deleteAlert)
 	s.integrationRoutes(route)
 	s.updateRoutes(route)
+	s.brandingRoutes(route)
+	mux.HandleFunc("GET /branding/assets/{id}", s.brandingAsset)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			writeError(w, 404, "not_found", "Resource not found")

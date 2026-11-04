@@ -37,6 +37,7 @@ type HelpdeskAPI interface {
 	CreateAgent(context.Context, libredesk.NewAgent) (int64, error)
 	SetAgentPassword(context.Context, int64, libredesk.NewAgent, string) error
 	SyncAgentPassword(context.Context, int64, string) error
+	ApplyBranding(context.Context, string, string, string) error
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)
@@ -551,5 +552,11 @@ func (s *Server) activateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, 
 		return nil, err
 	}
 	h, err = s.st.GetHelpdesk(r.Context(), id)
-	return helpdeskJSON(h), err
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.applyDeskBranding(r.Context(), h); err != nil {
+		s.log.Warn("helpdesk branding failed", "helpdesk_id", h.ID, "error", err)
+	}
+	return helpdeskJSON(h), nil
 }

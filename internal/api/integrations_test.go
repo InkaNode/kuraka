@@ -106,6 +106,15 @@ type fakeHelpdesk struct {
 	syncIDs                       []int64
 	syncPasswords                 []string
 	syncErr                       error
+	branding                      [][3]string
+	brandingErr                   error
+}
+
+func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.branding = append(f.branding, [3]string{name, logo, favicon})
+	return f.brandingErr
 }
 
 func (f *fakeHelpdesk) SyncAgentPassword(_ context.Context, id int64, password string) error {
