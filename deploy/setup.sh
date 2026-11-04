@@ -20,6 +20,7 @@ STALWART_GID=2000
 ISSUER_DIR=acme-v02.api.letsencrypt.org-directory
 # Overridden to "local" below when CADDY_EXTRA_GLOBAL=local_certs (local testing).
 USING='["urn:ietf:params:jmap:core","urn:stalwart:jmap"]'
+WEBUI_URL=https://github.com/InkaNode/webui/releases/latest/download/webui.zip
 # Keep in sync with ServiceKeyDisabled in internal/stalwart/apppasswords.go.
 SERVICE_KEY_DISABLED=(
   sysDomainDestroy
@@ -242,8 +243,29 @@ main() {
     unset resp secret
     log "API key stored as KURAKA_STALWART_API_KEY in deploy/.env"
   fi
+
+  # Web interface from the InkaNode fork: it hides the views Kuraka manages.
+  local webui_set=0 app
+  if [[ -z $admin ]]; then
+    log "STALWART_ADMIN is not set; skipping the web interface URL"
+  else
+    body=$(jq -nc --argjson using "$USING" '{using: $using, methodCalls: [["x:Application/get", {}, "g"]]}')
+    resp=$(jmap "$admin" "$body") || die "could not read Stalwart applications ($(jmap_error "$resp" g g))"
+    app=$(jq -r --arg url "$WEBUI_URL" '.methodResponses[] | select(.[0] == "x:Application/get") | .[1].list[] | select(.urlPrefix["/admin"] and .resourceUrl != $url) | .id' <<<"$resp" | head -n1)
+    if [[ -n $app ]]; then
+      body=$(jq -nc --argjson using "$USING" --arg id "$app" --arg url "$WEBUI_URL" '{using: $using, methodCalls: [["x:Application/set", {update: {($id): {resourceUrl: $url}}}, "u"]]}')
+      if resp=$(jmap "$admin" "$body") &&
+        jq -e --arg id "$app" '.methodResponses[] | select(.[0] == "x:Application/set" and .[2] == "u") | .[1].updated | has($id)' <<<"$resp" >/dev/null; then
+        webui_set=1
+        log "Stalwart web interface set to $WEBUI_URL"
+      else
+        die "could not set the web interface URL ($(jmap_error "${resp:-}" u "$app"))"
+      fi
+    fi
+  fi
   unset admin
-  if (( cert_created )); then
+  # Stalwart serves a new web interface only after a restart.
+  if (( cert_created || webui_set )); then
     restart_stalwart
   fi
 

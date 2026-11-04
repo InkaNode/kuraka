@@ -34,7 +34,7 @@ bash deploy/setup.sh
 
 1. Generates `KURAKA_SECRET_KEY` and `STALWART_RECOVERY_ADMIN` in `deploy/.env` (mode 600).
 2. Starts Caddy and Stalwart and waits up to 5 minutes for the `MAIL_HOST` certificate.
-3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions).
+3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions). It also points Stalwart's web interface to the [InkaNode/webui](https://github.com/InkaNode/webui) build, which hides the views Kuraka manages and Enterprise-only views until "Show Kuraka and Enterprise items" is turned on in the user menu.
 4. Starts Kuraka and prints the one-time setup token.
 
 Then:
