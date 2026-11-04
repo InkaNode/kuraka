@@ -252,6 +252,7 @@ export async function integrationsView(ctx) {
     const dash = () => h('span', { class: 'muted' }, '—');
     const version = value => value ? h('span', { class: 'mono' }, value) : dash();
     const list = [
+      { key: 'stalwart', name: t('integrations.updates.stalwart'), ...updates.stalwart },
       { key: 'webui', name: t('integrations.updates.webui'), ...updates.webui },
       ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, latest: updates.libredesk.latest })),
     ];
@@ -265,18 +266,19 @@ export async function integrationsView(ctx) {
         { label: t('integrations.status'), render: row => h('div', { class: 'stack gap-1' },
           badge(t(`integrations.updates.state.${row.state}`), UPDATE_BADGE[row.state] || 'neutral'),
           row.message ? h('span', { class: 'muted' }, row.message) : null) },
-        // A failed Libredesk update can be retried.
+        // A failed Stalwart or Libredesk update can be retried.
         { label: t('integrations.actions'), render: row => (row.state === 'available' || (row.key !== 'webui' && row.state === 'error'))
           && (row.key === 'webui' || updates.updates_dir)
           ? button({ label: t('integrations.updates.apply'), disabled: applying.has(row.key), onClick: () => applyUpdate(row) }) : null },
       ] }),
-      !updates.updates_dir && updates.libredesk.helpdesks.length ? h('p', { class: 'muted' }, t('integrations.updates.noDir')) : null);
+      h('p', { class: 'muted' }, t('integrations.updates.together')),
+      !updates.updates_dir ? h('p', { class: 'muted' }, t('integrations.updates.noDir')) : null);
   }
 
-  // Re-read while a Libredesk update runs, until the view is left.
+  // Re-read while a Stalwart or Libredesk update runs, until the view is left.
   function schedulePoll() {
     clearTimeout(pollTimer); pollTimer = 0;
-    if (!updates?.libredesk.helpdesks.some(desk => desk.state === 'updating')) return;
+    if (updates?.stalwart.state !== 'updating' && !updates?.libredesk.helpdesks.some(desk => desk.state === 'updating')) return;
     pollTimer = setTimeout(async () => {
       pollTimer = 0;
       if (!root.isConnected) return;
@@ -297,12 +299,13 @@ export async function integrationsView(ctx) {
 
   async function applyUpdate(row) {
     if (applying.has(row.key)) return;
-    const webui = row.key === 'webui';
+    const webui = row.key === 'webui', stalwart = row.key === 'stalwart';
     applying.add(row.key); renderUpdates();
     try {
       if (!webui && !await confirmDialog({ title: t('integrations.updates.confirmTitle', { name: row.name }),
-        message: t('integrations.updates.confirm'), confirmLabel: t('integrations.updates.apply') })) return;
-      updates = await api('POST', webui ? '/updates/webui' : `/helpdesks/${encodeURIComponent(row.key)}/update`);
+        message: t(stalwart ? 'integrations.updates.confirmStalwart' : 'integrations.updates.confirm'),
+        confirmLabel: t('integrations.updates.apply') })) return;
+      updates = await api('POST', webui ? '/updates/webui' : stalwart ? '/updates/stalwart' : `/helpdesks/${encodeURIComponent(row.key)}/update`);
       if (root.isConnected) toast(t(webui ? 'integrations.updates.webuiDone' : 'integrations.updates.started'));
     } catch (err) { if (root.isConnected) toast(errorMessage(err), 'danger'); }
     finally { applying.delete(row.key); renderUpdates(); schedulePoll(); }
