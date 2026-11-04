@@ -9,6 +9,8 @@ import { usersView } from './views/users.js';
 import { auditView } from './views/audit.js';
 import { accountView } from './views/account.js';
 import { integrationsView } from './views/integrations.js';
+import { queueView } from './views/queue.js';
+import { dashboardView } from './views/dashboard.js';
 
 route('/login', loginView, { auth: false, layout: false });
 route('/setup', setupView, { auth: false, layout: false });
@@ -17,6 +19,8 @@ route('/domains/:id', domainView);
 route('/tenants', tenantsView, { superadmin: true });
 route('/users', usersView, { superadmin: true });
 route('/audit', auditView);
+route('/queue', queueView);
+route('/dashboard', dashboardView, { superadmin: true });
 route('/integrations', integrationsView);
 route('/account', accountView);
 start();

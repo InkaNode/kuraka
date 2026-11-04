@@ -11,6 +11,8 @@ export function renderLayout(me, content) {
   const path = currentPath();
   const links = [
     ['/domains', 'nav.domains', 'globe'],
+    ['/queue', 'nav.queue', 'inbox'],
+    ...(me?.role === 'superadmin' ? [['/dashboard', 'nav.dashboard', 'list']] : []),
     ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users']] : []),
     ['/audit', 'nav.audit', 'list'], ['/integrations', 'nav.integrations', 'link'], ['/account', 'nav.account', 'user'],
   ];
