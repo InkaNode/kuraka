@@ -1,0 +1,16 @@
+/* Defaults and .dark selection match upstream WebUI 2.0.4/src/index.css. */
+:root.kuraka-stalwart {
+  --primary: var(--kuraka-color, #db2d54);
+  --primary-hover: var(--kuraka-color-hover, #c12148);
+  --primary-foreground: var(--kuraka-color-foreground, #ffffff);
+  --brand-text: var(--kuraka-color, #bf1f45);
+  --ring: var(--kuraka-color, #bf1f45);
+}
+.dark.kuraka-stalwart {
+  --primary: var(--kuraka-color, #db2d54);
+  --primary-hover: var(--kuraka-color-hover, #e8476b);
+  --primary-foreground: var(--kuraka-color-foreground, #ffffff);
+  --brand-text: var(--kuraka-color, #ff8199);
+  --ring: var(--kuraka-color, #ff8199);
+}
+[data-kuraka-hidden], [data-kuraka-logo-original] { display: none !important; }
