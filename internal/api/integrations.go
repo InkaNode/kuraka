@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -126,6 +127,11 @@ func (s *Server) createDNSProvider(_ http.ResponseWriter, r *http.Request) (any,
 	}
 	state(r).tenant = in.TenantID
 	if err := s.newDNS(in.Token).VerifyToken(r.Context()); err != nil {
+		// Cloudflare answers 4xx for a wrong, expired or under-scoped token: that is bad input, not an outage.
+		var ce *cloudflare.APIError
+		if errors.As(err, &ce) && ce.Status >= 400 && ce.Status < 500 {
+			return nil, &apiError{status: 422, code: "invalid_input", message: "Cloudflare rejected the token", cause: err}
+		}
 		return nil, integrationFailure("DNS token verification failed", err)
 	}
 	enc, err := s.box.Seal([]byte(in.Token))

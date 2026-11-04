@@ -202,6 +202,8 @@ func TestProviderOwnershipAndSecrets(t *testing.T) {
 	ca.do("DELETE", fmt.Sprintf("/dns-providers/%d", pa), nil, 204)
 	dns.verifyErr = errors.New("bad private-token")
 	h.root.do("POST", "/dns-providers", map[string]any{"tenant_id": a, "name": "bad", "token": "private-token"}, 502)
+	dns.verifyErr = &cloudflare.APIError{Status: 401, Codes: []int{1000}, Messages: []string{"Invalid API Token"}}
+	h.root.do("POST", "/dns-providers", map[string]any{"tenant_id": a, "name": "bad", "token": "private-token"}, 422)
 	if rows, err := h.st.ListDNSProviders(context.Background(), &a, false); err != nil || len(rows) != 0 {
 		t.Fatal("invalid token persisted")
 	}
