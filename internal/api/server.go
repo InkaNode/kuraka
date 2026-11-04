@@ -70,6 +70,7 @@ type Server struct {
 	setupToken  string
 	limiter     failureLimiter
 	ipLimiter   failureLimiter
+	addonLimits addonReportLimiter
 	ui          fs.FS
 	newDNS      func(string) DNSAPI
 	newHelpdesk func(string, string, string) HelpdeskAPI
@@ -178,9 +179,13 @@ func (s *Server) Handler() http.Handler {
 	s.updateRoutes(route)
 	s.brandingRoutes(route)
 	s.securityRoutes(route)
+	s.addonRoutes(route)
 	mux.HandleFunc("GET /branding/assets/{id}", s.brandingAsset)
+	mux.HandleFunc("GET /_kuraka/addon/{file}", s.addonFile)
+	mux.HandleFunc("POST /_kuraka/addon/{app}/report", s.addonReport)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/_kuraka/") ||
+			(r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			writeError(w, 404, "not_found", "Resource not found")
 			return
 		}
@@ -193,7 +198,10 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", csp)
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		if mutating(r.Method) {
+		// Reports originate on the mail and desk hosts, carry no credentials,
+		// and validate their own bounded JSON body. All other writes keep CSRF.
+		_, pattern := mux.Handler(r)
+		if mutating(r.Method) && pattern != "POST /_kuraka/addon/{app}/report" {
 			origin := r.Header.Get("Origin")
 			valid := origin == s.cfg.PublicURL
 			if origin == "" {
