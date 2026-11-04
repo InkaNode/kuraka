@@ -33,7 +33,8 @@ func randomHex(n int) (string, error) {
 }
 
 // Bundle returns a zip with fresh credentials on every call. The service and
-// configuration keys follow Libredesk's upstream compose and config sample.
+// configuration keys follow Libredesk's upstream compose and config sample
+// (config.sample.toml of the pinned image: it panics on missing keys).
 func Bundle(tenantName, host string, opts Options) (Result, error) {
 	if opts.MailNetwork == "" {
 		opts.MailNetwork = "kuraka_mail"
@@ -149,6 +150,50 @@ provider = "fs"
 [upload.fs]
 upload_path = "uploads"
 expiry = "1h"
+[message]
+outgoing_queue_workers = 10
+incoming_queue_workers = 10
+message_outgoing_scan_interval = "50ms"
+incoming_queue_size = 5000
+outgoing_queue_size = 5000
+[notification]
+concurrency = 2
+queue_size = 2000
+[automation]
+worker_count = 10
+time_trigger_lookback_days = 90
+[ai_agent]
+worker_count = 10
+queue_size = 1000
+max_steps = 6
+max_history_messages = 30
+[autoassigner]
+autoassign_interval = "5m"
+[webhook]
+workers = 5
+queue_size = 10000
+timeout = "15s"
+[ssrf]
+enabled = false
+allowed_cidrs = []
+[conversation]
+unsnooze_interval = "5m"
+draft_retention_duration = "360h"
+continuity_scan_interval = "5m"
+[sla]
+evaluation_interval = "5m"
+[rate_limit.widget]
+enabled = true
+requests_per_minute = 100
+[rate_limit.auth]
+enabled = true
+requests_per_minute = 30
+[rate_limit.public]
+enabled = true
+requests_per_minute = 100
+[rate_limit.media]
+enabled = true
+requests_per_minute = 300
 `, key, dbPass)
 	caddy := fmt.Sprintf("%s {\n\timport security_headers\n\treverse_proxy kuraka-%s-desk:9000\n}\n", host, name)
 	install := fmt.Sprintf(`#!/bin/sh
