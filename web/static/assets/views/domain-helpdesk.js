@@ -1,7 +1,7 @@
 import { h, mount } from '../core/h.js';
 import { t, formatDate } from '../core/i18n.js';
 import { api } from '../core/api.js';
-import { button, field, textInput, select, badge, spinner, errorBox, modal, confirmDialog, toast, formError } from '../core/ui.js';
+import { button, field, textInput, select, badge, spinner, errorBox, modal, confirmDialog, toast, formError, submitForm } from '../core/ui.js';
 
 const CONCURRENCY = 4;
 const linkPath = (view, id) => `${view.base}/mailboxes/${encodeURIComponent(id)}/helpdesk`;
@@ -118,22 +118,17 @@ export function helpdeskDialog(view, m, onChange) {
     const helpdesk = select({ required: true, options: available.map(x => ({ value: String(x.id), label: x.name })) });
     const inbox = textInput({ maxlength: 128, autocomplete: 'off', placeholder: m.display_name || m.name || '' });
     const submit = button({ label: t('helpdesk.connect.submit'), icon: 'link', variant: 'primary', type: 'submit' });
-    let busy = false;
-    const form = h('form', { class: 'stack gap-2', onsubmit: async event => {
-      event.preventDefault();
-      if (busy) return;
-      busy = true; submit.disabled = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
+    const send = async () => {
       const name = available.find(x => String(x.id) === helpdesk.value)?.name || '';
-      try {
-        const link = await api('POST', linkPath(view, m.id), { helpdesk_id: Number(helpdesk.value), inbox_name: inbox.value.trim() });
-        toast(t('helpdesk.connected', { name, email: m.email }));
-        changed([...links, link]);
-      } catch (err) { formError(form, helpdeskError(err)); }
-      finally { busy = false; submit.disabled = false; form.removeAttribute('aria-busy'); }
-    } },
+      const link = await api('POST', linkPath(view, m.id), { helpdesk_id: Number(helpdesk.value), inbox_name: inbox.value.trim() });
+      toast(t('helpdesk.connected', { name, email: m.email }));
+      changed([...links, link]);
+    };
+    const form = h('form', { class: 'stack gap-2' },
       field({ label: t('helpdesk.select'), input: helpdesk }),
       field({ label: t('helpdesk.inboxName'), input: inbox, help: t('helpdesk.inboxName.help') }),
       h('div', {}, submit));
+    submitForm(form, send, { onError: err => formError(form, helpdeskError(err)) });
     return form;
   }
 

@@ -2,7 +2,7 @@ import '../i18n/admin.js';
 import { h, mount } from '../core/h.js';
 import { api, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, field, textInput, pageHeader, table, modal, confirmDialog, formError, toast } from '../core/ui.js';
+import { button, field, textInput, pageHeader, table, modal, confirmDialog, formError, toast, submitForm } from '../core/ui.js';
 
 export async function tenantsView() {
   const [initial, domains, users] = await Promise.all([
@@ -29,23 +29,20 @@ export async function tenantsView() {
     ] }));
   }
   function edit(tenant) {
-    let busy = false;
     let closed = false;
     const name = textInput({ name: 'name', value: tenant?.name || '', required: true, autocomplete: 'organization' });
     const submit = button({ label: t(tenant ? 'save' : 'create'), variant: 'primary', type: 'submit' });
-    const form = h('form', { class: 'stack gap-2', onsubmit: async event => {
-      event.preventDefault();
-      if (busy || !form.reportValidity()) return;
-      if (!name.value.trim()) { formError(form, new Error(t('error.invalid_input'))); name.focus(); return; }
-      busy = true; submit.disabled = true; name.disabled = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
-      try {
-        const result = await api(tenant ? 'PATCH' : 'POST', tenant ? `/tenants/${tenant.id}` : '/tenants', { name: name.value.trim() });
-        tenants = tenant ? tenants.map(row => row.id === tenant.id ? result : row) : [...tenants, result];
-        render();
-        if (!closed) { dialog.close(); toast(t('admin.saved')); }
-      } catch (err) { if (!closed) formError(form, err); }
-      finally { busy = false; submit.disabled = false; name.disabled = false; form.removeAttribute('aria-busy'); }
-    } }, field({ label: t('admin.name'), input: name }), submit);
+    const form = h('form', { class: 'stack gap-2' }, field({ label: t('admin.name'), input: name }), submit);
+    submitForm(form, async () => {
+      const result = await api(tenant ? 'PATCH' : 'POST', tenant ? `/tenants/${tenant.id}` : '/tenants', { name: name.value.trim() });
+      tenants = tenant ? tenants.map(row => row.id === tenant.id ? result : row) : [...tenants, result];
+      render();
+      if (!closed) { dialog.close(); toast(t('admin.saved')); }
+    }, { lock: [name], onError: err => { if (!closed) formError(form, err); }, validate: () => {
+      if (!form.reportValidity()) return false;
+      if (name.value.trim()) return true;
+      formError(form, new Error(t('error.invalid_input'))); name.focus(); return false;
+    } });
     const dialog = modal({ title: t(tenant ? 'tenants.rename' : 'tenants.new'), body: form,
       onClose: () => { closed = true; }, actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
   }

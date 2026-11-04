@@ -4,7 +4,7 @@ import { t } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { isSuperadmin } from '../core/session.js';
 import { icon } from '../core/icons.js';
-import { button, field, textInput, select, pageHeader, table, chip, spinner, errorBox, emptyState, modal, confirmDialog, toast, formError } from '../core/ui.js';
+import { button, field, textInput, select, pageHeader, table, chip, spinner, errorBox, emptyState, modal, confirmDialog, toast, submitForm } from '../core/ui.js';
 
 let seq = 0;
 const uid = prefix => `${prefix}-${++seq}`;
@@ -86,7 +86,6 @@ function addDomainDialog(tenants, onDone) {
     return;
   }
   let mode = 'create';
-  let busy = false;
   const formId = uid('add-domain');
   const tenant = select({ options: [...tenants].sort((a, b) => a.name.localeCompare(b.name)).map(entry => ({ value: String(entry.id), label: entry.name })), required: true });
   const name = textInput({ class: 'mono', required: true, maxlength: 253, autocomplete: 'off', spellcheck: 'false', placeholder: t('domains.add.name.placeholder') });
@@ -105,24 +104,20 @@ function addDomainDialog(tenants, onDone) {
   };
   const submit = button({ label: t('create'), variant: 'primary', type: 'submit' });
   submit.setAttribute('form', formId);
-  const form = h('form', { id: formId, class: 'stack gap-2', onsubmit: async event => {
-    event.preventDefault();
-    if (busy) return;
-    busy = true; submit.disabled = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
+  const send = async () => {
     const domainName = name.value.trim().toLowerCase();
-    try {
-      const path = `/tenants/${encodeURIComponent(tenant.value)}/domains${mode === 'import' ? '/import' : ''}`;
-      await api('POST', path, mode === 'import' ? { name: domainName } : { name: domainName, aliases: splitNames(aliases.value) });
-      dialog.close();
-      toast(t(mode === 'import' ? 'domains.imported' : 'domains.created', { name: domainName }));
-      await onDone();
-    } catch (err) { formError(form, err); }
-    finally { busy = false; submit.disabled = false; form.removeAttribute('aria-busy'); }
-  } },
+    const path = `/tenants/${encodeURIComponent(tenant.value)}/domains${mode === 'import' ? '/import' : ''}`;
+    await api('POST', path, mode === 'import' ? { name: domainName } : { name: domainName, aliases: splitNames(aliases.value) });
+    dialog.close();
+    toast(t(mode === 'import' ? 'domains.imported' : 'domains.created', { name: domainName }));
+    await onDone();
+  };
+  const form = h('form', { id: formId, class: 'stack gap-2' },
     field({ label: t('domains.col.tenant'), input: tenant }),
     h('div', { class: 'stack gap-1', role: 'radiogroup', 'aria-labelledby': legendId, 'aria-describedby': modeHelp.id },
       h('span', { class: 'label', id: legendId }, t('domains.add.mode')), h('div', { class: 'row gap-2' }, radio('create'), radio('import')), modeHelp),
     field({ label: t('domains.add.name'), input: name }),
     aliasField);
+  submitForm(form, send);
   const dialog = modal({ title: t('domains.add'), body: form, actions: [button({ label: t('cancel'), onClick: () => dialog.close() }), submit] });
 }

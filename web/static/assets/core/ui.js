@@ -98,55 +98,39 @@ export function tabs({ items, active, onChange }) {
 
 const dialogs = [];
 export function modal({ title, body, actions = [], onClose }) {
-  const opener = document.activeElement;
   const titleId = uid();
-  let closed = false;
-  const el = h('div', { class: 'modal-backdrop', onclick: event => { if (event.target === el) close(); } });
-  const dialog = h('section', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId, tabindex: -1 },
+  // A form's trailing submit button joins the footer, after Cancel, as in the dialogs that pass it there.
+  const submit = body instanceof HTMLFormElement && body.lastElementChild?.type === 'submit' ? body.lastElementChild : null;
+  if (submit) { body.id ||= uid(); submit.setAttribute('form', body.id); actions = [...actions, submit]; }
+  const el = h('dialog', { class: 'modal', 'aria-labelledby': titleId, onclick: event => {
+    // A click on ::backdrop targets the dialog itself, outside its box.
+    const r = el.getBoundingClientRect();
+    if (event.target === el && (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom)) close();
+  } },
     h('header', { class: 'row gap-2' }, h('h2', { id: titleId, class: 'grow' }, title), button({ icon: 'x', variant: 'ghost', ariaLabel: t('close'), onClick: () => close() })),
     h('div', { class: 'modal-body stack gap-2' }, body), h('footer', { class: 'row gap-1 modal-actions' }, actions));
-  el.append(dialog);
-  const background = Array.from(document.body.children).map(node => [node, node.inert]);
-  background.forEach(([node]) => { node.inert = true; });
-  document.body.append(el);
-  dialogs.push(el);
-  document.body.classList.add('modal-open');
-  const focusables = () => [...dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')]
-    .filter(node => !node.disabled && node.tabIndex >= 0 && !node.closest('[hidden], .hidden, [inert]') && node.getClientRects().length);
-  function onKey(event) {
-    if (dialogs.at(-1) !== el) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
-    if (event.key === 'Tab') {
-      const nodes = focusables();
-      const first = nodes[0] || dialog;
-      const last = nodes.at(-1) || dialog;
-      if (!nodes.length || (event.shiftKey && (document.activeElement === first || document.activeElement === dialog))) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { event.preventDefault(); first.focus(); }
-    }
-  }
-  function onFocus(event) { if (dialogs.at(-1) === el && !dialog.contains(event.target)) dialog.focus(); }
+  const self = { close, el };
+  let closed = false;
+  // The dialog's close event is async, so the stack unwinds here, not in it.
   function close() {
     if (closed) return;
-    // Close descendants first so nested dialogs restore inert state in order.
-    while (dialogs.at(-1) !== el) dialogs.at(-1)?.dispatchEvent(new Event('modal:close'));
+    while (dialogs.at(-1) !== self) dialogs.at(-1).close();
     closed = true;
-    dialogs.pop(); el.remove();
-    background.forEach(([node, inert]) => { node.inert = inert; });
-    document.removeEventListener('keydown', onKey, true);
-    document.removeEventListener('focusin', onFocus);
+    dialogs.pop();
     window.removeEventListener('hashchange', close);
     window.removeEventListener('langchange', close);
-    if (!dialogs.length) document.body.classList.remove('modal-open');
-    if (opener?.isConnected) opener.focus();
+    if (el.open) el.close();
+    el.remove();
     onClose?.();
   }
-  el.addEventListener('modal:close', close);
-  document.addEventListener('keydown', onKey, true);
-  document.addEventListener('focusin', onFocus);
+  // Escape closes the dialog natively; the browser restores focus to the opener.
+  el.addEventListener('close', close);
   window.addEventListener('hashchange', close);
   window.addEventListener('langchange', close);
-  queueMicrotask(() => { if (!closed) dialog.focus(); });
-  return { close, el };
+  document.body.append(el);
+  dialogs.push(self);
+  el.showModal();
+  return self;
 }
 export function confirmDialog({ title, message, confirmLabel, danger = false }) {
   return new Promise(resolve => {
@@ -179,4 +163,17 @@ export function formError(form, err) {
   box.setAttribute('data-form-error', '');
   form.prepend(box); box.focus();
   return box;
+}
+export function submitForm(form, fn, { lock = [], validate, onError } = {}) {
+  let busy = false;
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || validate?.() === false) return;
+    // Read at submit time: a button tied by form= joins form.elements only once both are in the document.
+    const locked = [[...form.elements].find(el => el.type === 'submit'), ...lock].filter(Boolean);
+    busy = true; locked.forEach(el => { el.disabled = true; }); form.setAttribute('aria-busy', 'true'); formError(form, null);
+    try { await fn(); }
+    catch (err) { if (onError) onError(err); else formError(form, err); }
+    finally { busy = false; locked.forEach(el => { el.disabled = false; }); form.removeAttribute('aria-busy'); }
+  });
 }

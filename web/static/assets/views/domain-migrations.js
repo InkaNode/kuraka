@@ -2,7 +2,7 @@ import { h, mount } from '../core/h.js';
 import { t, formatDate } from '../core/i18n.js';
 import { api, errorMessage } from '../core/api.js';
 import { icon } from '../core/icons.js';
-import { button, field, textInput, select, table, badge, spinner, errorBox, emptyState, modal, toast, formError } from '../core/ui.js';
+import { button, field, textInput, select, table, badge, spinner, errorBox, emptyState, modal, toast, formError, submitForm } from '../core/ui.js';
 
 const POLL_MS = 3000;
 const ACTIVE = ['queued', 'running'];
@@ -124,7 +124,6 @@ export async function migrationDialog(view, accountId, onCreated) {
       actions: [button({ label: t('close'), onClick: () => dialog.close() })] });
     return;
   }
-  let busy = false;
   const formId = `migration-${Date.now()}`;
   const target = select({ class: 'mono', required: true, options: users.map(m => ({ value: m.id, label: m.email })),
     value: users.some(m => m.id === accountId) ? accountId : users[0].id });
@@ -142,25 +141,17 @@ export async function migrationDialog(view, accountId, onCreated) {
 
   const submit = button({ label: t('migration.submit'), variant: 'primary', type: 'submit' });
   submit.setAttribute('form', formId);
-  const form = h('form', { id: formId, class: 'stack gap-2', onsubmit: async event => {
-    event.preventDefault();
-    if (busy) return;
-    busy = true; submit.disabled = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
+  const send = async () => {
     for (const el of [host, tls]) el.removeAttribute('aria-invalid');
     const email = users.find(m => m.id === target.value)?.email || target.value;
-    try {
-      const job = await api('POST', `${view.base}/migrations`, { account_id: target.value, source_host: host.value.trim(), source_port: Number(port.value),
-        source_tls: tls.value, source_user: user.value.trim(), source_password: password.value });
-      password.value = '';
-      dialog.close();
-      toast(t('migration.created', { email }));
-      onCreated?.(job);
-    } catch (err) {
-      formError(form, err);
-      if (/source_host/.test(err.message || '')) host.setAttribute('aria-invalid', 'true');
-      if (/source_tls/.test(err.message || '')) tls.setAttribute('aria-invalid', 'true');
-    } finally { busy = false; submit.disabled = false; form.removeAttribute('aria-busy'); }
-  } },
+    const job = await api('POST', `${view.base}/migrations`, { account_id: target.value, source_host: host.value.trim(), source_port: Number(port.value),
+      source_tls: tls.value, source_user: user.value.trim(), source_password: password.value });
+    password.value = '';
+    dialog.close();
+    toast(t('migration.created', { email }));
+    onCreated?.(job);
+  };
+  const form = h('form', { id: formId, class: 'stack gap-2' },
     h('p', {}, t('migration.dialog.intro')),
     field({ label: t('migration.target'), input: target }),
     field({ label: t('migration.host'), input: host }),
@@ -169,5 +160,10 @@ export async function migrationDialog(view, accountId, onCreated) {
     field({ label: t('migration.user'), input: user }),
     field({ label: t('migration.password'), input: password }),
     h('p', { class: 'help row gap-1' }, icon('key'), h('span', {}, t('migration.secret.note'))));
+  submitForm(form, send, { onError: err => {
+    formError(form, err);
+    if (/source_host/.test(err.message || '')) host.setAttribute('aria-invalid', 'true');
+    if (/source_tls/.test(err.message || '')) tls.setAttribute('aria-invalid', 'true');
+  } });
   const dialog = modal({ title: t('migration.new'), body: form, actions: [button({ label: t('cancel'), onClick: () => dialog.close() }), submit] });
 }

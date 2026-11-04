@@ -3,7 +3,7 @@ import { h, mount } from '../core/h.js';
 import { api } from '../core/api.js';
 import { t, getLang, setLang } from '../core/i18n.js';
 import { getMe, loadMe, setMe } from '../core/session.js';
-import { button, field, textInput, card, pageHeader, badge, modal, copyButton, formError, toast } from '../core/ui.js';
+import { button, field, textInput, card, pageHeader, badge, modal, copyButton, formError, toast, submitForm } from '../core/ui.js';
 
 // SVG namespace identifiers do not cause a network request.
 const svgNamespace = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
@@ -37,23 +37,20 @@ export async function accountView({ me = getMe() } = {}) {
   const current = textInput({ type: 'password', name: 'current', autocomplete: 'current-password', required: true });
   const next = textInput({ type: 'password', name: 'new', autocomplete: 'new-password', minlength: 12, required: true });
   const confirm = textInput({ type: 'password', name: 'confirm', autocomplete: 'new-password', minlength: 12, required: true });
-  let passwordBusy = false;
   const save = button({ label: t('account.passwordTitle'), variant: 'primary', type: 'submit' });
-  const passwordForm = h('form', { class: 'stack gap-2', onsubmit: async event => {
-    event.preventDefault();
-    if (passwordBusy || !passwordForm.reportValidity()) return;
-    formError(passwordForm, null);
-    if (next.value !== confirm.value) { formError(passwordForm, new Error(t('account.mismatch'))); confirm.focus(); return; }
-    passwordBusy = true; save.disabled = true; passwordForm.setAttribute('aria-busy', 'true');
-    try {
-      await api('POST', '/auth/password', { current: current.value, new: next.value });
-      current.value = ''; next.value = ''; confirm.value = '';
-      if (passwordForm.isConnected) toast(t('account.passwordChanged'));
-    } catch (err) { if (passwordForm.isConnected) formError(passwordForm, err); }
-    finally { passwordBusy = false; save.disabled = false; passwordForm.removeAttribute('aria-busy'); }
-  } }, field({ label: t('account.current'), input: current }),
+  const passwordForm = h('form', { class: 'stack gap-2' }, field({ label: t('account.current'), input: current }),
   field({ label: t('account.new'), input: next, help: t('account.passwordHelp') }),
   field({ label: t('account.confirm'), input: confirm }), save);
+  submitForm(passwordForm, async () => {
+    await api('POST', '/auth/password', { current: current.value, new: next.value });
+    current.value = ''; next.value = ''; confirm.value = '';
+    if (passwordForm.isConnected) toast(t('account.passwordChanged'));
+  }, { onError: err => { if (passwordForm.isConnected) formError(passwordForm, err); }, validate: () => {
+    if (!passwordForm.reportValidity()) return false;
+    formError(passwordForm, null);
+    if (next.value === confirm.value) return true;
+    formError(passwordForm, new Error(t('account.mismatch'))); confirm.focus(); return false;
+  } });
 
   const totpBody = h('div', { class: 'stack gap-2' });
   let totpBusy = false;
