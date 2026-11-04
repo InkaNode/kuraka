@@ -10,6 +10,8 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- **Branding** API (superadmins): name, logo, icon, colors and banner, global or per tenant, for Kuraka, Stalwart and Libredesk with a shared default; values cascade from tenant to global (migration 0007). Libredesk gets the name, logo and favicon on save and on activation; `GET /api/v1/branding/{kuraka|stalwart}` is public for the sign-in pages and the stalwart-webui fork.
+
 - **Updates** in Integrations (superadmins): daily GitHub release check plus **Check now** for the Stalwart mail server, the Stalwart web interface and each provisioned Libredesk. The web interface updates through Stalwart's `UpdateApps` action; Stalwart and Libredesk updates are applied by the new root `kuraka-updates.timer` (`deploy/apply-updates.sh`, rollback on failure; Libredesk database backup first), so Kuraka never needs the Docker socket. The Stalwart version now lives in `STALWART_VERSION` in `deploy/.env` (default `v1.0.2`); its first start after an update sets `STALWART_UPDATE_ROLE_PERMISSIONS=true` once. New `KURAKA_UPDATES_DIR` and `KURAKA_STALWART_VERSION`; re-run `deploy/setup.sh` to install the timer.
 
 - **Create account** on ready helpdesks in Integrations: Libredesk Admin or Agent for the current Kuraka user (reusing the Kuraka password when Libredesk accepts it, and by default changing it in Libredesk whenever the Kuraka password changes) or for another person, with generated passwords shown once. The installer waits for Libredesk startup and removes the System password from `.env`; delete the downloaded ZIP after activation.

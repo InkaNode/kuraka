@@ -101,6 +101,16 @@ Superadmins see an **Updates** card in Integrations for the Stalwart mail server
 - **Version shown:** a pending request is `updating`; otherwise `current` from the result file, else `KURAKA_STALWART_VERSION` or `provision.LibredeskVersion`. An `error` result for the latest tag shows its message, and **Update now** retries it.
 - **Security:** Kuraka never gets the Docker socket. It only writes a container name and a tag into a directory; the root script ignores everything else, requires `^kuraka-[a-z0-9-]+-desk$` and `^v[0-9]+\.[0-9]+\.[0-9]+$`, checks that the file name matches the container, skips symlinks, and takes the compose directory from the container's `com.docker.compose.project.working_dir` label, never from the request. For Stalwart it reads only the tag and always uses its own deploy directory (`KURAKA_DEPLOY`).
 
+## Branding
+
+Superadmins set branding globally or for one tenant (migration 0007, tables `branding` and `branding_assets`). Each app has its own row and a shared `default` row; every empty field inherits, in this order: tenant app, tenant default, global app, global default.
+
+- **Kuraka:** name, logo, icon, color, gradient (`gradient_from`, `gradient_to`) and banner. `GET /branding/kuraka` is public; a signed-in tenant user gets the tenant's values, everyone else the global ones.
+- **Stalwart:** the same fields, global only (one shared server; tenant rows are rejected and ignored). They apply once the stalwart-webui fork reads `GET /branding/stalwart`.
+- **Libredesk (`desk`):** only name, logo and favicon (`icon`). Saving `default` or `desk` pushes them to every ready helpdesk in scope (`app.site_name`, `app.logo_url`, `app.favicon_url` in its general settings, other settings unchanged), and so does activation. Push failures are reported per helpdesk and do not fail the save.
+- **Images:** uploaded as a base64 data URL, at most 512 KiB, PNG, JPEG, WebP, GIF or SVG (bytes must match the declared type). Served at `/branding/assets/{id}` (absolute URLs from `KURAKA_PUBLIC_URL`) with a one-year immutable cache; SVG gets a sandbox CSP. Unreferenced uploads older than an hour are deleted on the next save.
+- **Validation:** names are trimmed, at most 64 characters, no control characters; colors are `#rrggbb`, stored lowercase.
+
 ## New configuration
 
 | Variable | Default | Purpose |
@@ -128,6 +138,9 @@ Superadmins see an **Updates** card in Integrations for the Stalwart mail server
 | `GET /updates`, `POST /updates/check` | superadmin only | `{checked_at, error?, updates_dir, webui: {latest, current, state}, libredesk: {latest, helpdesks: [{id, name, current, state, message?}]}}` |
 | `POST /updates/webui` | superadmin only | Stalwart `UpdateApps`, stores the applied tag; same body |
 | `POST /helpdesks/{id}/update` | superadmin only | provisioned helpdesk with an available update (or a failed one); writes the request file; same body |
+| `GET /branding/{app}` | public | `kuraka` or `stalwart`; resolved fields, images as absolute URLs, empty fields omitted |
+| `GET /branding`, `PUT /branding/{app}` | superadmin only | optional `?tenant=`; GET returns `{scope, global?}`, PUT takes the fields and returns `{saved, desks: [{id, url, error?}]}` |
+| `POST /branding/assets` | superadmin only | `{data: "data:<type>;base64,..."}`; returns 201 `{id}` |
 | `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
