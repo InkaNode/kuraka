@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net"
@@ -53,6 +54,7 @@ type Server struct {
 	domainMu   sync.Mutex // serializes domain and alias name reservations
 	setupToken string
 	limiter    failureLimiter
+	ui         fs.FS
 }
 
 func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Server, error) {
@@ -140,13 +142,18 @@ func (s *Server) Handler() http.Handler {
 	route("DELETE /api/v1/domains/{id}/mailboxes/{mid}", "mailbox.delete", false, false, s.deleteMailbox)
 	route("GET /api/v1/audit", "audit.list", false, false, s.audit)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, 404, "not_found", "Resource not found")
+		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+			writeError(w, 404, "not_found", "Resource not found")
+			return
+		}
+		s.serveUI(w, r)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", csp)
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if mutating(r.Method) {
 			origin := r.Header.Get("Origin")

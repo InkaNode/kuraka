@@ -17,6 +17,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
+	"github.com/InkaNode/kuraka/web"
 )
 
 func main() {
@@ -70,6 +71,7 @@ func run() error {
 			}
 		}
 	}()
+	app.WithUI(web.FS())
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() {
