@@ -2,6 +2,12 @@ import { registerMessages } from '../core/i18n.js';
 
 registerMessages({
   es: {
+    'system.addons': 'Personalización',
+    'system.addons.stalwart': 'Correo web', 'system.addons.desk': 'Desk',
+    'system.addons.working': 'Funciona', 'system.addons.disable': 'Desactivar personalización',
+    'system.addons.warning': 'Esta versión de {app} cambió algo que la personalización de Kuraka no reconoce. Se muestra el diseño original. Espera una actualización de Kuraka.',
+    'system.updates.state.waiting': 'Esperando a Kuraka',
+    'system.updates.waiting': 'Kuraka todavía no es compatible con {latest} (probado hasta {supported}.x). Espera una actualización de Kuraka.',
     'nav.system': 'Sistema',
     'system.updates.name': 'Nombre', 'system.updates.status': 'Estado', 'system.updates.actions': 'Acciones',
     'system.updates.changes': 'Ver cambios',
@@ -31,6 +37,12 @@ registerMessages({
     'system.updates.noDir': 'Las actualizaciones de Stalwart y Libredesk necesitan el temporizador del servidor: vuelve a ejecutar deploy/setup.sh.',
   },
   en: {
+    'system.addons': 'Customization',
+    'system.addons.stalwart': 'Webmail', 'system.addons.desk': 'Desk',
+    'system.addons.working': 'Working', 'system.addons.disable': 'Disable customization',
+    'system.addons.warning': 'This version of {app} changed something that Kuraka customization does not recognize. The original design is shown. Wait for a Kuraka update.',
+    'system.updates.state.waiting': 'Waiting for Kuraka',
+    'system.updates.waiting': 'Kuraka does not yet support {latest} (tested through {supported}.x). Wait for a Kuraka update.',
     'nav.system': 'System',
     'system.updates.name': 'Name', 'system.updates.status': 'Status', 'system.updates.actions': 'Actions',
     'system.updates.changes': 'See changes',

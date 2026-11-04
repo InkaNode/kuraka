@@ -2,14 +2,19 @@ import '../i18n/system.js';
 import { h, mount } from '../core/h.js';
 import { api, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, card, pageHeader, table, badge, errorBox, confirmDialog, toast } from '../core/ui.js';
+import { button, card, pageHeader, table, badge, checkbox, errorBox, confirmDialog, toast } from '../core/ui.js';
 
 const UPDATE_POLL_MS = 10000;
-const UPDATE_BADGE = { current: 'ok', available: 'warn', updating: 'neutral', error: 'danger', unknown: 'neutral' };
+const UPDATE_BADGE = { current: 'ok', available: 'warn', waiting: 'warn', updating: 'neutral', error: 'danger', unknown: 'neutral' };
 
 export async function systemView() {
   let updatesError = null;
-  let updates = await api('GET', '/updates').catch(err => { updatesError = err; return null; });
+  let addonsError = null;
+  const [initialUpdates, addons] = await Promise.all([
+    api('GET', '/updates').catch(err => { updatesError = err; return null; }),
+    api('GET', '/addons').catch(err => { addonsError = err; return null; }),
+  ]);
+  let updates = initialUpdates;
   const root = h('div', { class: 'stack gap-3' });
   const updatesBody = h('div', { class: 'stack gap-2' });
   const applying = new Set();
@@ -39,7 +44,8 @@ export async function systemView() {
         { label: t('system.updates.status'), render: row => h('div', { class: 'stack gap-1' },
           badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
             ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
-          row.message ? h('span', { class: 'muted' }, row.message) : null) },
+          row.state === 'waiting' ? h('span', { class: 'muted' }, t('system.updates.waiting', { latest: row.latest, supported: row.supported }))
+            : row.message ? h('span', { class: 'muted' }, row.message) : null) },
         // Failed server updates can be retried.
         { label: t('system.updates.actions'), render: row => (row.state === 'available' || (row.key !== 'webui' && row.state === 'error'))
           && (row.key === 'kuraka' || row.key === 'webui' || updates.updates_dir)
@@ -96,11 +102,37 @@ export async function systemView() {
     finally { applying.delete(row.key); renderUpdates(); schedulePoll(); }
   }
 
+  const addonsBody = h('div', { class: 'stack gap-2' });
+  if (addonsError) mount(addonsBody, errorBox(addonsError));
+  else if (addons) mount(addonsBody, ['stalwart', 'desk'].map(app => {
+    const addon = addons[app];
+    if (!addon) return null;
+    const name = t(`system.addons.${app}`);
+    const report = addon.report;
+    const missing = report?.missing || [];
+    const control = checkbox({ label: t('system.addons.disable'), checked: addon.disabled,
+      onChange: async event => {
+        const input = event.currentTarget;
+        const disabled = input.checked;
+        input.disabled = true;
+        try { await api('PUT', `/addons/${app}`, { disabled }); addon.disabled = disabled; }
+        catch (err) { input.checked = addon.disabled; if (root.isConnected) toast(errorMessage(err), 'danger'); }
+        finally { input.disabled = false; }
+      },
+    });
+    return h('div', { class: 'stack gap-1' }, h('h3', {}, name),
+      missing.length ? h('div', { class: 'stack gap-1', role: 'status' },
+        badge(t('system.addons.warning', { app: name }), 'warn'),
+        h('p', { class: 'muted' }, missing.join(', '), report.at ? ` · ${formatDate(report.at)}` : ''))
+        : badge(t('system.addons.working'), 'ok'), control);
+  }));
+
   renderUpdates(); schedulePoll();
   mount(root, pageHeader(t('nav.system')),
     card(h('div', { class: 'stack gap-2' },
       h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('system.updates')),
         button({ label: t('system.updates.check'), icon: 'refresh', onClick: checkUpdates })),
-      h('p', { class: 'muted' }, t('system.updates.help')), updatesBody)));
+      h('p', { class: 'muted' }, t('system.updates.help')), updatesBody)),
+    card(h('div', { class: 'stack gap-2' }, h('h2', {}, t('system.addons')), addonsBody)));
   return root;
 }
