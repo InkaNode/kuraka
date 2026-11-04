@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+// LibredeskVersion is the image tag new bundles install. Installed helpdesks
+// are upgraded from Integrations > Updates.
+const LibredeskVersion = "v2.9.2"
+
 type Options struct {
 	MailNetwork string
 }
@@ -72,7 +76,7 @@ func Bundle(tenantName, host string, opts Options) (Result, error) {
 services:
   app:
     # Update deliberately; --upgrade runs on every start.
-    image: libredesk/libredesk:v2.9.2
+    image: libredesk/libredesk:%s
     container_name: kuraka-%s-desk
     restart: unless-stopped
     environment:
@@ -116,7 +120,7 @@ volumes:
     labels:
       kuraka.bundle: %s
   redis-data:
-`, name, name, opts.MailNetwork, bundleID)
+`, name, LibredeskVersion, name, opts.MailNetwork, bundleID)
 	config := fmt.Sprintf(`[app]
 env = "prod"
 log_level = "info"

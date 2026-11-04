@@ -77,6 +77,16 @@ func TestLoadFromValid(t *testing.T) {
 				MailHost: "mail.example.com", AlertEmailFrom: "alertas@example.com",
 			},
 		},
+		{
+			name: "updates dir",
+			env:  with(EnvUpdatesDir, "/updates"),
+			want: Config{
+				Listen: ":8080", DBPath: "kuraka.db",
+				PublicURL: "https://panel.inkanode.com", SecretKeyHex: testKey,
+				StalwartURL: "http://stalwart:8080", StalwartAPIKey: "API_supersecretvalue",
+				UpdatesDir: "/updates",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,6 +123,7 @@ func TestLoadFromInvalid(t *testing.T) {
 		{"insecure cookies", with(EnvInsecureCookies, "maybe"), []string{EnvInsecureCookies}},
 		{"alert email invalid", with(EnvMailHost, "mail.example.com", EnvAlertEmailFrom, "Alertas <alertas@example.com>"), []string{EnvAlertEmailFrom}},
 		{"alert email without mail host", with(EnvAlertEmailFrom, "alertas@example.com"), []string{EnvAlertEmailFrom, EnvMailHost}},
+		{"updates dir relative", with(EnvUpdatesDir, "updates"), []string{EnvUpdatesDir}},
 		{
 			"several at once",
 			with(EnvPublicURL, "nope", EnvSecretKey, "abc", EnvInsecureCookies, "x"),

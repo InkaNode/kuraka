@@ -31,9 +31,20 @@ type fakeStalwart struct {
 	appCreated        int
 	appDeleted        int
 	queued            map[string]stalwart.QueuedMessage
+	appsUpdated       int
 }
 
 var _ Stalwart = (*fakeStalwart)(nil)
+
+func (f *fakeStalwart) UpdateApps(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.appsUpdated++
+	return nil
+}
 
 func (f *fakeStalwart) ListQueue(context.Context) ([]stalwart.QueuedMessage, error) {
 	f.mu.Lock()

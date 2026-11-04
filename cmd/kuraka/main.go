@@ -67,7 +67,8 @@ func run() error {
 	runner := jobs.New(st, sw, box, cfg, log)
 	runner.Start(ctx)
 	metricsDone := jobs.StartMetrics(ctx, st, sw, cfg, log)
-	defer func() { stop(); runner.Wait(); <-metricsDone }()
+	updatesDone := app.StartUpdateChecks(ctx)
+	defer func() { stop(); runner.Wait(); <-metricsDone; <-updatesDone }()
 	purgeDone := make(chan struct{})
 	go func() {
 		defer close(purgeDone)

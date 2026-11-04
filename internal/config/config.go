@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ const (
 	EnvMailTLSSkipVerify     = "KURAKA_MAIL_TLS_SKIP_VERIFY"
 	EnvDNSResolver           = "KURAKA_DNS_RESOLVER"
 	EnvMigrationWorkers      = "KURAKA_MIGRATION_WORKERS"
+	EnvUpdatesDir            = "KURAKA_UPDATES_DIR"
 )
 
 // Defaults for optional variables.
@@ -57,6 +59,7 @@ type Config struct {
 	MailTLSSkipVerify     bool
 	DNSResolver           string
 	MigrationWorkers      int
+	UpdatesDir            string // absolute; empty disables Libredesk updates
 }
 
 // Load reads the configuration from the process environment.
@@ -151,6 +154,10 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	c.MigrationWorkers, err = strconv.Atoi(get(EnvMigrationWorkers, "2"))
 	if err != nil || c.MigrationWorkers < 1 || c.MigrationWorkers > 8 {
 		errs = append(errs, fmt.Errorf("%s must be between 1 and 8", EnvMigrationWorkers))
+	}
+	c.UpdatesDir = get(EnvUpdatesDir, "")
+	if c.UpdatesDir != "" && !filepath.IsAbs(c.UpdatesDir) {
+		errs = append(errs, fmt.Errorf("%s must be an absolute path", EnvUpdatesDir))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err

@@ -24,6 +24,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/config"
 	"github.com/InkaNode/kuraka/internal/dnsplan"
 	"github.com/InkaNode/kuraka/internal/libredesk"
+	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
@@ -48,6 +49,7 @@ type Stalwart interface {
 	GetQueued(context.Context, string) (stalwart.QueuedMessage, error)
 	RetryQueued(context.Context, string) error
 	CancelQueued(context.Context, string) error
+	UpdateApps(context.Context) error
 }
 
 var _ Stalwart = (*stalwart.Client)(nil)
@@ -70,6 +72,8 @@ type Server struct {
 	newDNS      func(string) DNSAPI
 	newHelpdesk func(string, string, string) HelpdeskAPI
 	resolver    dnsplan.Resolver
+	releases    *releases.Client
+	updates     updateState
 }
 
 func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Server, error) {
@@ -89,6 +93,7 @@ func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Se
 	s.newDNS = func(token string) DNSAPI { return cloudflare.New(token) }
 	s.newHelpdesk = func(url, key, secret string) HelpdeskAPI { return libredesk.New(url, key, secret) }
 	s.resolver = dnsplan.NewResolver(cfg.DNSResolver)
+	s.releases = &releases.Client{}
 	if n == 0 {
 		s.setupToken, err = auth.NewToken()
 	}
@@ -168,6 +173,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/alerts", "alert.create", false, true, s.createAlert)
 	route("DELETE /api/v1/alerts/{id}", "alert.delete", false, true, s.deleteAlert)
 	s.integrationRoutes(route)
+	s.updateRoutes(route)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			writeError(w, 404, "not_found", "Resource not found")
