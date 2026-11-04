@@ -10,6 +10,9 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- Mail queue with tenant-scoped visibility, immediate retries and cancellation.
+- Metrics dashboard with Prometheus sampling, seven-day retention and 24-hour sparklines.
+- Threshold alerts with firing and resolved webhooks, including Stalwart reachability.
 - Multi-tenant JSON API on top of Stalwart's JMAP management API: tenants, users, domains, alias domains, mailboxes, aliases, quotas. Tenant isolation enforced in one place (`internal/authz`).
 - Embedded web panel in Spanish and English.
 - Authentication with argon2id passwords, sessions, CSRF/Origin checks, login rate limiting and TOTP two-factor authentication.
