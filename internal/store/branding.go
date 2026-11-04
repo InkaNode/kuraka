@@ -9,13 +9,14 @@ import (
 // Branding is one app's branding in one scope. Empty fields inherit; Logo,
 // Icon and Banner are branding asset ids.
 type Branding struct {
-	Name         string `json:"name,omitempty"`
-	Logo         string `json:"logo,omitempty"`
-	Icon         string `json:"icon,omitempty"`
-	Color        string `json:"color,omitempty"`
-	GradientFrom string `json:"gradient_from,omitempty"`
-	GradientTo   string `json:"gradient_to,omitempty"`
-	Banner       string `json:"banner,omitempty"`
+	Name               string `json:"name,omitempty"`
+	Logo               string `json:"logo,omitempty"`
+	Icon               string `json:"icon,omitempty"`
+	Color              string `json:"color,omitempty"`
+	GradientFrom       string `json:"gradient_from,omitempty"`
+	GradientTo         string `json:"gradient_to,omitempty"`
+	Banner             string `json:"banner,omitempty"`
+	MaintenanceMessage string `json:"maintenance_message,omitempty"`
 }
 
 // brandingScope is the unique index key: 0 for global, never a tenant id.
