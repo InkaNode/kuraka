@@ -4,25 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/InkaNode/kuraka/internal/authz"
+	"github.com/InkaNode/kuraka/internal/config"
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 )
 
-var hostnameLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
 func hostname(raw, field string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
-	if len(name) == 0 || len(name) > 253 {
+	if !config.ValidHostname(name) {
 		return "", invalid(field)
-	}
-	for _, label := range strings.Split(name, ".") {
-		if !hostnameLabel.MatchString(label) {
-			return "", invalid(field)
-		}
 	}
 	return name, nil
 }

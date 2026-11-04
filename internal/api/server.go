@@ -172,9 +172,9 @@ func (s *Server) Handler() http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if mutating(r.Method) {
 			origin := r.Header.Get("Origin")
-			valid := origin == s.cfg.PublicOrigin()
+			valid := origin == s.cfg.PublicURL
 			if origin == "" {
-				valid = strings.HasPrefix(r.Header.Get("Referer"), s.cfg.PublicOrigin()+"/")
+				valid = strings.HasPrefix(r.Header.Get("Referer"), s.cfg.PublicURL+"/")
 			}
 			if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
 				ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))

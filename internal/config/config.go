@@ -110,13 +110,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	}
 
 	c.MailHost = get(EnvMailHost, "")
-	if c.MailHost != "" && !validHostname(c.MailHost) {
+	if c.MailHost != "" && !ValidHostname(c.MailHost) {
 		errs = append(errs, fmt.Errorf("%s must be a hostname without scheme or port", EnvMailHost))
 	}
 	c.DNSResolver = get(EnvDNSResolver, DefaultDNSResolver)
 	host, port, err := net.SplitHostPort(c.DNSResolver)
 	p, portErr := strconv.Atoi(port)
-	if err != nil || host == "" || (!validHostname(host) && net.ParseIP(host) == nil) || portErr != nil || p < 1 || p > 65535 {
+	if err != nil || host == "" || (!ValidHostname(host) && net.ParseIP(host) == nil) || portErr != nil || p < 1 || p > 65535 {
 		errs = append(errs, fmt.Errorf("%s must be host:port", EnvDNSResolver))
 	}
 	if raw := get(EnvMailTLSSkipVerify, "false"); raw != "" {
@@ -138,7 +138,8 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 
 var hostLabel = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-func validHostname(host string) bool {
+// ValidHostname reports whether host is a DNS name of LDH labels.
+func ValidHostname(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
 		return false
 	}
@@ -148,16 +149,6 @@ func validHostname(host string) bool {
 		}
 	}
 	return true
-}
-
-// PublicOrigin returns the scheme://host[:port] origin of PublicURL, as sent
-// by browsers in the Origin header.
-func (c Config) PublicOrigin() string {
-	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
 // parseHTTPURL checks that raw is an absolute http(s) URL with a host and no

@@ -187,3 +187,29 @@ func TestFailureLimiterLockOutlivesWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestPasswordRecheckLimited(t *testing.T) {
+	h := newHarness(t, true)
+	u, err := h.s.st.GetUserByEmail(context.Background(), "root@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(password string) error {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", nil)
+		r.RemoteAddr = "198.51.100.20:1234"
+		q := &requestState{user: u}
+		return h.s.checkPassword(r.WithContext(context.WithValue(r.Context(), stateKey{}, q)), password)
+	}
+	for i := 0; i < 5; i++ {
+		want := invalidCredentials
+		if i == 4 {
+			want = rateLimited
+		}
+		if err := check("bad"); err != want {
+			t.Fatalf("failure %d: %v, want %v", i, err, want)
+		}
+	}
+	if err := check(rootPassword); err != rateLimited {
+		t.Fatalf("valid password while locked: %v", err)
+	}
+}

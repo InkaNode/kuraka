@@ -208,6 +208,25 @@ func (s *Server) totp(_ http.ResponseWriter, r *http.Request) (any, error) {
 	}
 	return map[string]any{"mfa_required": false, "user": userJSON(q.user)}, nil
 }
+
+// checkPassword re-verifies the signed-in user's password under the same
+// limiters as login.
+func (s *Server) checkPassword(r *http.Request, password string) error {
+	u := state(r).user
+	key := loginKey(r, u.Email)
+	if s.ipLimiter.blocked(clientIP(r), s.now()) || s.limiter.blocked(key, s.now()) {
+		return rateLimited
+	}
+	ok, err := auth.VerifyPassword(password, u.PasswordHash)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return s.loginFailed(r, u.Email)
+	}
+	s.limiter.clear(key)
+	return nil
+}
 func (s *Server) checkTOTP(r *http.Request, code string) error {
 	u := state(r).user
 	key := loginKey(r, u.Email)
@@ -246,12 +265,8 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) (any, error) {
 		return nil, err
 	}
 	u := state(r).user
-	ok, err := auth.VerifyPassword(in.Current, u.PasswordHash)
-	if err != nil {
+	if err := s.checkPassword(r, in.Current); err != nil {
 		return nil, err
-	}
-	if !ok {
-		return nil, invalidCredentials
 	}
 	if err := auth.ValidatePassword(in.New); err != nil {
 		return nil, invalid("new: " + err.Error())
@@ -325,12 +340,8 @@ func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) (any, error
 		return nil, err
 	}
 	u := state(r).user
-	ok, err := auth.VerifyPassword(in.Password, u.PasswordHash)
-	if err != nil {
+	if err := s.checkPassword(r, in.Password); err != nil {
 		return nil, err
-	}
-	if !ok {
-		return nil, invalidCredentials
 	}
 	if !u.TOTPEnabled {
 		return nil, conflict("TOTP is not enabled")

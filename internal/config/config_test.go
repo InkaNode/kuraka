@@ -127,17 +127,3 @@ func TestLoadFromInvalid(t *testing.T) {
 		})
 	}
 }
-
-func TestPublicOrigin(t *testing.T) {
-	tests := []struct{ in, want string }{
-		{"https://panel.inkanode.com", "https://panel.inkanode.com"},
-		{"http://localhost:8080", "http://localhost:8080"},
-		{"https://Panel.Example.com:8443/", "https://panel.example.com:8443"},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		if got := (Config{PublicURL: tt.in}).PublicOrigin(); got != tt.want {
-			t.Errorf("%q: got %q want %q", tt.in, got, tt.want)
-		}
-	}
-}
