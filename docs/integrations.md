@@ -1,6 +1,6 @@
 # Integrations, CI and migrations (Phases 2.5, 3 and 5)
 
-Builds on [architecture.md](architecture.md). Same rules: tenancy is decided in `internal/authz`, every mutation is audited, secrets are encrypted with the secret box and never returned by the API.
+Builds on [architecture.md](architecture.md). Same rules: tenancy is decided in `internal/authz`, every mutation is audited, stored secrets are encrypted with the secret box and never returned by the API; newly generated agent passwords are returned only once.
 
 ## Ownership
 
@@ -44,7 +44,7 @@ Package `internal/dnsplan`:
 
 ## Libredesk (Phase 2.5)
 
-Package `internal/libredesk`: `Ping`, `SystemAPIKey`, `ListInboxes`, `CreateEmailInbox`, `DeleteInbox`. Auth is `Authorization: token key:secret`.
+Package `internal/libredesk`: `Ping`, `SystemAPIKey`, `ListInboxes`, `CreateEmailInbox`, `DeleteInbox`, `CreateAgent`, `SetAgentPassword`. Auth is `Authorization: token key:secret`.
 
 **Connect a mailbox:**
 1. Stalwart `x:AppPassword/set` with `accountId` = the mailbox creates a revocable password (verified live: IMAP login works with it).
@@ -74,11 +74,15 @@ Package `internal/migrate` copies one mailbox from any IMAP server into a Stalwa
 
 A superadmin fills **Create helpdesk** with the tenant and public hostname. `POST /api/v1/helpdesks/provision` returns a ZIP containing `docker-compose.yml`, `config.toml`, `.env`, `desk.caddy`, `install.sh` and bilingual `README.txt`, and stores a `pending` helpdesk with its System password encrypted. Keep the ZIP and extracted secrets private.
 
-Unzip on the VPS and run `sh install.sh`. The installer starts Libredesk **v2.9.2**, Postgres and Redis, copies the HTTPS site into `${KURAKA_DEPLOY:-/root/kuraka/deploy}/sites/` and reloads Caddy. Caddy and Kuraka reach `http://kuraka-<name>-desk:9000` over `kuraka_mail`; Libredesk has no published host port. Kuraka never gets the Docker socket.
+Unzip on the VPS and run `sh install.sh`. The installer starts Libredesk **v2.9.2**, Postgres and Redis, waits up to 180 seconds for the app logs to contain `server starting`, removes `LIBREDESK_SYSTEM_USER_PASSWORD` from `.env` (only the first idempotent install needs it), copies the HTTPS site into `${KURAKA_DEPLOY:-/root/kuraka/deploy}/sites/` and reloads Caddy. Caddy and Kuraka reach `http://kuraka-<name>-desk:9000` over `kuraka_mail`; Libredesk has no published host port. Kuraka never gets the Docker socket.
 
 The hostname must point to the VPS. When a matching tenant domain has a Cloudflare provider, Kuraka creates an unproxied CNAME to `KURAKA_MAIL_HOST`; any existing record at that name is preserved. `X-Kuraka-DNS` reports `created`, `exists`, `manual` (no provider) or `error`. A DNS failure never discards the ZIP.
 
 Press **Activate** in Kuraka (opening Integrations also tries once for each pending row). Kuraka logs in as System, takes the returned user ID, manually carries the Secure session and CSRF cookies over internal HTTP, and creates an agent API key with `X-CSRFTOKEN`. Login itself requires no CSRF token or Origin/Referer header. Activation verifies the new key, encrypts its secret, clears the stored setup password and marks the helpdesk `ready`. Activations are serialized so concurrent calls never regenerate an already stored key. Unavailable instances return `409 helpdesk_not_ready`; pending instances cannot connect mailboxes.
+
+The System password is only used by Kuraka once at activation. After **Activate**, delete the downloaded ZIP. System is not used by people; Libredesk retains it internally and Kuraka uses its Admin API key.
+
+After activation, a superadmin presses **Create account** on a ready helpdesk in **Integrations**, with role **Admin** (default) or **Agent**. Libredesk always creates the System user and it cannot be deleted; Kuraka uses it through its API key, people never sign in with it. **My Kuraka account** asks for the current Kuraka password, verifies it (same rate limits as login; a wrong password is `422`, never `401`) and reuses it in Libredesk when it passes Libredesk v2.9.2 `IsStrongPassword` (10-72 bytes, upper, lower, digit and symbol); otherwise a random password is generated. **Another person** takes a name and email and always gets a generated password. Kuraka creates the agent, then sets the password in a second request because Libredesk ignores `new_password` on creation. The response is `{email, url}` plus `password` only when generated, shown once. An existing agent returns `409 conflict`; other upstream failures return `502 upstream_error`. If the password update fails after creation, the agent remains with an unknown password; an administrator must reset it in Libredesk.
 
 The manual **Connect Libredesk** form still registers existing instances as `ready`. New mailbox forms offer a checked **Connect to Libredesk** option when the domain's tenant has a ready helpdesk. Connection failures show a warning while preserving the created mailbox and its generated password.
 
@@ -103,6 +107,7 @@ The manual **Connect Libredesk** form still registers existing instances as `rea
 | `PUT /domains/{id}/alias-redirect` | domain access, provider set | `{target}`: alias domains' web redirects to the target URL |
 | `GET/POST /helpdesks`, `DELETE /helpdesks/{id}` | superadmin; tenant_admin for own tenant | credentials verified on create |
 | `POST /helpdesks/provision` | superadmin | `{tenant_id, host}`; deployment ZIP and `X-Kuraka-DNS`; stores pending helpdesk |
+| `POST /helpdesks/{id}/agents` | superadmin only | `{mode:"self", password, role}` or `{mode:"other", name, email, role}` (Admin default or Agent); returns 201 `{email, url}` plus a generated `password` once; ready helpdesk required |
 | `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
