@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/InkaNode/kuraka/internal/api"
+	"github.com/InkaNode/kuraka/internal/auth"
 	"github.com/InkaNode/kuraka/internal/config"
+	"github.com/InkaNode/kuraka/internal/jobs"
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
@@ -55,6 +57,13 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	box, err := auth.NewBox(cfg.SecretKeyHex)
+	if err != nil {
+		return err
+	}
+	runner := jobs.New(st, sw, box, cfg, log)
+	runner.Start(ctx)
+	defer func() { stop(); runner.Wait() }()
 	purgeDone := make(chan struct{})
 	go func() {
 		defer close(purgeDone)
