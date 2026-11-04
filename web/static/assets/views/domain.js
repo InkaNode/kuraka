@@ -4,8 +4,11 @@ import { t } from '../core/i18n.js';
 import { api, errorMessage } from '../core/api.js';
 import { button, field, textInput, select, checkbox, card, pageHeader, table, badge, chip, copyButton, spinner, errorBox, emptyState, tabs, modal, confirmDialog, secretOnce, toast, formError } from '../core/ui.js';
 import { splitNames } from './domains.js';
+import { dnsAutomation } from './domain-dns.js';
+import { helpdeskBadges, helpdeskDialog } from './domain-helpdesk.js';
+import { showMigrations, migrationDialog } from './domain-migrations.js';
 
-const TABS = ['mailboxes', 'aliases', 'dns'];
+const TABS = ['mailboxes', 'aliases', 'dns', 'migrations'];
 const LONG_VALUE = 60;
 let seq = 0;
 const uid = prefix => `${prefix}-${++seq}`;
@@ -37,10 +40,22 @@ export async function domainView(ctx) {
   let dnsStale = false;
   const current = () => token;
 
+  // Context shared with the DNS, helpdesk and migration modules.
+  const view = {
+    get domain() { return domain; },
+    base, panel, current, show,
+    cache: { links: new Map() },
+    async loadMailboxes() { if (!mailboxes) await loadMailboxes(); return mailboxes; },
+    goTab(tab) {
+      if (active === tab) show();
+      else tabBar.children[TABS.indexOf(tab)]?.click();
+    },
+  };
+
   function show() {
     const mine = ++token;
     panel.setAttribute('aria-labelledby', tabId(active));
-    ({ mailboxes: showMailboxes, aliases: showAliases, dns: showDNS })[active](mine);
+    ({ mailboxes: showMailboxes, aliases: showAliases, dns: showDNS, migrations: m => showMigrations(view, m) })[active](mine);
   }
 
   // ---- Mailboxes -------------------------------------------------------
@@ -61,16 +76,20 @@ export async function domainView(ctx) {
         action: button({ label: t('mailbox.new'), icon: 'plus', variant: 'primary', onClick: () => mailboxDialog(null, notice) }) }));
       return;
     }
+    const links = helpdeskBadges(view, rows, mine);
     mount(panel, toolbar, notice, table({ rows, columns: [
-      { label: t('mailbox.col.address'), render: m => h('span', { class: 'mono' }, m.email) },
+      { label: t('mailbox.col.address'), render: m => h('div', { class: 'row gap-1' }, h('span', { class: 'mono' }, m.email), links.slot(m)) },
       { label: t('mailbox.col.name'), render: m => m.display_name || h('span', { class: 'muted' }, '—') },
       { label: t('mailbox.col.type'), render: m => badge(t(`mailbox.kind.${m.kind}`), m.kind === 'shared' ? 'warn' : 'neutral') },
       { label: t('mailbox.col.aliases'), render: m => m.aliases?.length ? h('div', { class: 'row gap-1' }, m.aliases.map(a => chip(a.email))) : h('span', { class: 'muted' }, '—') },
       { label: t('mailbox.col.quota'), render: m => quotaText(m) },
       { label: t('mailbox.col.actions'), render: m => h('div', { class: 'row gap-1' },
+        button({ label: t('helpdesk.action'), icon: 'link', variant: 'ghost', ariaLabel: t('helpdesk.action.label', { email: m.email }), onClick: () => helpdeskDialog(view, m, () => links.refresh(m.id)) }),
+        m.kind === 'user' ? button({ label: t('migration.action'), icon: 'download', variant: 'ghost', ariaLabel: t('migration.action.label', { email: m.email }), onClick: () => migrationDialog(view, m.id, () => view.goTab('migrations')) }) : null,
         button({ icon: 'edit', variant: 'ghost', ariaLabel: t('mailbox.edit.label', { email: m.email }), onClick: () => mailboxDialog(m, notice) }),
         button({ icon: 'trash', variant: 'ghost', ariaLabel: t('mailbox.delete.label', { email: m.email }), onClick: () => deleteMailbox(m, notice) })) },
     ] }));
+    links.start();
   }
   async function refreshMailboxes(notice) {
     try { await loadMailboxes(); }
@@ -274,15 +293,17 @@ export async function domainView(ctx) {
     const zones = [{ name: domain.name, records: domain.dns_records || [], primary: true },
       ...Object.entries(domain.alias_dns_records || {}).sort(([a], [b]) => a.localeCompare(b)).map(([name, records]) => ({ name, records }))];
     const zoneText = zones.map(zone => [`; ${zone.name}`, ...zone.records.map(bindLine)].join('\n')).join('\n\n') + '\n';
+    const automation = dnsAutomation(view);
     const copyAll = button({ label: t('dns.copyZone'), icon: 'copy', onClick: async () => {
       try { await navigator.clipboard.writeText(zoneText); toast(t('dns.copiedZone')); }
       catch { toast(t('error.clipboard'), 'danger'); }
     } });
     mount(panel,
       h('div', { class: 'row gap-2' }, h('p', { class: 'grow' }, t('dns.intro')), copyAll),
+      automation.node,
       zones.map(zone => card(h('div', { class: 'stack gap-2' },
         h('h2', { class: 'row gap-1' }, h('span', { class: 'mono' }, zone.name), badge(t(zone.primary ? 'dns.primary' : 'dns.alias'), zone.primary ? 'ok' : 'neutral')),
-        recordsTable(zone.records)))),
+        recordsTable(zone.records, automation.slot)))),
       card(h('div', { class: 'stack gap-2' }, h('h2', {}, t('dns.dkim')), h('p', { class: 'muted' }, t('dns.dkim.intro')),
         table({ rows: domain.dkim || [], empty: emptyState({ icon: 'key', title: t('dns.dkim.empty') }), columns: [
           { label: t('dns.dkim.selector'), render: k => h('span', { class: 'mono' }, k.selector) },
@@ -302,13 +323,14 @@ function quotaText(m) {
 }
 const formatMB = n => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(n);
 
-function recordsTable(records) {
+function recordsTable(records, statusSlot) {
   return table({ rows: records, empty: emptyState({ icon: 'globe', title: t('dns.empty') }), columns: [
+    statusSlot ? { label: t('dns.status'), render: r => statusSlot(r) } : null,
     { label: t('dns.type'), render: r => badge(r.type) },
     { label: t('dns.name'), render: r => h('span', { class: 'mono' }, r.name) },
     { label: t('dns.value'), render: r => h('div', { class: 'row gap-1' }, longValue(r.value), copyButton(r.value)) },
     { label: t('dns.priority'), render: r => (r.type === 'MX' || r.type === 'SRV') ? String(r.priority) : h('span', { class: 'muted' }, '—') },
-  ] });
+  ].filter(Boolean) });
 }
 
 // Long values (DKIM keys) collapse to a prefix; the full text stays reachable
