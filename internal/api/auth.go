@@ -133,6 +133,17 @@ func (s *Server) setup(_ http.ResponseWriter, r *http.Request) (any, error) {
 func loginKey(r *http.Request, email string) string {
 	return clientIP(r) + "\x00" + strings.ToLower(strings.TrimSpace(email))
 }
+
+func (s *Server) loginFailed(r *http.Request, email string) error {
+	now := s.now()
+	pairBlocked := s.limiter.fail(loginKey(r, email), now)
+	ipBlocked := s.ipLimiter.fail(clientIP(r), now)
+	if pairBlocked || ipBlocked {
+		return rateLimited
+	}
+	return invalidCredentials
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) (any, error) {
 	var in struct {
 		Email    string `json:"email"`
@@ -142,7 +153,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) (any, error) {
 		return nil, err
 	}
 	key := loginKey(r, in.Email)
-	if s.limiter.blocked(key, s.now()) {
+	if s.ipLimiter.blocked(clientIP(r), s.now()) || s.limiter.blocked(key, s.now()) {
 		return nil, rateLimited
 	}
 	u, err := s.st.GetUserByEmail(r.Context(), in.Email)
@@ -162,10 +173,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) (any, error) {
 		state(r).user = u
 	}
 	if !ok {
-		if s.limiter.fail(key, s.now()) {
-			return nil, rateLimited
-		}
-		return nil, invalidCredentials
+		return nil, s.loginFailed(r, in.Email)
 	}
 	if err := s.st.TouchLogin(r.Context(), u.ID, s.now()); err != nil {
 		return nil, err
@@ -203,7 +211,7 @@ func (s *Server) totp(_ http.ResponseWriter, r *http.Request) (any, error) {
 func (s *Server) checkTOTP(r *http.Request, code string) error {
 	u := state(r).user
 	key := loginKey(r, u.Email)
-	if s.limiter.blocked(key, s.now()) {
+	if s.ipLimiter.blocked(clientIP(r), s.now()) || s.limiter.blocked(key, s.now()) {
 		return rateLimited
 	}
 	if u.TOTPSecretEnc == "" {
@@ -214,10 +222,7 @@ func (s *Server) checkTOTP(r *http.Request, code string) error {
 		return err
 	}
 	if !auth.VerifyTOTP(string(secret), code, s.now()) {
-		if s.limiter.fail(key, s.now()) {
-			return rateLimited
-		}
-		return invalidCredentials
+		return s.loginFailed(r, u.Email)
 	}
 	s.limiter.clear(key)
 	return nil

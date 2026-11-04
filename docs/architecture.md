@@ -94,7 +94,7 @@ Errors: `{"error": {"code": "not_found", "message": "..."}}` with a matching HTT
 - Passwords: argon2id (m=64 MiB, t=3, p=2, 16-byte salt, 32-byte key), PHC string format. Minimum length 12.
 - Sessions: 32-byte random token in cookie `kuraka_session` (HttpOnly, Secure, SameSite=Strict, 12 h). Only the SHA-256 is stored.
 - CSRF: mutating requests require `Content-Type: application/json` and an `Origin` header (or `Referer` when it is missing) that matches `KURAKA_PUBLIC_URL`.
-- Login rate limit: 5 failures per IP+email in 15 minutes locks that pair for 15 minutes. Responses never reveal whether an email exists.
+- Login rate limits: 5 failures per IP+email in 15 minutes locks that pair for 15 minutes; 30 failed logins or TOTP codes per IP in 15 minutes locks that IP for 15 minutes across all emails. Successful authentication clears only the pair counter. Both in-memory limiters prune expired windows and cap storage at 100,000 keys, evicting the oldest window when full. Responses never reveal whether an email exists.
 - TOTP secrets are encrypted at rest with AES-256-GCM using `KURAKA_SECRET_KEY`.
 - Setup token: 32 random bytes, printed once to the log at startup while no superadmin exists; held in memory only.
 - Every mutating action writes an audit row, including denied attempts.

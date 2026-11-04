@@ -2,6 +2,7 @@
 package api
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,7 @@ type Server struct {
 	domainMu    sync.Mutex // serializes domain and alias name reservations
 	setupToken  string
 	limiter     failureLimiter
+	ipLimiter   failureLimiter
 	ui          fs.FS
 	newDNS      func(string) DNSAPI
 	newHelpdesk func(string, string, string) HelpdeskAPI
@@ -78,6 +80,7 @@ func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Se
 		log = slog.Default()
 	}
 	s := &Server{cfg: cfg, st: st, sw: sw, log: log, box: box, az: authz.New(st, sw), now: time.Now}
+	s.ipLimiter.limit = 30
 	s.newDNS = func(token string) DNSAPI { return cloudflare.New(token) }
 	s.newHelpdesk = func(url, key, secret string) HelpdeskAPI { return libredesk.New(url, key, secret) }
 	s.resolver = dnsplan.NewResolver(cfg.DNSResolver)
@@ -408,42 +411,74 @@ func (s *Server) audit(_ http.ResponseWriter, r *http.Request) (any, error) {
 	return out, err
 }
 
-// Failure windows and locks are independent: the fifth failure starts a full
+const maxFailureKeys = 100_000
+
+// Failure windows and locks are independent: reaching the limit starts a full
 // fifteen minute lock, even if it occurs near the end of the failure window.
 type failureWindow struct {
 	start, locked time.Time
 	failures      int
+	order         *list.Element
 }
 type failureLimiter struct {
 	mu      sync.Mutex
 	entries map[string]failureWindow
+	limit   int // zero preserves the five-failure IP+email limit
+	oldest  list.List
+	pruned  time.Time
+}
+
+// prune runs under mu, at most once per minute. Expired windows are also reset
+// on failure; the list permits constant-time eviction at capacity.
+func (l *failureLimiter) prune(now time.Time) {
+	if !l.pruned.IsZero() && now.Before(l.pruned.Add(time.Minute)) {
+		return
+	}
+	for key, v := range l.entries {
+		if !now.Before(v.locked) && !now.Before(v.start.Add(15*time.Minute)) {
+			l.remove(key)
+		}
+	}
+	l.pruned = now
+}
+
+func (l *failureLimiter) remove(key string) {
+	if v, ok := l.entries[key]; ok {
+		l.oldest.Remove(v.order)
+		delete(l.entries, key)
+	}
 }
 
 func (l *failureLimiter) blocked(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for k, v := range l.entries {
-		if !now.Before(v.locked) && !now.Before(v.start.Add(15*time.Minute)) {
-			delete(l.entries, k)
-		}
-	}
+	l.prune(now)
 	return now.Before(l.entries[key].locked)
 }
 func (l *failureLimiter) fail(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.prune(now)
 	if l.entries == nil {
 		l.entries = map[string]failureWindow{}
 	}
-	v := l.entries[key]
+	v, exists := l.entries[key]
 	if now.Before(v.locked) {
 		return true
 	}
-	if v.start.IsZero() || !now.Before(v.start.Add(15*time.Minute)) {
-		v = failureWindow{start: now}
+	if !exists || !now.Before(v.start.Add(15*time.Minute)) {
+		l.remove(key)
+		if len(l.entries) >= maxFailureKeys {
+			l.remove(l.oldest.Front().Value.(string))
+		}
+		v = failureWindow{start: now, order: l.oldest.PushBack(key)}
 	}
 	v.failures++
-	if v.failures >= 5 {
+	limit := l.limit
+	if limit == 0 {
+		limit = 5
+	}
+	if v.failures >= limit {
 		v.locked = now.Add(15 * time.Minute)
 	}
 	l.entries[key] = v
@@ -452,5 +487,5 @@ func (l *failureLimiter) fail(key string, now time.Time) bool {
 func (l *failureLimiter) clear(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.entries, key)
+	l.remove(key)
 }
