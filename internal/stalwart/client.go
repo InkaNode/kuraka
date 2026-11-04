@@ -227,7 +227,8 @@ type getResult[T any] struct {
 
 type setResult struct {
 	Created map[string]struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Secret string `json:"secret"`
 	} `json:"created"`
 	NotCreated   map[string]*SetError `json:"notCreated"`
 	NotUpdated   map[string]*SetError `json:"notUpdated"`
