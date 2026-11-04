@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        stalwart: ["v1"]
+        stalwart: ["v1.0.2", "v1"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
