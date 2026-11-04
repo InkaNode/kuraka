@@ -22,7 +22,7 @@ KURAKA_UID=65532
 ISSUER_DIR=acme-v02.api.letsencrypt.org-directory
 # Overridden to "local" below when CADDY_EXTRA_GLOBAL=local_certs (local testing).
 USING='["urn:ietf:params:jmap:core","urn:stalwart:jmap"]'
-WEBUI_URL=https://github.com/InkaNode/stalwart-webui/releases/latest/download/webui.zip
+WEBUI_URL=https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip
 # Keep in sync with ServiceKeyDisabled in internal/stalwart/apppasswords.go.
 SERVICE_KEY_DISABLED=(
   sysDomainDestroy
@@ -210,7 +210,7 @@ main() {
 
   # 2. Caddy and Stalwart; wait for the MAIL_HOST certificate.
   log "starting caddy and stalwart"
-  compose up -d caddy stalwart >/dev/null
+  compose up -d --build caddy stalwart >/dev/null
   local dir deadline=$((SECONDS + 300))
   dir=/data$(cert_dir)
   log "waiting for the certificate of $MAIL_HOST (up to 5 minutes)"
@@ -299,7 +299,7 @@ main() {
       die "could not trust the internal network ($(jmap_error "${resp:-}" a a); $(jmap_error "${resp:-}" h singleton))"
   fi
 
-  # Web interface from the InkaNode fork: it hides the views Kuraka manages.
+  # Official web interface; the Caddy-injected Kuraka addon hides the views Kuraka manages.
   local webui_set=0 app
   if [[ -z $admin ]]; then
     log "STALWART_ADMIN is not set; skipping the web interface URL"
@@ -312,7 +312,7 @@ main() {
       if resp=$(jmap "$admin" "$body") &&
         jq -e --arg id "$app" '.methodResponses[] | select(.[0] == "x:Application/set" and .[2] == "u") | .[1].updated | has($id)' <<<"$resp" >/dev/null; then
         webui_set=1
-        log "Stalwart web interface set to $WEBUI_URL"
+        log "Stalwart web interface resourceUrl updated to $WEBUI_URL (existing installs migrated on re-run)"
       else
         die "could not set the web interface URL ($(jmap_error "${resp:-}" u "$app"))"
       fi
@@ -340,7 +340,7 @@ main() {
 
   # 4. Kuraka.
   log "starting kuraka"
-  compose up -d kuraka >/dev/null
+  compose up -d --build kuraka >/dev/null
   local token="" since
   # Only the running container's logs: older starts printed stale tokens.
   since=$(docker inspect -f '{{.State.StartedAt}}' "$(compose ps -q kuraka)")
@@ -364,7 +364,7 @@ Next steps:
   2. At your VPS provider, set the PTR (reverse DNS) record of this server's IP to $MAIL_HOST.
   3. In Kuraka, add $MAIL_DOMAIN to a tenant and publish its DNS records (Cloudflare or manually).
   4. Rotate STALWART_ADMIN, then remove STALWART_RECOVERY_ADMIN from deploy/.env
-     and run: docker compose -f deploy/docker-compose.yml up -d stalwart
+     and run: docker compose -f deploy/docker-compose.yml up -d --build stalwart
   5. Let Stalwart pick up renewed certificates weekly, e.g. /etc/cron.d/kuraka:
      17 4 * * 1 root bash $DEPLOY_DIR/setup.sh refresh-cert >/dev/null
 EOF
