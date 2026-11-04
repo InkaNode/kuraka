@@ -7,6 +7,8 @@ Self-hosted multi-tenant mail admin panel for [Stalwart Mail Server](https://sta
 
 Status: in development (0.1.0). JSON API, embedded web panel (Spanish and English), Cloudflare DNS automation, Libredesk helpdesk connection and IMAP migrations. See [docs/architecture.md](docs/architecture.md), [docs/integrations.md](docs/integrations.md), [docs/ui.md](docs/ui.md) and [docs/phase0](docs/phase0).
 
+Install: [docs/install.md](docs/install.md) (single VPS with Docker Compose, [deploy/](deploy)).
+
 Not affiliated with Stalwart Labs. Talks to Stalwart only through its public JMAP management API.
 
 ## License
