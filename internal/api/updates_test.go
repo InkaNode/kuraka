@@ -16,12 +16,15 @@ import (
 	"github.com/InkaNode/kuraka/internal/provision"
 	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/store"
+	"github.com/InkaNode/kuraka/internal/version"
 )
 
 type fakeGitHub struct {
-	mu   sync.Mutex
-	tags map[string]string
-	hits int
+	mu      sync.Mutex
+	tags    map[string]string
+	commits map[string]string
+	urls    map[string]string
+	hits    int
 }
 
 func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +37,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": tag})
+	_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": tag, "target_commitish": f.commits[repo], "html_url": f.urls[repo]})
 }
 
 func (f *fakeGitHub) hitCount() int {
@@ -48,7 +51,11 @@ func (f *fakeGitHub) hitCount() int {
 func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) {
 	t.Helper()
 	h := newHarness(t, true)
-	gh := &fakeGitHub{tags: map[string]string{libredeskRepo: "v2.10.0", webuiRepo: "v2.0.4-kuraka.2", stalwartRepo: "v1.0.3"}}
+	gh := &fakeGitHub{
+		tags:    map[string]string{libredeskRepo: "v2.10.0", webuiRepo: "v2.0.4-kuraka.2", stalwartRepo: "v1.0.3", kurakaRepo: "v99.0.0"},
+		commits: map[string]string{kurakaRepo: strings.Repeat("a", 40)},
+		urls:    map[string]string{kurakaRepo: "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0"},
+	}
 	srv := httptest.NewServer(gh)
 	t.Cleanup(srv.Close)
 	h.s.releases = &releases.Client{BaseURL: srv.URL}
@@ -70,6 +77,11 @@ func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) 
 
 type versionReply struct{ Latest, Current, State, Message string }
 
+type kurakaReply struct {
+	Latest, Current, Commit, URL, State, Kind, Message string
+	LatestCommit                                       string `json:"latest_commit"`
+}
+
 type deskReply struct {
 	ID      int64
 	Name    string
@@ -88,6 +100,7 @@ type updatesReply struct {
 	Error      string         `json:"error"`
 	UpdatesDir bool           `json:"updates_dir"`
 	Stalwart   versionReply   `json:"stalwart"`
+	Kuraka     kurakaReply    `json:"kuraka"`
 	WebUI      versionReply   `json:"webui"`
 	Libredesk  libredeskReply `json:"libredesk"`
 }
@@ -119,26 +132,30 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	}
 	// Within 30 seconds the cached result is returned.
 	h.root.do("POST", "/updates/check", nil, 200)
-	if n := gh.hitCount(); n != 3 {
-		t.Fatalf("GitHub hits = %d, want 3", n)
+	if n := gh.hitCount(); n != 4 {
+		t.Fatalf("GitHub hits = %d, want 4", n)
 	}
 	h.s.updates.mu.Lock()
 	h.s.updates.checkedAt = time.Now().Add(-time.Minute)
 	h.s.updates.mu.Unlock()
 	gh.mu.Lock()
 	delete(gh.tags, webuiRepo)
+	delete(gh.tags, kurakaRepo)
 	gh.mu.Unlock()
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
-	if n := gh.hitCount(); n != 6 {
-		t.Fatalf("GitHub hits = %d, want 6", n)
+	if n := gh.hitCount(); n != 8 {
+		t.Fatalf("GitHub hits = %d, want 8", n)
 	}
-	if v.Error == "" || v.WebUI.Latest != "v2.0.4-kuraka.2" {
+	if v.Error == "" || v.WebUI.Latest != "v2.0.4-kuraka.2" || v.Kuraka.Latest != "v99.0.0" ||
+		v.Kuraka.LatestCommit != strings.Repeat("a", 40) || v.Kuraka.URL != "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0" ||
+		!strings.Contains(v.Error, webuiRepo) || !strings.Contains(v.Error, kurakaRepo) {
 		t.Fatalf("failed check must keep the previous tag: %+v", v)
 	}
 	admin := h.admin(h.tenant("Second"), "admin@second.test")
 	admin.do("GET", "/updates", nil, 403)
 	admin.do("POST", "/updates/check", nil, 403)
 	admin.do("POST", "/updates/stalwart", nil, 403)
+	admin.do("POST", "/updates/kuraka", nil, 403)
 }
 
 func TestUpdateWebUI(t *testing.T) {
@@ -269,4 +286,161 @@ func TestUpdateStalwart(t *testing.T) {
 	if s := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Stalwart; s.Current != "v1.0.2" || s.State != "available" {
 		t.Fatalf("without updates dir: %+v", s)
 	}
+}
+
+func TestKurakaStates(t *testing.T) {
+	h, _, dir, _, _ := updatesHarness(t)
+	oldCommit := version.Commit
+	version.Commit = strings.Repeat("b", 40)
+	t.Cleanup(func() { version.Commit = oldCommit })
+	current := "v" + version.Version
+	latestCommit := strings.Repeat("a", 40)
+	for _, tc := range []struct {
+		name, tag, commit, result, wantState, wantKind string
+		pending, disabled                              bool
+	}{
+		{name: "unknown", wantState: "unknown"},
+		{name: "version", tag: "v99.0.0", commit: latestCommit, wantState: "available", wantKind: "version"},
+		{name: "commits", tag: current, commit: latestCommit, wantState: "available", wantKind: "commits"},
+		{name: "current", tag: current, commit: version.Commit, wantState: "current"},
+		{name: "no latest commit", tag: current, wantState: "current"},
+		{name: "error", tag: current, commit: latestCommit, result: "error", wantState: "error"},
+		{name: "other tag error", tag: current, commit: latestCommit, result: "other tag", wantState: "available", wantKind: "commits"},
+		{name: "other commit error", tag: current, commit: latestCommit, result: "other commit", wantState: "available", wantKind: "commits"},
+		{name: "ok does not replace build", tag: "v99.0.0", commit: latestCommit, result: "ok", wantState: "available", wantKind: "version"},
+		{name: "malformed result", tag: current, commit: latestCommit, result: "malformed", wantState: "available", wantKind: "commits"},
+		{name: "updating before error", tag: current, commit: latestCommit, result: "error", pending: true, wantState: "updating"},
+		{name: "updating before unknown", pending: true, wantState: "updating"},
+		{name: "disabled ignores files", tag: current, commit: latestCommit, result: "error", pending: true, disabled: true, wantState: "available", wantKind: "commits"},
+		{name: "disabled unknown", disabled: true, wantState: "unknown"},
+		{name: "disabled current", tag: current, commit: version.Commit, disabled: true, wantState: "current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.s.cfg.UpdatesDir = dir
+			h.s.updates.mu.Lock()
+			h.s.updates.kuraka = releases.Release{Tag: tc.tag, Commit: tc.commit, URL: "https://github.com/InkaNode/kuraka"}
+			h.s.updates.mu.Unlock()
+			for _, name := range []string{"kuraka.json", "kuraka.result.json"} {
+				if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
+			if tc.result != "" {
+				result := updateResult{Tag: tc.tag, Commit: tc.commit, Status: "error", Message: strings.Repeat("x", 301), Current: "v99.0.0"}
+				switch tc.result {
+				case "other tag":
+					result.Tag = "v98.0.0"
+				case "other commit":
+					result.Commit = version.Commit
+				case "ok":
+					result.Status = "ok"
+				}
+				data, err := json.Marshal(result)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.result == "malformed" {
+					data = []byte(`{"status":"error"`)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "kuraka.result.json"), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.pending {
+				if err := os.WriteFile(filepath.Join(dir, "kuraka.json"), []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.disabled {
+				h.s.cfg.UpdatesDir = ""
+			}
+			body := h.root.do("GET", "/updates", nil, 200)
+			got := decodeUpdates(t, body).Kuraka
+			if got.State != tc.wantState || got.Kind != tc.wantKind || got.Current != current || got.Commit != version.Commit ||
+				got.Latest != tc.tag || got.LatestCommit != tc.commit || got.URL != "https://github.com/InkaNode/kuraka" {
+				t.Fatalf("kuraka: %+v", got)
+			}
+			row := object(t, body)["kuraka"].(map[string]any)
+			_, hasKind := row["kind"]
+			_, hasMessage := row["message"]
+			if hasKind != (tc.wantState == "available") || hasMessage != (tc.wantState == "error") {
+				t.Fatalf("conditional fields: %v", row)
+			}
+			if tc.wantState == "error" && got.Message != strings.Repeat("x", 300) {
+				t.Fatalf("message: %q", got.Message)
+			}
+		})
+	}
+	version.Commit = ""
+	if status, _ := h.s.kurakaState(releases.Release{Tag: current, Commit: latestCommit}); status != "current" {
+		t.Fatalf("unknown build commit: %s", status)
+	}
+}
+
+func TestUpdateKuraka(t *testing.T) {
+	h, _, dir, _, _ := updatesHarness(t)
+	assertCode(t, h.root.do("POST", "/updates/kuraka", nil, 409), "conflict")
+	h.root.do("POST", "/updates/check", nil, 200)
+	v := decodeUpdates(t, h.root.do("POST", "/updates/kuraka", nil, 200))
+	if v.Kuraka.State != "updating" || v.Kuraka.Current != "v"+version.Version {
+		t.Fatalf("state: %+v", v.Kuraka)
+	}
+	request := filepath.Join(dir, "kuraka.json")
+	data, err := os.ReadFile(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(data, &got); err != nil || len(got) != 2 || got["tag"] != "v99.0.0" || got["commit"] != strings.Repeat("a", 40) {
+		t.Fatalf("request file: %s", data)
+	}
+	body := h.root.do("POST", "/updates/kuraka", nil, 409)
+	assertCode(t, body, "conflict")
+	if !strings.Contains(string(body), "Kuraka update already in progress") {
+		t.Fatalf("conflict: %s", body)
+	}
+	if err := os.Remove(request); err != nil {
+		t.Fatal(err)
+	}
+	result, err := json.Marshal(updateResult{Tag: "v99.0.0", Commit: strings.Repeat("a", 40), Status: "error", Message: "pull failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "kuraka.result.json"), result, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A failed attempt can be retried with the same tag and commit.
+	h.root.do("POST", "/updates/kuraka", nil, 200)
+	if err := os.Remove(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "kuraka.result.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		tag, commit string
+		status      int
+		message     string
+	}{
+		{"", "", 409, "No Kuraka update available"},
+		{"v" + version.Version, version.Commit, 409, "No Kuraka update available"},
+		{"v99.0.0", "", 409, "Latest release has no commit"},
+		{"v99.0.0+build", strings.Repeat("a", 40), 422, "release tag"},
+		{"v99.0.0-rc.1", strings.Repeat("a", 40), 200, ""},
+	} {
+		h.s.updates.mu.Lock()
+		h.s.updates.kuraka = releases.Release{Tag: tc.tag, Commit: tc.commit}
+		h.s.updates.mu.Unlock()
+		body := h.root.do("POST", "/updates/kuraka", nil, tc.status)
+		if tc.message != "" && !strings.Contains(string(body), tc.message) {
+			t.Fatalf("response: %s", body)
+		}
+		if tc.status != 200 {
+			if _, err := os.Stat(request); !os.IsNotExist(err) {
+				t.Fatalf("rejected request wrote a file: %v", err)
+			}
+		}
+	}
+	h.s.cfg.UpdatesDir = ""
+	assertCode(t, h.root.do("POST", "/updates/kuraka", nil, 409), "updates_disabled")
 }

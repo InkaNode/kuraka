@@ -14,28 +14,33 @@ import (
 	"time"
 
 	"github.com/InkaNode/kuraka/internal/provision"
+	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/store"
+	"github.com/InkaNode/kuraka/internal/version"
 )
 
 const (
 	libredeskRepo = "abhinavxd/libredesk"
 	webuiRepo     = "InkaNode/stalwart-webui"
 	stalwartRepo  = "stalwartlabs/stalwart"
+	kurakaRepo    = "InkaNode/kuraka"
 	webuiSetting  = "webui_applied"
 )
 
 var deskHost = regexp.MustCompile(`^kuraka-[a-z0-9-]+-desk$`)
 var stableTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var kurakaTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 // updateState caches the latest release tags read from GitHub.
 type updateState struct {
 	checkMu   sync.Mutex // serializes checks
-	requestMu sync.Mutex // serializes Stalwart and helpdesk update requests
+	requestMu sync.Mutex // serializes update requests written to the host
 	mu        sync.Mutex // guards the fields below
 	checkedAt time.Time
 	libredesk string
 	webui     string
 	stalwart  string
+	kuraka    releases.Release
 	err       string
 }
 
@@ -44,12 +49,16 @@ func (s *Server) updateRoutes(route func(string, string, bool, bool, endpoint)) 
 	route("POST /api/v1/updates/check", "update.check", false, true, s.checkUpdatesNow)
 	route("POST /api/v1/updates/webui", "update.webui", false, true, s.updateWebUI)
 	route("POST /api/v1/updates/stalwart", "update.stalwart", false, true, s.updateStalwart)
+	route("POST /api/v1/updates/kuraka", "update.kuraka", false, true, s.updateKuraka)
 	route("POST /api/v1/helpdesks/{id}/update", "helpdesk.update", false, true, s.updateHelpdesk)
 }
 
 // StartUpdateChecks reads GitHub releases a minute after start and then
 // daily. The returned channel is closed when the loop has stopped.
 func (s *Server) StartUpdateChecks(ctx context.Context) <-chan struct{} {
+	if err := s.writeMaintenancePage(ctx); err != nil {
+		s.log.Warn("maintenance page render failed", "error", err)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -83,10 +92,11 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	libredesk, libredeskErr := s.releases.Latest(ctx, libredeskRepo)
 	webui, webuiErr := s.releases.Latest(ctx, webuiRepo)
 	stalwart, stalwartErr := s.releases.Latest(ctx, stalwartRepo)
+	kuraka, kurakaErr := s.releases.LatestRelease(ctx, kurakaRepo)
 	if ctx.Err() != nil {
 		return
 	}
-	err := errors.Join(libredeskErr, webuiErr, stalwartErr)
+	err := errors.Join(libredeskErr, webuiErr, stalwartErr, kurakaErr)
 	if err != nil {
 		s.log.Warn("update check failed", "error", err)
 	}
@@ -104,6 +114,9 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	}
 	if stalwartErr == nil {
 		u.stalwart = stalwart
+	}
+	if kurakaErr == nil {
+		u.kuraka = kuraka
 	}
 }
 
@@ -137,6 +150,7 @@ func deskContainer(h store.Helpdesk) string {
 // compose project runs after the attempt.
 type updateResult struct {
 	Tag     string `json:"tag"`
+	Commit  string `json:"commit"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
 	At      string `json:"at"`
@@ -179,9 +193,36 @@ func (s *Server) requestVersion(name, installed, latest string) (current, status
 	return current, versionState(current, latest), ""
 }
 
+func (s *Server) kurakaState(latest releases.Release) (status, message string) {
+	if s.cfg.UpdatesDir != "" {
+		base := filepath.Join(s.cfg.UpdatesDir, "kuraka")
+		if _, err := os.Stat(base + ".json"); err == nil {
+			return "updating", ""
+		}
+		var result updateResult
+		if f, err := os.Open(base + ".result.json"); err == nil {
+			err = json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&result)
+			f.Close()
+			if err == nil && result.Status == "error" && result.Tag == latest.Tag && result.Commit == latest.Commit {
+				message = result.Message
+				if len(message) > 300 {
+					message = message[:300]
+				}
+				return "error", message
+			}
+		}
+	}
+	status = versionState("v"+version.Version, latest.Tag)
+	if status == "current" && version.Commit != "" && latest.Commit != "" && version.Commit != latest.Commit {
+		status = "available"
+	}
+	return status, ""
+}
+
 func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	s.updates.mu.Lock()
 	checkedAt, libredesk, webui, stalwart, checkErr := s.updates.checkedAt, s.updates.libredesk, s.updates.webui, s.updates.stalwart, s.updates.err
+	kuraka := s.updates.kuraka
 	s.updates.mu.Unlock()
 	applied, err := s.st.GetSetting(ctx, webuiSetting)
 	if err != nil {
@@ -209,10 +250,29 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if message != "" {
 		server["message"] = message
 	}
+	status, message = s.kurakaState(kuraka)
+	self := map[string]any{
+		"current":       "v" + version.Version,
+		"commit":        version.Commit,
+		"latest":        kuraka.Tag,
+		"latest_commit": kuraka.Commit,
+		"url":           kuraka.URL,
+		"state":         status,
+	}
+	if status == "available" {
+		self["kind"] = "version"
+		if kuraka.Tag == "v"+version.Version {
+			self["kind"] = "commits"
+		}
+	}
+	if status == "error" {
+		self["message"] = message
+	}
 	out := map[string]any{
 		"checked_at":  nil,
 		"updates_dir": s.cfg.UpdatesDir != "",
 		"stalwart":    server,
+		"kuraka":      self,
 		"webui":       map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui)},
 		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks},
 	}
@@ -326,7 +386,41 @@ func (s *Server) updateStalwart(_ http.ResponseWriter, r *http.Request) (any, er
 	return s.updatesBody(r.Context())
 }
 
-// writeFileAtomic keeps the host timer from reading a partial file.
+// updateKuraka leaves the release tag and immutable commit for the host timer.
+func (s *Server) updateKuraka(_ http.ResponseWriter, r *http.Request) (any, error) {
+	if s.cfg.UpdatesDir == "" {
+		return nil, &apiError{status: 409, code: "updates_disabled", message: "KURAKA_UPDATES_DIR is not set"}
+	}
+	s.updates.requestMu.Lock()
+	defer s.updates.requestMu.Unlock()
+	s.updates.mu.Lock()
+	latest := s.updates.kuraka
+	s.updates.mu.Unlock()
+	switch status, _ := s.kurakaState(latest); status {
+	case "updating":
+		return nil, conflict("Kuraka update already in progress")
+	case "available", "error":
+	default:
+		return nil, conflict("No Kuraka update available")
+	}
+	if latest.Commit == "" {
+		return nil, conflict("Latest release has no commit")
+	}
+	if !kurakaTag.MatchString(latest.Tag) {
+		return nil, invalid("release tag")
+	}
+	state(r).detail = latest.Tag + " " + latest.Commit[:7]
+	data, err := json.Marshal(map[string]string{"tag": latest.Tag, "commit": latest.Commit})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(filepath.Join(s.cfg.UpdatesDir, "kuraka.json"), data); err != nil {
+		return nil, err
+	}
+	return s.updatesBody(r.Context())
+}
+
+// writeFileAtomic keeps readers from seeing a partial file.
 func writeFileAtomic(path string, data []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
