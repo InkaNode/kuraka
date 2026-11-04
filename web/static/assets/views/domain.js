@@ -112,6 +112,12 @@ export async function domainView(ctx) {
     mount(notice);
     const editing = Boolean(existing);
     const shared = editing && existing.kind === 'shared';
+    let helpdesk;
+    if (!editing) {
+      try { helpdesk = (await api('GET', '/helpdesks')).find(row => row.tenant_id === domain.tenant_id && row.status === 'ready'); }
+      catch { /* Mailbox creation remains available if integrations cannot be loaded. */ }
+    }
+    const connect = helpdesk ? checkbox({ label: t('mailbox.helpdesk'), checked: true }) : null;
     let busy = false;
     const formId = uid('mailbox');
 
@@ -204,6 +210,10 @@ export async function domainView(ctx) {
         dialog.close();
         toast(t(editing ? 'mailbox.updated' : 'mailbox.created', { email: result.email }));
         if (result.generated_password) secretOnce({ title: t('mailbox.secret.title', { email: result.email }), label: t('mailbox.password'), secret: result.generated_password });
+        if (connect?.querySelector('input').checked) {
+          try { await api('POST', `${base}/mailboxes/${encodeURIComponent(result.id)}/helpdesk`, { helpdesk_id: helpdesk.id }); }
+          catch { toast(t('mailbox.helpdeskFailed', { email: result.email }), 'warn'); }
+        }
         await refreshMailboxes(notice);
       } catch (err) {
         formError(form, err); markFields(err);
@@ -215,7 +225,7 @@ export async function domainView(ctx) {
       editing ? null : h('div', { class: 'stack gap-1' }, sharedBox, sharedHelp),
       passwordGroup, passwordField,
       field({ label: t('mailbox.quota'), input: quota, help: t('mailbox.quota.help') }),
-      aliasSection);
+      aliasSection, connect);
     syncPassword();
     const dialog = modal({ title: editing ? t('mailbox.edit.title', { email: existing.email }) : t('mailbox.new'), body: form,
       actions: [button({ label: t('cancel'), onClick: () => dialog.close() }), submit] });

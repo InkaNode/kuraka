@@ -25,12 +25,18 @@ export async function integrationsView(ctx) {
     ] });
   }
 
+  const activating = new Set();
+
   function helpdeskURL(row) {
     // Treat stored URLs as untrusted; only web links may be opened.
     try {
       const url = new URL(row.url);
+      // Provisioned desks store their internal URL; the browser opens the public host.
+      if (/^kuraka-[a-z0-9-]+-desk$/.test(url.hostname) && row.name.length <= 253 && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(row.name)) {
+        url.protocol = 'https:'; url.host = row.name; url.port = ''; url.pathname = '/'; url.search = ''; url.hash = '';
+      }
       if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) {
-        return h('a', { class: 'mono', href: url.href, target: '_blank', rel: 'noopener' }, row.url);
+        return h('a', { class: 'mono', href: url.href, target: '_blank', rel: 'noopener' }, url.href);
       }
     } catch { /* Invalid stored values remain plain text. */ }
     return h('span', { class: 'mono' }, row.url);
@@ -48,12 +54,27 @@ export async function integrationsView(ctx) {
         { label: t(isDNS ? 'integrations.scope' : 'integrations.tenant'), render: row => row.tenant_id == null ? t('integrations.global') : tenantName(row.tenant_id) },
         isDNS ? { label: t('integrations.created'), render: row => formatDate(row.created_at) }
           : { label: t('integrations.url'), render: helpdeskURL },
-        { label: t('integrations.actions'), render: row => button({
-          label: t('delete'), icon: 'trash', variant: 'danger',
-          ariaLabel: t('integrations.deleteLabel', { name: row.name }), onClick: event => remove(kind, row, event),
-        }) },
+        ...(!isDNS ? [{ label: t('integrations.status'), render: row => t(`integrations.${row.status}`) }] : []),
+        { label: t('integrations.actions'), render: row => h('div', { class: 'row gap-1' },
+          !isDNS && row.status === 'pending' ? button({ label: t('integrations.activate'), disabled: activating.has(row.id), onClick: () => activate(row) }) : null,
+          button({
+            label: t('delete'), icon: 'trash', variant: 'danger',
+            ariaLabel: t('integrations.deleteLabel', { name: row.name }), onClick: event => remove(kind, row, event),
+          })) },
       ] }));
     }
+  }
+
+  async function activate(row, silent = false) {
+    if (activating.has(row.id)) return;
+    activating.add(row.id); render();
+    try {
+      const result = await api('POST', `/helpdesks/${encodeURIComponent(row.id)}/activate`);
+      rows.helpdesks = rows.helpdesks.map(entry => entry.id === row.id ? result : entry);
+      if (!silent && root.isConnected) toast(t('integrations.activated'));
+    } catch (err) {
+      if (!silent && root.isConnected) toast(err.code === 'helpdesk_not_ready' ? t('integrations.notReady') : errorMessage(err), 'danger');
+    } finally { activating.delete(row.id); render(); }
   }
 
   async function remove(kind, row, event) {
@@ -127,16 +148,20 @@ export async function integrationsView(ctx) {
 
   function bundleForm() {
     const tenant = tenantSelect();
+    const host = textInput({ name: 'host', required: true, placeholder: 'desk.example.com', autocomplete: 'off', spellcheck: 'false' });
     let busy = false;
     const submit = button({ label: t('integrations.bundle'), icon: 'download', type: 'submit', disabled: !tenants.length });
     const form = h('form', { class: 'stack gap-2', onsubmit: async event => {
       event.preventDefault();
       if (busy || !form.reportValidity()) return;
-      busy = true; submit.disabled = true; tenant.disabled = true;
+      busy = true; submit.disabled = true; tenant.disabled = true; host.disabled = true;
       form.setAttribute('aria-busy', 'true'); formError(form, null);
       try {
         let response;
-        try { response = await fetch(`/api/v1/helpdesks/bundle?tenant_id=${encodeURIComponent(tenant.value)}`, { credentials: 'same-origin' }); }
+        try { response = await fetch('/api/v1/helpdesks/provision', {
+          method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenant_id: Number(tenant.value), host: host.value.trim().toLowerCase() }),
+        }); }
         catch { throw new ApiError(0, 'network'); }
         if (!response.ok) {
           if (response.status === 401) window.dispatchEvent(new Event('auth:lost'));
@@ -152,12 +177,15 @@ export async function integrationsView(ctx) {
         const link = h('a', { href: objectURL, download: filename, hidden: true });
         try { document.body.append(link); link.click(); }
         finally { link.remove(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000); }
+        const dns = response.headers.get('X-Kuraka-DNS');
+        if (['created', 'exists', 'manual', 'error'].includes(dns)) toast(t(`integrations.dns.${dns}`, { host: host.value.trim().toLowerCase() }), ['manual', 'error'].includes(dns) ? 'warn' : 'ok');
+        rows.helpdesks = await api('GET', '/helpdesks'); render();
       } catch (err) {
         if (form.isConnected) formError(form, err instanceof ApiError ? err : new Error(t('integrations.bundleError')));
-      } finally { busy = false; submit.disabled = !tenants.length; tenant.disabled = false; form.removeAttribute('aria-busy'); }
+      } finally { busy = false; submit.disabled = !tenants.length; tenant.disabled = false; host.disabled = false; form.removeAttribute('aria-busy'); }
     } }, h('h3', {}, t('integrations.bundle')), h('p', { class: 'muted' }, t('integrations.bundleHelp')),
     !tenants.length ? h('p', { class: 'help' }, t('integrations.noTenants')) : null,
-    field({ label: t('integrations.tenant'), input: tenant }), submit);
+    field({ label: t('integrations.tenant'), input: tenant }), field({ label: t('integrations.host'), input: host }), submit);
     return form;
   }
 
@@ -171,5 +199,6 @@ export async function integrationsView(ctx) {
       h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.helpdesk')),
         button({ label: t('integrations.connectHelpdesk'), icon: 'plus', variant: 'primary', onClick: () => connect('helpdesks') })),
       h('p', { class: 'muted' }, t('integrations.helpdeskHelp')), helpdeskBody, admin ? bundleForm() : null)));
+  rows.helpdesks.filter(row => row.status === 'pending').forEach(row => activate(row, true));
   return root;
 }
