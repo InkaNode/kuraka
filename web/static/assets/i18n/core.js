@@ -1,6 +1,7 @@
 import { registerMessages } from '../core/i18n.js';
 registerMessages({
   es: {
+    'nav.docs': 'Documentación',
     'brand': 'Kuraka', 'nav.domains': 'Dominios', 'nav.tenants': 'Clientes',
     'nav.users': 'Usuarios', 'nav.audit': 'Auditoría', 'nav.account': 'Mi cuenta',
     'nav.domain': 'Dominio', 'nav.menu': 'Abrir o cerrar menú', 'nav.main': 'Navegación principal',
@@ -35,6 +36,7 @@ registerMessages({
     'date.invalid': 'Fecha no disponible', 'tabs.label': 'Secciones',
   },
   en: {
+    'nav.docs': 'Documentation',
     'brand': 'Kuraka', 'nav.domains': 'Domains', 'nav.tenants': 'Tenants',
     'nav.users': 'Users', 'nav.audit': 'Audit', 'nav.account': 'My account',
     'nav.domain': 'Domain', 'nav.menu': 'Toggle menu', 'nav.main': 'Main navigation',

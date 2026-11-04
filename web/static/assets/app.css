@@ -102,7 +102,27 @@ input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:h
 input:not([type="checkbox"]):not([type="radio"]):focus-visible, select:focus-visible, textarea:focus-visible { outline-offset: 0; border-color: var(--focus); }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--danger); }
-input:disabled, select:disabled, textarea:disabled, input[readonly] { background: var(--surface-2); }
+input:disabled, select:disabled, textarea:disabled, input[readonly] { background-color: var(--surface-2); }
+/* Selects: theme chevron instead of the OS arrow; where the browser supports
+   customizable selects, the open list uses the panel tokens too. */
+select {
+  appearance: none; padding-inline-end: 36px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
+}
+select:disabled { cursor: not-allowed; }
+option { background-color: var(--surface); color: var(--text); }
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { background-image: none; padding-inline-end: 12px; }
+  select::picker-icon { color: var(--muted); transition: rotate var(--transition); }
+  select:open::picker-icon { rotate: 180deg; }
+  ::picker(select) { margin-block: 4px; padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: var(--shadow-pop); }
+  option { padding: 8px 12px; border-radius: var(--radius-sm); }
+  option:hover, option:focus-visible { background-color: var(--surface-2); outline: none; }
+  option:checked { background-color: var(--accent-soft); font-weight: 600; }
+  option::checkmark { color: var(--accent-text); }
+}
 input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex-shrink: 0; }
 .checkbox { min-height: 36px; cursor: pointer; }
 .card { padding: 24px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
@@ -135,6 +155,8 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .tab { padding: 8px 12px; min-height: 40px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 550; transition: color var(--transition), border-color var(--transition); }
 .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
+.setup-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.setup-steps > li { align-items: flex-start; }
 .empty { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; padding: 48px 24px; }
 .empty > svg { color: var(--muted); }
 .empty p { max-width: 48ch; }
@@ -194,3 +216,5 @@ body:has(dialog.modal[open]) { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+.docs-page { overflow-wrap: anywhere; }
+.docs-page ul, .docs-page ol { margin: 0; padding-inline-start: 24px; }

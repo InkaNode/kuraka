@@ -2,6 +2,7 @@ import '../i18n/domains.js';
 import { h, mount } from '../core/h.js';
 import { t } from '../core/i18n.js';
 import { api, errorMessage } from '../core/api.js';
+import { icon } from '../core/icons.js';
 import { button, field, textInput, select, checkbox, card, pageHeader, table, badge, chip, copyButton, spinner, errorBox, emptyState, tabs, modal, confirmDialog, secretOnce, toast, formError } from '../core/ui.js';
 import { splitNames } from './domains.js';
 import { dnsAutomation } from './domain-dns.js';
@@ -312,7 +313,40 @@ export async function domainView(ctx) {
         ] }))));
   }
 
-  const root = h('div', { class: 'stack gap-2' }, back, pageHeader(h('span', { class: 'mono' }, domain.name)), tabBar, panel);
+  // ---- Setup guide -----------------------------------------------------
+  // Shown until DNS checks out and the domain has a mailbox. Loaded once per
+  // visit: a fresh DNS check on every tab switch would hit the provider again.
+  function setupGuide() {
+    const steps = h('ol', { class: 'setup-steps' });
+    const node = card(h('div', { class: 'stack gap-2' },
+      h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('setup.title')), h('a', { href: '#/docs?s=domains' }, t('setup.docs'))),
+      h('p', { class: 'muted' }, t('setup.intro')), steps));
+    node.hidden = true;
+    const step = (done, title, text, action) => h('li', { class: 'row gap-2' },
+      h('span', { class: done ? 'ok' : 'warn' }, icon(done ? 'check' : 'alert')),
+      h('div', { class: 'stack grow' }, h('strong', {}, title), h('span', { class: 'muted' }, text)),
+      done ? badge(t('setup.done'), 'ok') : action);
+    Promise.all([
+      api('GET', `${base}/dns/check`).then(r => r.summary).catch(() => null),
+      view.loadMailboxes().catch(() => null),
+    ]).then(([dns, boxes]) => {
+      const dnsOK = dns != null && !dns.missing && !dns.different;
+      const hasBoxes = boxes?.length > 0;
+      if (dnsOK && hasBoxes) return;
+      const hasProvider = domain.dns_provider_id != null;
+      // Mailboxes first: moving MX before they exist bounces mail (see dns.plan.replace.warning).
+      mount(steps,
+        step(hasBoxes, t('setup.mailbox'), t('setup.mailbox.text'), button({ label: t('setup.mailbox.go'), onClick: () => view.goTab('mailboxes') })),
+        step(dnsOK, t('setup.dns'), t(hasProvider ? 'setup.dns.provider' : 'setup.dns.manual'),
+          h('div', { class: 'row gap-1' },
+            hasProvider ? null : h('a', { class: 'btn btn-ghost', href: '#/integrations' }, t('setup.dns.connect')),
+            button({ label: t('setup.dns.go'), onClick: () => view.goTab('dns') }))));
+      node.hidden = false;
+    });
+    return node;
+  }
+
+  const root = h('div', { class: 'stack gap-2' }, back, pageHeader(h('span', { class: 'mono' }, domain.name)), setupGuide(), tabBar, panel);
   show();
   return root;
 }

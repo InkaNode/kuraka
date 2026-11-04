@@ -1,8 +1,9 @@
 import '../i18n/domains.js';
 import { h, mount } from '../core/h.js';
 import { t } from '../core/i18n.js';
-import { api } from '../core/api.js';
+import { api, errorMessage } from '../core/api.js';
 import { isSuperadmin } from '../core/session.js';
+import { navigate } from '../core/router.js';
 import { icon } from '../core/icons.js';
 import { button, field, textInput, select, pageHeader, table, chip, spinner, errorBox, emptyState, modal, confirmDialog, toast, submitForm } from '../core/ui.js';
 
@@ -15,7 +16,7 @@ export async function domainsView() {
   const notice = h('div', {});
   const body = h('div', { class: 'stack gap-2' }, spinner());
   let tenants = [];
-  const addButton = () => button({ label: t('domains.add'), icon: 'plus', variant: 'primary', onClick: () => addDomainDialog(tenants, load) });
+  const addButton = () => button({ label: t('domains.add'), icon: 'plus', variant: 'primary', onClick: () => addDomainDialog(tenants) });
   const root = h('div', { class: 'stack gap-2' }, pageHeader(t('nav.domains'), admin ? addButton() : null), notice, body);
 
   async function load() {
@@ -79,45 +80,59 @@ function fillAliases(domains, cells, root) {
   setTimeout(() => { for (let i = 0; i < 4; i++) worker(); }, 0);
 }
 
-function addDomainDialog(tenants, onDone) {
-  if (!tenants.length) {
-    const dialog = modal({ title: t('domains.add'), body: [h('p', {}, t('domains.add.noTenants')), h('a', { href: '#/tenants' }, t('domains.add.goTenants'))],
-      actions: [button({ label: t('close'), onClick: () => dialog.close() })] });
-    return;
-  }
-  let mode = 'create';
+// One form for every case: a new client can be created inline, and a domain
+// that already exists in Stalwart is imported instead of created.
+function addDomainDialog(tenants) {
+  const NEW = 'new';
   const formId = uid('add-domain');
-  const tenant = select({ options: [...tenants].sort((a, b) => a.name.localeCompare(b.name)).map(entry => ({ value: String(entry.id), label: entry.name })), required: true });
+  const tenant = select({ required: true, options: [...[...tenants].sort((a, b) => a.name.localeCompare(b.name)).map(entry => ({ value: String(entry.id), label: entry.name })),
+    { value: NEW, label: t('domains.add.tenant.new') }] });
+  const tenantName = textInput({ maxlength: 200, autocomplete: 'off' });
+  const tenantNameField = field({ label: t('domains.add.tenant.name'), input: tenantName, help: t('domains.add.tenant.name.help') });
+  const syncTenant = () => { tenantNameField.hidden = tenant.value !== NEW; tenantName.required = tenant.value === NEW; };
+  tenant.addEventListener('change', syncTenant);
+  syncTenant();
   const name = textInput({ class: 'mono', required: true, maxlength: 253, autocomplete: 'off', spellcheck: 'false', placeholder: t('domains.add.name.placeholder') });
   const aliases = h('textarea', { class: 'mono', rows: 3, autocomplete: 'off', spellcheck: 'false' });
-  const aliasField = field({ label: t('domains.add.aliases'), input: aliases, help: t('domains.add.aliases.help') });
-  const modeHelp = h('p', { class: 'help', id: uid('mode-help') }, t('domains.add.mode.create.help'));
-  const radioName = uid('mode');
-  const legendId = uid('legend');
-  const radio = value => {
-    const id = uid('radio');
-    return h('label', { class: 'checkbox row gap-1', for: id }, h('input', { id, type: 'radio', name: radioName, value, checked: value === mode, onchange: () => {
-      mode = value; aliasField.hidden = mode !== 'create';
-      modeHelp.textContent = t(`domains.add.mode.${mode}.help`);
-      mount(submit.querySelector('span'), t(mode === 'create' ? 'create' : 'domains.add.import'));
-    } }), h('span', {}, t(`domains.add.mode.${value}`)));
-  };
-  const submit = button({ label: t('create'), variant: 'primary', type: 'submit' });
+  const submit = button({ label: t('domains.add'), variant: 'primary', type: 'submit' });
   submit.setAttribute('form', formId);
   const send = async () => {
     const domainName = name.value.trim().toLowerCase();
-    const path = `/tenants/${encodeURIComponent(tenant.value)}/domains${mode === 'import' ? '/import' : ''}`;
-    await api('POST', path, mode === 'import' ? { name: domainName } : { name: domainName, aliases: splitNames(aliases.value) });
+    const aliasNames = splitNames(aliases.value);
+    if (tenant.value === NEW) {
+      const created = await api('POST', '/tenants', { name: tenantName.value.trim() });
+      // Keep the new client selected so a retry after a domain error does not create it twice.
+      tenant.append(h('option', { value: String(created.id) }, created.name));
+      tenant.value = String(created.id);
+      tenants.push(created);
+      syncTenant();
+    }
+    const path = `/tenants/${encodeURIComponent(tenant.value)}/domains`;
+    let domain;
+    let imported = false;
+    try {
+      domain = await api('POST', path, { name: domainName, aliases: aliasNames });
+    } catch (err) {
+      if (err.code !== 'domain_in_stalwart') throw err;
+      domain = await api('POST', `${path}/import`, { name: domainName });
+      imported = true;
+      const merged = [...new Set([...(domain.aliases || []), ...aliasNames])];
+      // The domain is linked by now: an alias failure is reported, not retried.
+      if (merged.length > (domain.aliases || []).length) {
+        try { await api('PUT', `/domains/${domain.id}/aliases`, { aliases: merged }); }
+        catch (aliasErr) { toast(errorMessage(aliasErr), 'danger'); }
+      }
+    }
     dialog.close();
-    toast(t(mode === 'import' ? 'domains.imported' : 'domains.created', { name: domainName }));
-    await onDone();
+    toast(t(imported ? 'domains.imported' : 'domains.created', { name: domainName }));
+    navigate(`/domains/${domain.id}`);
   };
   const form = h('form', { id: formId, class: 'stack gap-2' },
-    field({ label: t('domains.col.tenant'), input: tenant }),
-    h('div', { class: 'stack gap-1', role: 'radiogroup', 'aria-labelledby': legendId, 'aria-describedby': modeHelp.id },
-      h('span', { class: 'label', id: legendId }, t('domains.add.mode')), h('div', { class: 'row gap-2' }, radio('create'), radio('import')), modeHelp),
-    field({ label: t('domains.add.name'), input: name }),
-    aliasField);
+    h('p', { class: 'muted' }, t('domains.add.intro')),
+    field({ label: t('domains.col.tenant'), input: tenant, help: t('domains.add.tenant.help') }),
+    tenantNameField,
+    field({ label: t('domains.add.name'), input: name, help: t('domains.add.name.help') }),
+    field({ label: t('domains.add.aliases'), input: aliases, help: t('domains.add.aliases.help') }));
   submitForm(form, send);
   const dialog = modal({ title: t('domains.add'), body: form, actions: [button({ label: t('cancel'), onClick: () => dialog.close() }), submit] });
 }
