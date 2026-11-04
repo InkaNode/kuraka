@@ -15,6 +15,7 @@ import { queueView } from './views/queue.js';
 import { dashboardView } from './views/dashboard.js';
 import { brandingView } from './views/branding.js';
 import { securityView } from './views/security.js';
+import { systemView } from './views/system.js';
 
 route('/login', loginView, { auth: false, layout: false });
 route('/setup', setupView, { auth: false, layout: false });
@@ -28,6 +29,7 @@ route('/dashboard', dashboardView, { superadmin: true });
 route('/integrations', integrationsView);
 route('/branding', brandingView, { superadmin: true });
 route('/security', securityView, { superadmin: true });
+route('/system', systemView, { superadmin: true });
 route('/account', accountView);
 route('/docs', docsView);
 window.addEventListener('auth:lost', () => loadBranding());

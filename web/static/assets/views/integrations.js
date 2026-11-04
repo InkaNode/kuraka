@@ -2,20 +2,14 @@ import '../i18n/integrations.js';
 import { h, mount } from '../core/h.js';
 import { api, ApiError, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, card, checkbox, field, textInput, select, pageHeader, table, badge, emptyState, errorBox, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
-
-const UPDATE_POLL_MS = 10000;
-const UPDATE_BADGE = { current: 'ok', available: 'warn', updating: 'neutral', error: 'danger', unknown: 'neutral' };
+import { button, card, checkbox, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
 
 export async function integrationsView(ctx) {
   const { me } = ctx;
   const admin = me.role === 'superadmin';
-  let updatesError = null;
-  const [dns, helpdesks, tenants, initialUpdates] = await Promise.all([
+  const [dns, helpdesks, tenants] = await Promise.all([
     api('GET', '/dns-providers'), api('GET', '/helpdesks'), admin ? api('GET', '/tenants') : [],
-    admin ? api('GET', '/updates').catch(err => { updatesError = err; return null; }) : null,
   ]);
-  let updates = initialUpdates;
   const rows = { dns, helpdesks };
   const paths = { dns: '/dns-providers', helpdesks: '/helpdesks' };
   const tenantNames = new Map(tenants.map(tenant => [tenant.id, tenant.name]));
@@ -243,76 +237,7 @@ export async function integrationsView(ctx) {
     return form;
   }
 
-  const updatesBody = h('div', { class: 'stack gap-2' });
-  const applying = new Set();
-  let pollTimer = 0;
-
-  function renderUpdates() {
-    if (!updates) { mount(updatesBody, updatesError ? errorBox(updatesError) : null); return; }
-    const dash = () => h('span', { class: 'muted' }, '—');
-    const version = value => value ? h('span', { class: 'mono' }, value) : dash();
-    const list = [
-      { key: 'stalwart', name: t('integrations.updates.stalwart'), ...updates.stalwart },
-      { key: 'webui', name: t('integrations.updates.webui'), ...updates.webui },
-      ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, latest: updates.libredesk.latest })),
-    ];
-    mount(updatesBody,
-      h('p', { class: 'muted' }, updates.checked_at ? t('integrations.updates.checked', { date: formatDate(updates.checked_at) }) : t('integrations.updates.never')),
-      updates.error ? h('p', { class: 'help' }, t('integrations.updates.checkError')) : null,
-      table({ rows: list, columns: [
-        { label: t('integrations.name'), render: row => row.name },
-        { label: t('integrations.updates.current'), render: row => version(row.current) },
-        { label: t('integrations.updates.latest'), render: row => version(row.latest) },
-        { label: t('integrations.status'), render: row => h('div', { class: 'stack gap-1' },
-          badge(t(`integrations.updates.state.${row.state}`), UPDATE_BADGE[row.state] || 'neutral'),
-          row.message ? h('span', { class: 'muted' }, row.message) : null) },
-        // A failed Stalwart or Libredesk update can be retried.
-        { label: t('integrations.actions'), render: row => (row.state === 'available' || (row.key !== 'webui' && row.state === 'error'))
-          && (row.key === 'webui' || updates.updates_dir)
-          ? button({ label: t('integrations.updates.apply'), disabled: applying.has(row.key), onClick: () => applyUpdate(row) }) : null },
-      ] }),
-      h('p', { class: 'muted' }, t('integrations.updates.together')),
-      !updates.updates_dir ? h('p', { class: 'muted' }, t('integrations.updates.noDir')) : null);
-  }
-
-  // Re-read while a Stalwart or Libredesk update runs, until the view is left.
-  function schedulePoll() {
-    clearTimeout(pollTimer); pollTimer = 0;
-    if (updates?.stalwart.state !== 'updating' && !updates?.libredesk.helpdesks.some(desk => desk.state === 'updating')) return;
-    pollTimer = setTimeout(async () => {
-      pollTimer = 0;
-      if (!root.isConnected) return;
-      try { updates = await api('GET', '/updates'); updatesError = null; renderUpdates(); }
-      catch { /* Retried on the next tick. */ }
-      schedulePoll();
-    }, UPDATE_POLL_MS);
-  }
-
-  async function checkUpdates(event) {
-    const trigger = event.currentTarget;
-    if (trigger.disabled) return;
-    trigger.disabled = true;
-    try { updates = await api('POST', '/updates/check'); updatesError = null; renderUpdates(); schedulePoll(); }
-    catch (err) { if (root.isConnected) toast(errorMessage(err), 'danger'); }
-    finally { trigger.disabled = false; }
-  }
-
-  async function applyUpdate(row) {
-    if (applying.has(row.key)) return;
-    const webui = row.key === 'webui', stalwart = row.key === 'stalwart';
-    applying.add(row.key); renderUpdates();
-    try {
-      if (!webui && !await confirmDialog({ title: t('integrations.updates.confirmTitle', { name: row.name }),
-        message: t(stalwart ? 'integrations.updates.confirmStalwart' : 'integrations.updates.confirm'),
-        confirmLabel: t('integrations.updates.apply') })) return;
-      updates = await api('POST', webui ? '/updates/webui' : stalwart ? '/updates/stalwart' : `/helpdesks/${encodeURIComponent(row.key)}/update`);
-      if (root.isConnected) toast(t(webui ? 'integrations.updates.webuiDone' : 'integrations.updates.started'));
-    } catch (err) { if (root.isConnected) toast(errorMessage(err), 'danger'); }
-    finally { applying.delete(row.key); renderUpdates(); schedulePoll(); }
-  }
-
   render();
-  if (admin) { renderUpdates(); schedulePoll(); }
   mount(root, pageHeader(t('nav.integrations')),
     card(h('div', { class: 'stack gap-2' },
       h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.dns')),
@@ -321,11 +246,7 @@ export async function integrationsView(ctx) {
     card(h('div', { class: 'stack gap-2' },
       h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.helpdesk')),
         button({ label: t('integrations.connectHelpdesk'), icon: 'plus', variant: 'primary', onClick: () => connect('helpdesks') })),
-      h('p', { class: 'muted' }, t('integrations.helpdeskHelp')), helpdeskBody, admin ? bundleForm() : null)),
-    admin ? card(h('div', { class: 'stack gap-2' },
-      h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.updates')),
-        button({ label: t('integrations.updates.check'), icon: 'refresh', onClick: checkUpdates })),
-      h('p', { class: 'muted' }, t('integrations.updates.help')), updatesBody)) : null);
+      h('p', { class: 'muted' }, t('integrations.helpdeskHelp')), helpdeskBody, admin ? bundleForm() : null)));
   rows.helpdesks.filter(row => row.status === 'pending').forEach(row => activate(row, true));
   return root;
 }
