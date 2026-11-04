@@ -2,6 +2,7 @@ import { h } from '../core/h.js';
 import { t, getLang, setLang } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { navigate } from '../core/router.js';
+import { brandLogo } from '../core/branding.js';
 import { button, field, textInput, toast, submitForm } from '../core/ui.js';
 
 export async function setupView() {
@@ -24,7 +25,7 @@ export async function setupView() {
     confirm.setCustomValidity(t('setup.mismatch')); confirm.reportValidity(); return false;
   } });
   return h('main', { class: 'auth-page' }, h('section', { class: 'card auth-card' },
-    h('div', { class: 'brand' }, h('img', { src: '/assets/favicon.svg', alt: '', width: 28, height: 28 }), t('brand')),
+    h('div', { class: 'brand' }, h('img', { src: brandLogo(), alt: '', width: 28, height: 28 }), h('span', {}, t('brand'))),
     h('h1', {}, t('setup.title')), h('p', { class: 'muted intro' }, t('setup.intro')), form,
     h('a', { href: '#/login' }, t('setup.login'))),
     h('div', { class: 'language-switch' }, ['es', 'en'].map(lang => {

@@ -7,6 +7,9 @@ document.documentElement.lang = lang;
 export function registerMessages(bundle) {
   for (const locale of ['es', 'en']) Object.assign(messages[locale], bundle[locale] || {});
 }
+// A configured brand name replaces 'brand' in every language.
+let brand = null;
+export function setBrand(name) { brand = name || null; }
 export function getLang() { return lang; }
 export function setLang(next) {
   if (!['es', 'en'].includes(next)) return;
@@ -16,6 +19,7 @@ export function setLang(next) {
   window.dispatchEvent(new Event('langchange'));
 }
 export function t(key, vars = {}) {
+  if (key === 'brand' && brand) return brand;
   const value = messages[lang][key];
   if (value === undefined) {
     if (!warned.has(key)) { console.warn(`Missing translation: ${key}`); warned.add(key); }

@@ -3,6 +3,7 @@ import { t, getLang, setLang } from '../core/i18n.js';
 import { api, ApiError } from '../core/api.js';
 import { setMe, clearMe } from '../core/session.js';
 import { navigate } from '../core/router.js';
+import { brandLogo, brandBanner, loadBranding } from '../core/branding.js';
 import { button, field, textInput, formError } from '../core/ui.js';
 
 // Preserve the current MFA step when language changes rebuild this view.
@@ -39,13 +40,14 @@ export async function loginView() {
         code.focus();
       } else {
         if (!result.user) throw new ApiError(0, 'network');
-        password.value = ''; code.value = ''; pendingMFA = false; setMe(result.user); navigate('/domains');
+        password.value = ''; code.value = ''; pendingMFA = false; setMe(result.user); await loadBranding(); navigate('/domains');
       }
     } catch (err) { formError(form, err); }
     finally { busy = false; submit.disabled = false; form.removeAttribute('aria-busy'); }
   } }, mfa ? field({ label: t('login.mfa.code'), input: code }) : [field({ label: t('login.email'), input: email }), field({ label: t('login.password'), input: password })], submit, mfa ? cancel : null);
-  return h('main', { class: 'auth-page' }, h('section', { class: 'card auth-card' },
-    h('div', { class: 'brand' }, h('img', { src: '/assets/favicon.svg', alt: '', width: 28, height: 28 }), t('brand')),
+  const banner = brandBanner();
+  return h('main', { class: 'auth-page' }, banner ? h('img', { class: 'auth-banner', src: banner, alt: '' }) : null, h('section', { class: 'card auth-card' },
+    h('div', { class: 'brand' }, h('img', { src: brandLogo(), alt: '', width: 28, height: 28 }), h('span', {}, t('brand'))),
     title, intro, form, h('a', { href: '#/setup' }, t('login.setup'))),
     h('div', { class: 'language-switch' }, ['es', 'en'].map(lang => {
       const el = button({ label: t(`lang.short.${lang}`), ariaLabel: t(`lang.${lang}`), onClick: () => setLang(lang) });

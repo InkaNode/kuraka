@@ -1,5 +1,6 @@
 import './i18n/core.js';
 import { route, start } from './core/router.js';
+import { loadBranding } from './core/branding.js';
 import { loginView } from './views/login.js';
 import { setupView } from './views/setup.js';
 import { domainsView } from './views/domains.js';
@@ -12,6 +13,7 @@ import { docsView } from './views/docs.js';
 import { integrationsView } from './views/integrations.js';
 import { queueView } from './views/queue.js';
 import { dashboardView } from './views/dashboard.js';
+import { brandingView } from './views/branding.js';
 
 route('/login', loginView, { auth: false, layout: false });
 route('/setup', setupView, { auth: false, layout: false });
@@ -23,6 +25,9 @@ route('/audit', auditView);
 route('/queue', queueView);
 route('/dashboard', dashboardView, { superadmin: true });
 route('/integrations', integrationsView);
+route('/branding', brandingView, { superadmin: true });
 route('/account', accountView);
 route('/docs', docsView);
+window.addEventListener('auth:lost', () => loadBranding());
+await loadBranding();
 start();

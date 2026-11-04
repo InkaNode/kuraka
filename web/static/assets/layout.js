@@ -6,6 +6,7 @@ import { clearMe } from './core/session.js';
 import { button, toast } from './core/ui.js';
 import { errorMessage } from './core/api.js';
 import { navigate, currentPath } from './core/router.js';
+import { brandLogo, loadBranding } from './core/branding.js';
 
 export function renderLayout(me, content) {
   const path = currentPath();
@@ -13,7 +14,7 @@ export function renderLayout(me, content) {
     ['/domains', 'nav.domains', 'globe'],
     ['/queue', 'nav.queue', 'inbox'],
     ...(me?.role === 'superadmin' ? [['/dashboard', 'nav.dashboard', 'list']] : []),
-    ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users']] : []),
+    ...(me?.role === 'superadmin' ? [['/tenants', 'nav.tenants', 'building'], ['/users', 'nav.users', 'users'], ['/branding', 'nav.branding', 'image']] : []),
     ['/audit', 'nav.audit', 'list'], ['/integrations', 'nav.integrations', 'link'], ['/docs', 'nav.docs', 'book'], ['/account', 'nav.account', 'user'],
   ];
   const toggle = button({ icon: 'menu', variant: 'ghost', ariaLabel: t('nav.menu'), onClick: () => {
@@ -25,7 +26,7 @@ export function renderLayout(me, content) {
   toggle.setAttribute('aria-controls', 'sidebar-menu');
   const logout = button({ label: t('nav.logout'), icon: 'log-out', variant: 'ghost', onClick: async () => {
     logout.disabled = true;
-    try { await api('POST', '/auth/logout'); clearMe(); navigate('/login'); }
+    try { await api('POST', '/auth/logout'); clearMe(); await loadBranding(); navigate('/login'); }
     catch (err) { if (err.status !== 401) toast(errorMessage(err), 'danger'); }
     finally { logout.disabled = false; }
   } });
@@ -36,7 +37,7 @@ export function renderLayout(me, content) {
   } },
     h('a', { class: 'skip-link', href: '#main-content', onclick: event => { event.preventDefault(); root.querySelector('main').focus(); } }, t('nav.skip')),
     h('aside', { class: 'sidebar' },
-      h('header', { class: 'sidebar-header' }, h('a', { class: 'brand', href: '#/domains' }, h('img', { src: '/assets/favicon.svg', alt: '', width: 28, height: 28 }), t('brand')), toggle),
+      h('header', { class: 'sidebar-header' }, h('a', { class: 'brand', href: '#/domains' }, h('img', { src: brandLogo(), alt: '', width: 28, height: 28 }), h('span', {}, t('brand'))), toggle),
       h('div', { class: 'sidebar-body', id: 'sidebar-menu' },
         h('nav', { class: 'nav', 'aria-label': t('nav.main') }, links.map(([href, label, name]) => h('a', {
           href: `#${href}`, 'aria-current': path === href || path.startsWith(`${href}/`) ? 'page' : null,
