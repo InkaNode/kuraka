@@ -1,5 +1,6 @@
 {
 	email {$ACME_EMAIL}
+	order replace after encode
 	# Local testing only: CADDY_EXTRA_GLOBAL=local_certs uses Caddy's internal CA.
 	{$CADDY_EXTRA_GLOBAL}
 }
@@ -10,6 +11,24 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
+	}
+}
+
+# App name and upstream; keep addon requests out of the app's proxy.
+(kuraka_addon_proxy) {
+	handle /_kuraka/addon/* {
+		reverse_proxy kuraka:8080
+	}
+	handle {
+		replace {
+			match {
+				header Content-Type text/html*
+			}
+			"</head>" `<link rel="stylesheet" href="/_kuraka/addon/{args[0]}.css"><script defer src="/_kuraka/addon/{args[0]}.js"></script></head>`
+		}
+		reverse_proxy {args[1]} {
+			header_up Accept-Encoding identity
+		}
 	}
 }
 
@@ -47,9 +66,7 @@
 	handle @admin {
 		respond 404
 	}
-	handle {
-		reverse_proxy stalwart:8080
-	}
+	import kuraka_addon_proxy stalwart stalwart:8080
 }
 
 # Extra sites: every deploy/sites/*.caddy file is loaded here, so local sites

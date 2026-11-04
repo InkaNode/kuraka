@@ -96,7 +96,7 @@ func TestBundle(t *testing.T) {
 	if !strings.Contains(files["config.toml"], "disable_secure_cookies = false") {
 		t.Fatal("insecure cookies")
 	}
-	if files["desk.caddy"] != "desk.example.com {\n\timport security_headers\n\treverse_proxy kuraka-team-one-desk:9000\n}\n" {
+	if files["desk.caddy"] != "desk.example.com {\n\timport security_headers\n\timport kuraka_addon_proxy desk kuraka-team-one-desk:9000\n}\n" {
 		t.Fatal("Caddy site mismatch")
 	}
 	for _, want := range []string{"set -eu", `cd "$(dirname "$0")"`, "KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}", "docker compose up -d", "docker compose logs app | grep -q 'server starting'", `"$attempt" -ge 60`, "sleep 3", "exit 1", "sed -i '/^LIBREDESK_SYSTEM_USER_PASSWORD=/d' .env", `cp desk.caddy "$KURAKA_DEPLOY/sites/team-one-desk.caddy"`, `docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile`, "Listo.", "Done."} {

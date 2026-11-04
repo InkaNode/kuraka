@@ -199,7 +199,7 @@ requests_per_minute = 100
 enabled = true
 requests_per_minute = 300
 `, key, dbPass)
-	caddy := fmt.Sprintf("%s {\n\timport security_headers\n\treverse_proxy kuraka-%s-desk:9000\n}\n", host, name)
+	caddy := fmt.Sprintf("%s {\n\timport security_headers\n\timport kuraka_addon_proxy desk kuraka-%s-desk:9000\n}\n", host, name)
 	install := fmt.Sprintf(`#!/bin/sh
 set -eu
 cd "$(dirname "$0")"
