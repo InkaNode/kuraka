@@ -111,6 +111,14 @@ Superadmins set branding globally or for one tenant (migration 0007, tables `bra
 - **Images:** uploaded as a base64 data URL, at most 512 KiB, PNG, JPEG, WebP, GIF or SVG (bytes must match the declared type). Served at `/branding/assets/{id}` (absolute URLs from `KURAKA_PUBLIC_URL`) with a one-year immutable cache; SVG gets a sandbox CSP. Unreferenced uploads older than an hour are deleted on the next save.
 - **Validation:** names are trimmed, at most 64 characters, no control characters; colors are `#rrggbb`, stored lowercase.
 
+## Security
+
+Stalwart blocks addresses that look like attacks, such as many failed logins or port scans. The **Security** page (superadmins) lists those blocks with the reason, since when and until when, and lets you remove one.
+
+- **External** addresses: **Unblock** removes the block. If the address attacks again, Stalwart blocks it again.
+- **Internal** addresses (private or loopback): usually the Caddy proxy, and while it is blocked webmail can show error 502. **Fix** removes the block and adds its network (/24 for IPv4, /64 for IPv6) to Stalwart's allowed list so it is not blocked again. Kuraka works out that network from Stalwart's record, never from the browser.
+- Every change reloads Stalwart's blocked list, so it takes effect at once. The audit log records the address and the trusted network.
+
 ## New configuration
 
 | Variable | Default | Purpose |
@@ -141,6 +149,8 @@ Superadmins set branding globally or for one tenant (migration 0007, tables `bra
 | `GET /branding/{app}` | public | `kuraka` or `stalwart`; resolved fields, images as absolute URLs, empty fields omitted |
 | `GET /branding`, `PUT /branding/{app}` | superadmin only | optional `?tenant=`; GET returns `{scope, global?}`, PUT takes the fields and returns `{saved, desks: [{id, url, error?}]}` |
 | `POST /branding/assets` | superadmin only | `{data: "data:<type>;base64,..."}`; returns 201 `{id}` |
+| `GET /blocked-ips` | superadmin only | `[{id, address, reason, createdAt, expiresAt, internal, trust}]` |
+| `DELETE /blocked-ips/{id}` | superadmin only | removes the block, trusts `trust` for internal addresses, reloads Stalwart's bans; 204 |
 | `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
