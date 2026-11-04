@@ -10,6 +10,10 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- **Kuraka updates** on the new **System** page (superadmins), which now also holds the Stalwart and Libredesk updates from Integrations: compares the running version and commit with the latest `InkaNode/kuraka` release, by version or by new commits, and after a confirmation the root timer backs up the data, checks out the commit, installs image `sha-<commit>` (or builds it), waits for health and rolls back on failure. While Kuraka is down, Caddy shows a maintenance page with the Kuraka branding and an optional maintenance message. New `KURAKA_MAINTENANCE_DIR`; re-run `deploy/setup.sh`.
+
+- **Release workflow**: every CI-green push to `main` republishes release `v<version>` with the commits since the version bump, plus images `<version>`, `<major>.<minor>`, `latest` and `sha-<commit>`.
+
 - **Security** page (superadmins): lists the addresses Stalwart blocked automatically and removes a block; internal addresses (usually the Caddy proxy, which causes webmail 502 errors while blocked) also get their /24 (IPv6 /64) trusted so they are not blocked again.
 
 - **Branding** API (superadmins): name, logo, icon, colors and banner, global or per tenant, for Kuraka, Stalwart and Libredesk with a shared default; values cascade from tenant to global (migration 0007). Libredesk gets the name, logo and favicon on save and on activation; `GET /api/v1/branding/{kuraka|stalwart}` is public for the sign-in pages and the stalwart-webui fork.
