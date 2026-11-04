@@ -135,7 +135,9 @@ func notifyAlert(ctx context.Context, client *http.Client, st *store.Store, sw *
 	if webhook == "" {
 		return
 	}
-	body, err := json.Marshal(map[string]any{"rule_id": rule.ID, "metric": rule.Metric, "threshold": rule.Threshold, "value": value, "state": state, "at": at})
+	// text (Slack, Mattermost) and content (Discord) let chat webhooks show it as-is.
+	text := fmt.Sprintf("[Kuraka] %s: %s = %g (threshold %g)", state, rule.Metric, value, rule.Threshold)
+	body, err := json.Marshal(map[string]any{"rule_id": rule.ID, "metric": rule.Metric, "threshold": rule.Threshold, "value": value, "state": state, "at": at, "text": text, "content": text})
 	if err == nil {
 		var req *http.Request
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
