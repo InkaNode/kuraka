@@ -65,8 +65,11 @@ services:
       KURAKA_ALERT_WEBHOOK_URL: ${KURAKA_ALERT_WEBHOOK_URL:-}
       KURAKA_ALERT_EMAIL_FROM: ${KURAKA_ALERT_EMAIL_FROM:-}
       KURAKA_MAIL_HOST: ${MAIL_HOST}
+      # Libredesk update requests, applied on the host by kuraka-updates.timer.
+      KURAKA_UPDATES_DIR: /updates
     volumes:
       - kuraka_data:/data
+      - ./updates:/updates
     networks: [mail]
     logging: *logging
 

@@ -17,6 +17,8 @@ SUBNET=172.30.0.0/24
 CURL_IMAGE=curlimages/curl:latest
 # uid/gid of the stalwart user inside stalwartlabs/stalwart:v1.
 STALWART_GID=2000
+# uid/gid of the nonroot user in the Kuraka image (see Dockerfile).
+KURAKA_UID=65532
 ISSUER_DIR=acme-v02.api.letsencrypt.org-directory
 # Overridden to "local" below when CADDY_EXTRA_GLOBAL=local_certs (local testing).
 USING='["urn:ietf:params:jmap:core","urn:stalwart:jmap"]'
@@ -139,6 +141,41 @@ load_env() {
     [[ ${!name} != *example.com ]] || die "$name still has the example value in deploy/.env"
   done
   [[ $MAIL_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "MAIL_HOST must be a plain hostname"
+}
+
+# Kuraka asks for Libredesk updates by writing files in deploy/updates; this
+# timer applies them as root, so Kuraka never needs the Docker socket.
+install_update_timer() {
+  install -d -m 0750 -o "$KURAKA_UID" -g "$KURAKA_UID" "$DEPLOY_DIR/updates"
+  if ! command -v systemctl >/dev/null; then
+    warn "systemctl not found: Libredesk updates from Kuraka need $DEPLOY_DIR/apply-updates.sh run as root every minute"
+    return 0
+  fi
+  chmod 700 "$DEPLOY_DIR/apply-updates.sh"
+  cat >/etc/systemd/system/kuraka-updates.service <<EOF
+[Unit]
+Description=Apply updates requested in Kuraka
+
+[Service]
+Type=oneshot
+Environment="KURAKA_DEPLOY=$DEPLOY_DIR"
+ExecStart="$DEPLOY_DIR/apply-updates.sh"
+EOF
+  cat >/etc/systemd/system/kuraka-updates.timer <<'EOF'
+[Unit]
+Description=Apply updates requested in Kuraka every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 644 /etc/systemd/system/kuraka-updates.service /etc/systemd/system/kuraka-updates.timer
+  systemctl daemon-reload
+  systemctl enable --now kuraka-updates.timer >/dev/null 2>&1
+  log "kuraka-updates.timer enabled"
 }
 
 refresh_cert() {
@@ -283,7 +320,8 @@ main() {
     restart_stalwart
   fi
 
-  # 4. Kuraka.
+  # 4. Kuraka. The updates directory must exist before Docker mounts it.
+  install_update_timer
   log "starting kuraka"
   compose up -d kuraka >/dev/null
   local token="" since
