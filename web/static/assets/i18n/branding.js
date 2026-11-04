@@ -2,6 +2,8 @@ import { registerMessages } from '../core/i18n.js';
 
 registerMessages({
   es: {
+    'branding.field.maintenance_message': 'Mensaje de mantenimiento',
+    'branding.maintenanceHelp': 'Se muestra mientras Kuraka se actualiza. Vacío: mensaje por defecto.',
     'branding.scope': 'Alcance', 'branding.global': 'Global (todas las páginas)', 'branding.tenant': 'Cliente: {name}',
     'branding.tab.default': 'Default', 'branding.tab.kuraka': 'Kuraka', 'branding.tab.stalwart': 'Stalwart', 'branding.tab.desk': 'Desk',
     'branding.note.default': 'Estos valores se usan en Kuraka, Stalwart y Desk, salvo que esa pestaña tenga su propio valor.',
@@ -22,6 +24,8 @@ registerMessages({
     'branding.deskErrors': 'No se pudo aplicar a estos desks:',
   },
   en: {
+    'branding.field.maintenance_message': 'Maintenance message',
+    'branding.maintenanceHelp': 'Shown while Kuraka updates. Empty: default message.',
     'branding.scope': 'Scope', 'branding.global': 'Global (all pages)', 'branding.tenant': 'Tenant: {name}',
     'branding.tab.default': 'Default', 'branding.tab.kuraka': 'Kuraka', 'branding.tab.stalwart': 'Stalwart', 'branding.tab.desk': 'Desk',
     'branding.note.default': 'These values apply to Kuraka, Stalwart and Desk unless that tab sets its own value.',

@@ -74,6 +74,13 @@ export async function brandingView() {
   function appForm(app) {
     const own = data.scope[app] || {};
     const controls = (app === 'desk' ? DESK_FIELDS : FIELDS).map(key => control(app, key, own));
+    if (app === 'kuraka' && !tenant) {
+      const input = h('textarea', { name: 'maintenance_message', maxlength: 500, value: own.maintenance_message || '' });
+      controls.push({
+        el: field({ label: t('branding.field.maintenance_message'), input, help: t('branding.maintenanceHelp') }),
+        value: () => ({ maintenance_message: input.value }), valid: () => input.reportValidity(),
+      });
+    }
     const note = app === 'default' && tenant ? 'defaultTenant' : app;
     const submit = button({ label: t('save'), variant: 'primary', type: 'submit' });
     const form = h('form', { class: 'stack gap-3' }, app === 'kuraka' ? null : h('p', { class: 'muted' }, t(`branding.note.${note}`)), controls.map(entry => entry.el), submit);
