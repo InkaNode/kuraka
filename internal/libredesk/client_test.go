@@ -172,3 +172,83 @@ func TestDeleteInbox(t *testing.T) {
 		t.Fatal("DeleteInbox(7) ignored an error envelope with status 200")
 	}
 }
+
+func TestSystemAPIKey(t *testing.T) {
+	calls := 0
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "POST" || r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Authorization") != "" {
+			t.Error("invalid setup request")
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body["email"] != "System" || body["password"] != "private-password" {
+				t.Error("invalid login body")
+			}
+			if len(r.Cookies()) != 0 || r.Header.Get("X-CSRFTOKEN") != "" {
+				t.Error("login must not need cookies or CSRF")
+			}
+			http.SetCookie(w, &http.Cookie{Name: "libredesk_session", Value: "session", Secure: true, HttpOnly: true, Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "csrf_token", Value: "csrf", Secure: true, Path: "/"})
+			io.WriteString(w, `{"status":"success","data":{"id":37}}`)
+		case "/api/v1/agents/37/api-key":
+			for name, want := range map[string]string{"libredesk_session": "session", "csrf_token": "csrf"} {
+				cookie, err := r.Cookie(name)
+				if err != nil || cookie.Value != want {
+					t.Errorf("missing cookie %s over plain HTTP", name)
+				}
+			}
+			if r.Header.Get("X-CSRFTOKEN") != "csrf" {
+				t.Error("missing CSRF header")
+			}
+			io.WriteString(w, `{"status":"success","data":{"api_key":"new-key","api_secret":"new-secret"}}`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	})
+	key, secret, err := c.SystemAPIKey(context.Background(), "private-password")
+	if err != nil || key != "new-key" || secret != "new-secret" || calls != 2 {
+		t.Fatalf("API key flow failed: %v, calls=%d", err, calls)
+	}
+}
+
+func TestSystemAPIKeyErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		login, key string
+		cookies    bool
+	}{
+		{"login failure", 401, `{"status":"error","message":"private-password private-secret"}`, "", false},
+		{"login error envelope", 200, `{"status":"error","message":"private-password"}`, "", false},
+		{"bad JSON", 200, `private-password`, "", false},
+		{"missing id", 200, `{"data":{"id":0}}`, "", true},
+		{"missing cookies", 200, `{"data":{"id":37}}`, "", false},
+		{"key failure", 200, `{"data":{"id":37}}`, `{"status":"error","message":"private-secret"}`, true},
+		{"missing credentials", 200, `{"data":{"id":37}}`, `{"data":{"api_key":"key"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/auth/login" {
+					if tc.cookies {
+						http.SetCookie(w, &http.Cookie{Name: "libredesk_session", Value: "session", Secure: true})
+						http.SetCookie(w, &http.Cookie{Name: "csrf_token", Value: "csrf", Secure: true})
+					}
+					w.WriteHeader(tc.status)
+					io.WriteString(w, tc.login)
+				} else {
+					io.WriteString(w, tc.key)
+				}
+			})
+			_, _, err := c.SystemAPIKey(context.Background(), "private-password")
+			if err == nil || strings.Contains(err.Error(), "private-") {
+				t.Fatalf("unsafe or missing error: %v", err)
+			}
+		})
+	}
+}

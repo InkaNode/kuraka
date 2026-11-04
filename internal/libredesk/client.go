@@ -89,6 +89,82 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/api/v1/inboxes", nil, nil)
 }
 
+// SystemAPIKey logs in and creates an API key for the returned System user.
+func (c *Client) SystemAPIKey(ctx context.Context, password string) (string, string, error) {
+	body, err := json.Marshal(map[string]string{"email": "System", "password": password})
+	if err != nil {
+		return "", "", errors.New("libredesk: encode login")
+	}
+	var cookies []*http.Cookie
+	csrf := ""
+	// Secure cookies must be carried explicitly on the internal HTTP network.
+	client := *c.http
+	client.Jar = nil
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	post := func(path string, body []byte, out any) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+		if err != nil {
+			return errors.New("libredesk: create setup request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRFTOKEN", csrf)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return errors.New("libredesk: setup request failed")
+		}
+		defer resp.Body.Close()
+		var env envelope
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&env); err != nil {
+			return errors.New("libredesk: invalid setup response")
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 || env.Status == "error" {
+			return &APIError{Status: resp.StatusCode}
+		}
+		for _, cookie := range resp.Cookies() {
+			if cookie.Name == "libredesk_session" || cookie.Name == "csrf_token" {
+				cookies = append(cookies, cookie)
+				if cookie.Name == "csrf_token" {
+					csrf = cookie.Value
+				}
+			}
+		}
+		if err := json.Unmarshal(env.Data, out); err != nil {
+			return errors.New("libredesk: invalid setup data")
+		}
+		return nil
+	}
+	var user struct {
+		ID int64 `json:"id"`
+	}
+	if err := post("/api/v1/auth/login", body, &user); err != nil {
+		return "", "", err
+	}
+	hasSession := false
+	for _, cookie := range cookies {
+		hasSession = hasSession || cookie.Name == "libredesk_session" && cookie.Value != ""
+	}
+	if user.ID <= 0 || csrf == "" || !hasSession {
+		return "", "", errors.New("libredesk: incomplete login response")
+	}
+	var credentials struct {
+		Key    string `json:"api_key"`
+		Secret string `json:"api_secret"`
+	}
+	if err := post("/api/v1/agents/"+strconv.FormatInt(user.ID, 10)+"/api-key", nil, &credentials); err != nil {
+		return "", "", err
+	}
+	if credentials.Key == "" || credentials.Secret == "" {
+		return "", "", errors.New("libredesk: incomplete API credentials")
+	}
+	return credentials.Key, credentials.Secret, nil
+}
+
 // ListInboxes returns every inbox the key's agent can see.
 func (c *Client) ListInboxes(ctx context.Context) ([]Inbox, error) {
 	var out []Inbox
