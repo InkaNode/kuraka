@@ -19,4 +19,10 @@ function append(el, children) {
   }
 }
 export function clear(el) { el.replaceChildren(); }
-export function mount(el, ...nodes) { clear(el); append(el, nodes); }
+const motion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: no-preference)') : null;
+// Opacity animation; skipped when the user prefers reduced motion.
+export function fade(el, from, to, options) {
+  return motion?.matches && el.animate ? el.animate([{ opacity: from }, { opacity: to }], { duration: 200, easing: 'ease-out', ...options }) : null;
+}
+// Every re-render fades in, so changed sections and values are noticeable.
+export function mount(el, ...nodes) { clear(el); append(el, nodes); fade(el, 0.3, 1); }

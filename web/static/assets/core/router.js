@@ -1,4 +1,4 @@
-import { h, mount } from './h.js';
+import { h, mount, fade } from './h.js';
 import { t } from './i18n.js';
 import { getMe, loadMe, clearMe, isSuperadmin } from './session.js';
 import { spinner, errorBox, emptyState } from './ui.js';
@@ -8,6 +8,9 @@ const routes = [];
 let started = false;
 let initialSession;
 let generation = 0;
+// The previous page dims while the next one loads.
+let leaving = null;
+function show(app, node) { leaving?.cancel(); leaving = null; mount(app, node); fade(app, 0, 1, { duration: 250 }); }
 export function route(pattern, view, { auth = true, superadmin = false, layout = true } = {}) {
   routes.push({ parts: pattern.split('/'), view, auth, superadmin, layout });
 }
@@ -34,7 +37,9 @@ async function render() {
   const app = document.getElementById('app');
   const path = currentPath();
   let entry;
-  mount(app, spinner());
+  leaving?.cancel();
+  if (app.childElementCount && !app.querySelector('.loading')) leaving = fade(app, 1, 0.4, { duration: 150, fill: 'forwards' });
+  else show(app, spinner());
   try {
     const matched = matchRoute(path);
     entry = matched?.entry;
@@ -52,14 +57,14 @@ async function render() {
       ? emptyState({ icon: 'shield', title: t('forbidden.title'), text: t('error.forbidden') })
       : await entry.view(ctx);
     if (version !== generation || path !== currentPath()) return;
-    mount(app, entry.layout ? renderLayout(getMe(), content) : content);
+    show(app, entry.layout ? renderLayout(getMe(), content) : content);
     const heading = app.querySelector('h1');
     document.title = heading ? `${heading.textContent} · ${t('brand')}` : t('brand');
     if (heading) { heading.tabIndex = -1; heading.focus(); }
   } catch (err) {
     if (version !== generation) return;
     const content = h('div', { class: 'stack gap-2' }, errorBox(err));
-    mount(app, entry?.layout && getMe() ? renderLayout(getMe(), content) : h('main', { class: 'auth-page' }, content));
+    show(app, entry?.layout && getMe() ? renderLayout(getMe(), content) : h('main', { class: 'auth-page' }, content));
   }
 }
 export function start() {

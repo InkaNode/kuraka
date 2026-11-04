@@ -213,6 +213,11 @@ body:has(dialog.modal[open]) { overflow: hidden; }
   .card, .auth-card { padding: 20px 16px; }
   .modal { width: calc(100% - 32px); padding: 16px; max-height: calc(100dvh - 32px); }
 }
+body::before { content: ''; position: fixed; inset: 0 0 auto; z-index: 1000; height: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat; background-size: 40% 100%; opacity: 0; transition: opacity 200ms; pointer-events: none; }
+body.busy::before { opacity: 1; animation: loading-bar 1s ease-in-out infinite; }
+@keyframes loading-bar { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+dialog.modal[open], .toast { animation: pop-in 200ms ease-out; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
