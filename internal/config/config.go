@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -23,6 +24,7 @@ const (
 	EnvStalwartAPIKey        = "KURAKA_STALWART_API_KEY"
 	EnvStalwartMetricsSecret = "KURAKA_STALWART_METRICS_SECRET"
 	EnvAlertWebhookURL       = "KURAKA_ALERT_WEBHOOK_URL"
+	EnvAlertEmailFrom        = "KURAKA_ALERT_EMAIL_FROM"
 	EnvInsecureCookies       = "KURAKA_INSECURE_COOKIES"
 	EnvMailHost              = "KURAKA_MAIL_HOST"
 	EnvMailTLSSkipVerify     = "KURAKA_MAIL_TLS_SKIP_VERIFY"
@@ -49,6 +51,7 @@ type Config struct {
 	StalwartAPIKey        string
 	StalwartMetricsSecret string
 	AlertWebhookURL       string
+	AlertEmailFrom        string // mailbox in a Kuraka domain; needs MailHost
 	InsecureCookies       bool
 	MailHost              string
 	MailTLSSkipVerify     bool
@@ -123,6 +126,14 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	c.MailHost = get(EnvMailHost, "")
 	if c.MailHost != "" && !ValidHostname(c.MailHost) {
 		errs = append(errs, fmt.Errorf("%s must be a hostname without scheme or port", EnvMailHost))
+	}
+	c.AlertEmailFrom = get(EnvAlertEmailFrom, "")
+	if c.AlertEmailFrom != "" {
+		if a, err := mail.ParseAddress(c.AlertEmailFrom); err != nil || a.Address != c.AlertEmailFrom {
+			errs = append(errs, fmt.Errorf("%s must be an email address", EnvAlertEmailFrom))
+		} else if c.MailHost == "" {
+			errs = append(errs, fmt.Errorf("%s requires %s", EnvAlertEmailFrom, EnvMailHost))
+		}
 	}
 	c.DNSResolver = get(EnvDNSResolver, DefaultDNSResolver)
 	host, port, err := net.SplitHostPort(c.DNSResolver)

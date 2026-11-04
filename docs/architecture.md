@@ -38,6 +38,7 @@ browser ──HTTPS──▶ reverse proxy ──▶ kuraka (:8080) ──JMAP (
 | `KURAKA_SECRET_KEY` | required | 64 hex chars (32 bytes); encrypts TOTP secrets |
 | `KURAKA_STALWART_URL` | `http://stalwart:8080` | JMAP base URL |
 | `KURAKA_STALWART_API_KEY` | required | Stalwart API key (`API_...`) for the Kuraka service account |
+| `KURAKA_ALERT_EMAIL_FROM` | unset | Kuraka-managed mailbox that emails alerts to enabled superadmins; requires `KURAKA_MAIL_HOST` |
 | `KURAKA_INSECURE_COOKIES` | `false` | Allow non-Secure cookies for local http dev |
 
 ## Data model (SQLite)

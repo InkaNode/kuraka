@@ -42,13 +42,13 @@ func StartMetrics(ctx context.Context, st *store.Store, sw *stalwart.Client, cfg
 				log.Error("metrics fetch failed", "error", err)
 				if succeeded && !unreachable {
 					unreachable = true
-					notifyAlert(ctx, client, cfg.AlertWebhookURL, log, store.AlertRule{Metric: "stalwart_unreachable"}, 1, "firing", at)
+					notifyAlert(ctx, client, st, sw, cfg, log, store.AlertRule{Metric: "stalwart_unreachable"}, 1, "firing", at)
 				}
 			} else {
 				succeeded = true
 				if unreachable {
 					unreachable = false
-					notifyAlert(ctx, client, cfg.AlertWebhookURL, log, store.AlertRule{Metric: "stalwart_unreachable"}, 0, "resolved", at)
+					notifyAlert(ctx, client, st, sw, cfg, log, store.AlertRule{Metric: "stalwart_unreachable"}, 0, "resolved", at)
 				}
 				values := map[string]float64{}
 				for _, name := range stalwart.MetricNames {
@@ -62,7 +62,7 @@ func StartMetrics(ctx context.Context, st *store.Store, sw *stalwart.Client, cfg
 					if err := st.PruneSamples(ctx, at-int64(7*24*time.Hour/time.Second)); err != nil {
 						log.Error("metrics pruning failed", "error", err)
 					}
-					evaluateAlerts(ctx, st, client, cfg.AlertWebhookURL, log, values, at)
+					evaluateAlerts(ctx, st, sw, client, cfg, log, values, at)
 				}
 			}
 			select {
@@ -75,7 +75,7 @@ func StartMetrics(ctx context.Context, st *store.Store, sw *stalwart.Client, cfg
 	return done
 }
 
-func evaluateAlerts(ctx context.Context, st *store.Store, client *http.Client, webhook string, log *slog.Logger, values map[string]float64, at int64) {
+func evaluateAlerts(ctx context.Context, st *store.Store, sw *stalwart.Client, client *http.Client, cfg config.Config, log *slog.Logger, values map[string]float64, at int64) {
 	rules, err := st.ListAlertRules(ctx)
 	if err != nil {
 		log.Error("alert rules lookup failed", "error", err)
@@ -121,12 +121,17 @@ func evaluateAlerts(ctx context.Context, st *store.Store, client *http.Client, w
 			log.Error("alert state update failed", "rule_id", rule.ID, "error", err)
 			continue
 		}
-		notifyAlert(ctx, client, webhook, log, rule, value, state, at)
+		notifyAlert(ctx, client, st, sw, cfg, log, rule, value, state, at)
 	}
 }
 
-func notifyAlert(ctx context.Context, client *http.Client, webhook string, log *slog.Logger, rule store.AlertRule, value float64, state string, at int64) {
+func notifyAlert(ctx context.Context, client *http.Client, st *store.Store, sw *stalwart.Client, cfg config.Config, log *slog.Logger, rule store.AlertRule, value float64, state string, at int64) {
 	log.Info("alert transition", "rule_id", rule.ID, "metric", rule.Metric, "value", value, "state", state)
+	if cfg.AlertEmailFrom != "" {
+		// Deferred so the webhook is not delayed by the mail round trips.
+		defer sendAlertMail(ctx, st, sw, cfg, log, rule, value, state, at)
+	}
+	webhook := cfg.AlertWebhookURL
 	if webhook == "" {
 		return
 	}

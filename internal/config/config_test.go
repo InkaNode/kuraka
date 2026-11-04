@@ -67,6 +67,16 @@ func TestLoadFromValid(t *testing.T) {
 				StalwartURL: "http://stalwart:8080", StalwartAPIKey: "API_supersecretvalue",
 			},
 		},
+		{
+			name: "alert email",
+			env:  with(EnvMailHost, "mail.example.com", EnvAlertEmailFrom, "alertas@example.com"),
+			want: Config{
+				Listen: ":8080", DBPath: "kuraka.db",
+				PublicURL: "https://panel.inkanode.com", SecretKeyHex: testKey,
+				StalwartURL: "http://stalwart:8080", StalwartAPIKey: "API_supersecretvalue",
+				MailHost: "mail.example.com", AlertEmailFrom: "alertas@example.com",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,6 +111,8 @@ func TestLoadFromInvalid(t *testing.T) {
 		{"stalwart url bad scheme", with(EnvStalwartURL, "stalwart:8080"), []string{EnvStalwartURL}},
 		{"stalwart url credentials", with(EnvStalwartURL, "http://u:hunter2@stalwart"), []string{EnvStalwartURL}},
 		{"insecure cookies", with(EnvInsecureCookies, "maybe"), []string{EnvInsecureCookies}},
+		{"alert email invalid", with(EnvMailHost, "mail.example.com", EnvAlertEmailFrom, "Alertas <alertas@example.com>"), []string{EnvAlertEmailFrom}},
+		{"alert email without mail host", with(EnvAlertEmailFrom, "alertas@example.com"), []string{EnvAlertEmailFrom, EnvMailHost}},
 		{
 			"several at once",
 			with(EnvPublicURL, "nope", EnvSecretKey, "abc", EnvInsecureCookies, "x"),
