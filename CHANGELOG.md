@@ -10,6 +10,8 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- **Customization addons** for the official Stalwart web interface and Libredesk, injected by a custom Caddy image (`replace-response`) and served by Kuraka under `/_kuraka/addon/`; they replace the InkaNode/stalwart-webui fork. Updates of Stalwart, the web interface or Libredesk beyond the tested `MAJOR.MINOR` wait for a Kuraka release, and the System page warns when an addon no longer recognizes the page. Re-run `deploy/setup.sh` to build Caddy and switch the web interface.
+
 - **Kuraka updates** on the new **System** page (superadmins), which now also holds the Stalwart and Libredesk updates from Integrations: compares the running version and commit with the latest `InkaNode/kuraka` release, by version or by new commits, and after a confirmation the root timer backs up the data, checks out the commit, installs image `sha-<commit>` (or builds it), waits for health and rolls back on failure. While Kuraka is down, Caddy shows a maintenance page with the Kuraka branding and an optional maintenance message. New `KURAKA_MAINTENANCE_DIR`; re-run `deploy/setup.sh`.
 
 - **Release workflow**: every CI-green push to `main` republishes release `v<version>` with the commits since the version bump, plus images `<version>`, `<major>.<minor>`, `latest` and `sha-<commit>`.

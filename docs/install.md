@@ -33,8 +33,8 @@ bash deploy/setup.sh
 `setup.sh` is safe to re-run. It:
 
 1. Generates `KURAKA_SECRET_KEY` and `STALWART_RECOVERY_ADMIN` in `deploy/.env` (mode 600).
-2. Starts Caddy and Stalwart and waits up to 5 minutes for the `MAIL_HOST` certificate.
-3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions). It also points Stalwart's web interface to the [InkaNode/stalwart-webui](https://github.com/InkaNode/stalwart-webui) build, which hides the views Kuraka manages and Enterprise-only views until "Show Kuraka and Enterprise items" is turned on in the user menu.
+2. Builds the custom Caddy image locally from `deploy/caddy/Dockerfile`, starts Caddy and Stalwart and waits up to 5 minutes for the `MAIL_HOST` certificate.
+3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions). It also points Stalwart's web interface to the [official web interface](https://github.com/stalwartlabs/webui). Kuraka's addon hides the views Kuraka manages; Caddy injects `/_kuraka/addon/<app>.css` and `/_kuraka/addon/<app>.js` (`stalwart` or `desk`) into HTML and proxies the addon paths to Kuraka.
 4. Creates `deploy/updates` (owned by the Kuraka container uid 65532), installs and enables `kuraka-updates.timer`, which runs `deploy/apply-updates.sh` as root every minute to apply the Stalwart and Libredesk updates requested in **Integrations > Updates** (see [integrations.md](integrations.md#updates)), then starts Kuraka and prints the one-time setup token. A Stalwart update sets `STALWART_VERSION` in `deploy/.env`; never pin the version in `deploy/docker-compose.yml`, which deploys reset. Without `systemctl` it only warns; Stalwart and Libredesk updates then stay disabled until the script runs some other way.
 
 Then:
@@ -43,6 +43,20 @@ Then:
 2. Set the PTR record if you have not yet.
 3. In Kuraka, assign `MAIL_DOMAIN` (and any other domain) to a tenant and publish its DNS records, through Cloudflare or by hand.
 4. Rotate `STALWART_ADMIN`, remove `STALWART_RECOVERY_ADMIN` from `deploy/.env` and run `docker compose -f deploy/docker-compose.yml up -d stalwart`.
+
+Re-run `bash deploy/setup.sh` from the repository root to switch an existing
+install to the official web interface and rebuild Caddy. Setup updates and logs
+the application's `resourceUrl` whenever it differs from
+`https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip`.
+
+Caddy's `kuraka_addon_proxy <app> <upstream>` snippet uses the
+`github.com/caddyserver/replace-response` module in `kuraka-caddy:local`, built
+from `deploy/caddy`. It sets `order replace after encode`, limits replacements
+to `Content-Type: text/html*`, buffers HTML (no `stream`), and sends
+`Accept-Encoding: identity` to the app upstream. The module replaces every
+literal `</head>` and has no first-match-only option; application HTML must
+contain a single such marker. The Stalwart `/admin*` and `/login*` 404 blocks and
+security headers remain in place; no CSP is added.
 
 ### Certificates for SMTP and IMAP
 
@@ -71,8 +85,8 @@ Ports published by Docker bypass `ufw` and `firewalld` rules: Docker writes its 
 ```sh
 cd kuraka && git pull
 cd deploy
-docker compose pull
-docker compose up -d
+docker compose pull --ignore-buildable
+docker compose up -d --build
 ```
 
 Pin `KURAKA_VERSION` in `deploy/.env` to a release tag for predictable upgrades, and read [CHANGELOG.md](../CHANGELOG.md) first.
@@ -113,10 +127,10 @@ A superadmin downloads a bundle per tenant from Kuraka (`GET /api/v1/helpdesks/b
 
 ```sh
 unzip libredesk-<tenant>.zip -d /opt/libredesk-<tenant>
-cd /opt/libredesk-<tenant> && docker compose up -d
+cd /opt/libredesk-<tenant> && sh install.sh
 ```
 
-The bundle joins `kuraka_mail`, so its container reaches Stalwart and is reachable by Caddy as `kuraka-<tenant>-app-1:9000`. Copy the desk block from `deploy/Caddyfile` into `deploy/sites/desk.caddy` with your hostname, add its DNS A record, run `docker compose restart caddy`, then register the instance in Kuraka.
+The bundle joins `kuraka_mail`, so its container reaches Stalwart and is reachable by Caddy as `kuraka-<name>-desk:9000`. Its generated `desk.caddy` imports `security_headers` and `kuraka_addon_proxy desk kuraka-<name>-desk:9000`. Set `KURAKA_DEPLOY` if the stack is outside `/root/kuraka/deploy`; `install.sh` starts Libredesk, copies the site into `deploy/sites` and reloads Caddy. The hostname must point to the VPS. Then press **Activate** in Kuraka > Integrations.
 
 ## Security notes
 
