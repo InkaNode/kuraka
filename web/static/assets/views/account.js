@@ -42,9 +42,13 @@ export async function accountView({ me = getMe() } = {}) {
   field({ label: t('account.new'), input: next, help: t('account.passwordHelp') }),
   field({ label: t('account.confirm'), input: confirm }), save);
   submitForm(passwordForm, async () => {
-    await api('POST', '/auth/password', { current: current.value, new: next.value });
+    const result = await api('POST', '/auth/password', { current: current.value, new: next.value });
     current.value = ''; next.value = ''; confirm.value = '';
-    if (passwordForm.isConnected) toast(t('account.passwordChanged'));
+    if (!passwordForm.isConnected) return;
+    toast(t('account.passwordChanged'));
+    if (result?.helpdesk_synced > 0) toast(t('account.helpdeskSynced'));
+    if (result?.helpdesk_weak > 0) toast(t('account.helpdeskWeak'), 'warn');
+    if (result?.helpdesk_failed > 0) toast(t('account.helpdeskFailed'), 'warn');
   }, { onError: err => { if (passwordForm.isConnected) formError(passwordForm, err); }, validate: () => {
     if (!passwordForm.reportValidity()) return false;
     formError(passwordForm, null);

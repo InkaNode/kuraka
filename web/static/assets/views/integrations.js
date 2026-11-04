@@ -2,7 +2,7 @@ import '../i18n/integrations.js';
 import { h, mount } from '../core/h.js';
 import { api, ApiError, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, card, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
+import { button, card, checkbox, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
 
 export async function integrationsView(ctx) {
   const { me } = ctx;
@@ -157,7 +157,9 @@ export async function integrationsView(ctx) {
     const name = textInput({ name: 'name', maxlength: 200, autocomplete: 'off' });
     const email = h('input', { type: 'email', name: 'email', autocomplete: 'off', spellcheck: 'false' });
     const role = select({ name: 'role', value: 'Admin', options: ['Admin', 'Agent'].map(value => ({ value, label: t(`integrations.role.${value}`) })) });
-    const selfFields = field({ label: t('integrations.accountPassword'), input: password, help: t('integrations.accountPasswordHelp') });
+    const keepSynced = checkbox({ label: t('integrations.accountSync'), checked: true });
+    const selfFields = h('div', { class: 'stack gap-2' },
+      field({ label: t('integrations.accountPassword'), input: password, help: t('integrations.accountPasswordHelp') }), keepSynced);
     const otherFields = h('div', { class: 'stack gap-2' }, field({ label: t('integrations.name'), input: name }), field({ label: t('integrations.accountEmail'), input: email }));
     function sync() {
       const self = mode.value === 'self';
@@ -174,7 +176,7 @@ export async function integrationsView(ctx) {
       const self = mode.value === 'self';
       busy = true; submit.disabled = true; inputs.inert = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
       try {
-        const body = self ? { mode: 'self', password: password.value, role: role.value }
+        const body = self ? { mode: 'self', password: password.value, role: role.value, sync: keepSynced.querySelector('input').checked }
           : { mode: 'other', name: name.value.trim(), email: email.value.trim(), role: role.value };
         const result = await api('POST', `/helpdesks/${encodeURIComponent(row.id)}/agents`, body);
         if (!closed) dialog.close();
