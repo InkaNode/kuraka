@@ -3,8 +3,11 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -246,28 +249,63 @@ func targetKeys(ctx context.Context, client *imapclient.Client, name string) (ma
 		for _, message := range uids[start:min(start+batchSize, len(uids))] {
 			set.AddNum(message.UID)
 		}
-		messages, err := client.Fetch(set, &imap.FetchOptions{
-			Envelope: true, InternalDate: true, RFC822Size: true,
-		}).Collect()
+		messages, err := client.Fetch(set, &imap.FetchOptions{Envelope: true}).Collect()
 		if err != nil {
 			return nil, err
 		}
+		var noID imap.UIDSet
 		for _, message := range messages {
-			seen[messageKey(message)] = true
+			if key := messageKey(message); key != "" {
+				seen[key] = true
+			} else {
+				noID.AddNum(message.UID)
+			}
+		}
+		if len(noID) != 0 {
+			if err := hashBodies(ctx, client, noID, seen); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return seen, nil
 }
 
+// hashBodies adds the content key of every message in set to seen.
+func hashBodies(ctx context.Context, client *imapclient.Client, set imap.UIDSet, seen map[string]bool) error {
+	section := &imap.FetchItemBodySection{Peek: true}
+	command := client.Fetch(set, &imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{section}})
+	defer command.Close()
+	for data := command.Next(); data != nil; data = command.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		body, err := data.Collect()
+		if err != nil {
+			return fmt.Errorf("fetch target body: %w", err)
+		}
+		seen[contentKey(body.FindBodySection(section))] = true
+	}
+	return command.Close()
+}
+
+// messageKey returns the Message-ID key, or "" when the message has none and
+// must be compared by content.
 func messageKey(message *imapclient.FetchMessageBuffer) string {
 	if message.Envelope != nil {
 		if id := strings.TrimSpace(message.Envelope.MessageID); id != "" {
 			return "id:" + id
 		}
 	}
-	// IMAP INTERNALDATE has second precision. Normalize the timezone as well.
-	return "date-size:" + message.InternalDate.UTC().Truncate(time.Second).Format(time.RFC3339) +
-		":" + strconv.FormatInt(message.RFC822Size, 10)
+	return ""
+}
+
+// contentKey identifies a message without Message-ID by its bytes. Date and
+// size alone collide for distinct messages. Line endings are normalized because
+// servers may store a bare-LF APPEND as CRLF.
+// frugal: verify on a real Stalwart that a second run of the same mailbox copies nothing.
+func contentKey(body []byte) string {
+	sum := sha256.Sum256(bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func appendFlags(flags []imap.Flag) []imap.Flag {
@@ -287,7 +325,7 @@ func copyBatch(ctx context.Context, source, target *imapclient.Client, name stri
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if seen[messageKey(message)] {
+		if key := messageKey(message); key != "" && seen[key] {
 			p.MessagesSkipped++
 			r.emit(*p, false)
 		} else {
@@ -314,14 +352,17 @@ func copyBatch(ctx context.Context, source, target *imapclient.Client, name stri
 		if !ok {
 			return fmt.Errorf("unexpected source UID %d", body.UID)
 		}
+		content := body.FindBodySection(section)
+		if content == nil {
+			return fmt.Errorf("missing body for source UID %d", body.UID)
+		}
 		key := messageKey(metadata)
+		if key == "" {
+			key = contentKey(content)
+		}
 		if seen[key] {
 			p.MessagesSkipped++
 		} else {
-			content := body.FindBodySection(section)
-			if content == nil {
-				return fmt.Errorf("missing body for source UID %d", body.UID)
-			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}

@@ -123,23 +123,18 @@ func TestMessageKey(t *testing.T) {
 	}
 	a.Envelope = nil
 	b.Envelope = &imap.Envelope{}
-	b.InternalDate = date.In(time.FixedZone("Lima", -5*60*60)).Add(100 * time.Millisecond)
-	b.RFC822Size = 42
-	if messageKey(a) != messageKey(b) {
-		t.Fatal("missing IDs must deduplicate by second-precision UTC date and size")
+	if messageKey(a) != "" || messageKey(b) != "" {
+		t.Fatal("missing IDs must defer to the content key")
 	}
-	b.RFC822Size++
-	if messageKey(a) == messageKey(b) {
-		t.Fatal("different sizes must remain distinct")
+	if contentKey([]byte("x")) != contentKey([]byte("x")) || contentKey([]byte("x")) == contentKey([]byte("y")) {
+		t.Fatal("content keys must match exactly equal bodies only")
 	}
-	b.RFC822Size = a.RFC822Size
-	b.InternalDate = date.Add(time.Second)
-	if messageKey(a) == messageKey(b) {
-		t.Fatal("different internal dates must remain distinct")
+	if contentKey([]byte("a\nb")) != contentKey([]byte("a\r\nb")) {
+		t.Fatal("content keys must ignore CRLF normalization")
 	}
-	b.Envelope.MessageID = messageKey(a)
-	if messageKey(a) == messageKey(b) {
-		t.Fatal("ID and fallback keys must have separate namespaces")
+	b.Envelope.MessageID = contentKey([]byte("x"))
+	if messageKey(b) == contentKey([]byte("x")) {
+		t.Fatal("ID and content keys must have separate namespaces")
 	}
 }
 
