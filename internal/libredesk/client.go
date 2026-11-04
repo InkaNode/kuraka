@@ -1,5 +1,5 @@
 // Package libredesk is a typed client for the parts of the Libredesk HTTP API
-// Kuraka needs: email inboxes, agents and activation.
+// Kuraka needs: email inboxes, agents, activation and branding.
 package libredesk
 
 import (
@@ -163,6 +163,34 @@ func (c *Client) SyncAgentPassword(ctx context.Context, id int64, password strin
 		"teams":               teams,
 		"new_password":        password,
 	}, nil)
+}
+
+// ApplyBranding sets the site name, logo URL and favicon URL; empty values
+// keep the current ones. v2.9.2 replaces every general setting from the PUT
+// body, so the current settings are sent back without the read-only keys.
+func (c *Client) ApplyBranding(ctx context.Context, name, logoURL, faviconURL string) error {
+	const path = "/api/v1/settings/general"
+	var settings map[string]json.RawMessage
+	if err := c.do(ctx, http.MethodGet, path, nil, &settings); err != nil {
+		return err
+	}
+	if settings == nil {
+		return errors.New("libredesk: empty general settings")
+	}
+	for key, value := range map[string]string{"app.site_name": name, "app.logo_url": logoURL, "app.favicon_url": faviconURL} {
+		if value == "" {
+			continue
+		}
+		b, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		settings[key] = b
+	}
+	for _, key := range []string{"app.update", "app.version", "app.restart_required"} {
+		delete(settings, key)
+	}
+	return c.do(ctx, http.MethodPut, path, settings, nil)
 }
 
 type envelope struct {

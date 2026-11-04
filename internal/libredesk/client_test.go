@@ -379,3 +379,38 @@ func TestSystemAPIKeyErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyBranding(t *testing.T) {
+	var put map[string]any
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		if r.URL.Path != "/api/v1/settings/general" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			io.WriteString(w, `{"status":"success","data":{"app.site_name":"Libredesk","app.logo_url":"","app.favicon_url":"old.ico","app.root_url":"https://desk.example.com","app.lang":"en","app.max_file_upload_size":20,"app.update":{},"app.version":"v2.9.2","app.restart_required":false}}`)
+		case http.MethodPut:
+			if err := json.NewDecoder(r.Body).Decode(&put); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			io.WriteString(w, `{"status":"success","data":true}`)
+		default:
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+	})
+	if err := c.ApplyBranding(context.Background(), "Acme Desk", "https://kuraka.test/branding/assets/a", ""); err != nil {
+		t.Fatalf("ApplyBranding: %v", err)
+	}
+	want := map[string]any{
+		"app.site_name":            "Acme Desk",
+		"app.logo_url":             "https://kuraka.test/branding/assets/a",
+		"app.favicon_url":          "old.ico",
+		"app.root_url":             "https://desk.example.com",
+		"app.lang":                 "en",
+		"app.max_file_upload_size": float64(20),
+	}
+	if !reflect.DeepEqual(put, want) {
+		t.Errorf("PUT body = %v, want %v", put, want)
+	}
+}
