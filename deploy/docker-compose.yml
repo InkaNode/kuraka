@@ -24,6 +24,8 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./sites:/etc/caddy/sites:ro
+      - ./maintenance:/srv/maintenance:ro
+      - ./maintenance.html:/srv/maintenance-default.html:ro
       - caddy_data:/data
       - caddy_config:/config
     networks: [mail]
@@ -70,13 +72,15 @@ services:
       KURAKA_ALERT_WEBHOOK_URL: ${KURAKA_ALERT_WEBHOOK_URL:-}
       KURAKA_ALERT_EMAIL_FROM: ${KURAKA_ALERT_EMAIL_FROM:-}
       KURAKA_MAIL_HOST: ${MAIL_HOST}
-      # Stalwart and Libredesk update requests, applied on the host by
+      # Kuraka, Stalwart and Libredesk update requests, applied on the host by
       # kuraka-updates.timer.
       KURAKA_UPDATES_DIR: /updates
+      KURAKA_MAINTENANCE_DIR: /maintenance
       KURAKA_STALWART_VERSION: ${STALWART_VERSION:-v1.0.2}
     volumes:
       - kuraka_data:/data
       - ./updates:/updates
+      - ./maintenance:/maintenance
     networks: [mail]
     logging: *logging
 

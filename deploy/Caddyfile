@@ -19,6 +19,21 @@
 	reverse_proxy kuraka:8080 {
 		# Replace any client-supplied chain: Kuraka rate-limits by this address.
 		header_up X-Forwarded-For {remote_host}
+		# Upstream error responses must also enter handle_errors.
+		@maintenance status 502 503 504
+		handle_response @maintenance {
+			error 503
+		}
+	}
+	handle_errors 502 503 504 {
+		import security_headers
+		root * /srv
+		try_files /maintenance/index.html /maintenance-default.html
+		header Retry-After 30
+		header Cache-Control no-store
+		file_server {
+			status 503
+		}
 	}
 }
 

@@ -143,13 +143,14 @@ load_env() {
   [[ $MAIL_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "MAIL_HOST must be a plain hostname"
 }
 
-# Kuraka asks for Stalwart and Libredesk updates by writing files in
+# Kuraka asks for Kuraka, Stalwart and Libredesk updates by writing files in
 # deploy/updates; this timer applies them as root, so Kuraka never needs the
 # Docker socket.
 install_update_timer() {
   install -d -m 0750 -o "$KURAKA_UID" -g "$KURAKA_UID" "$DEPLOY_DIR/updates"
+  install -d -m 0755 -o "$KURAKA_UID" -g "$KURAKA_UID" "$DEPLOY_DIR/maintenance"
   if ! command -v systemctl >/dev/null; then
-    warn "systemctl not found: Stalwart and Libredesk updates from Kuraka need $DEPLOY_DIR/apply-updates.sh run as root every minute"
+    warn "systemctl not found: Kuraka, Stalwart and Libredesk updates from Kuraka need $DEPLOY_DIR/apply-updates.sh run as root every minute"
     return 0
   fi
   chmod 700 "$DEPLOY_DIR/apply-updates.sh"
@@ -193,6 +194,9 @@ main() {
   done
   docker compose version >/dev/null 2>&1 || die "the Docker Compose plugin is required"
   load_env
+
+  # Prepare bind mounts before Caddy starts; Docker must not create them as root.
+  install_update_timer
 
   # 1. Secrets.
   if [[ -z $(env_get KURAKA_SECRET_KEY) ]]; then
@@ -334,8 +338,7 @@ main() {
     restart_stalwart
   fi
 
-  # 4. Kuraka. The updates directory must exist before Docker mounts it.
-  install_update_timer
+  # 4. Kuraka.
   log "starting kuraka"
   compose up -d kuraka >/dev/null
   local token="" since
