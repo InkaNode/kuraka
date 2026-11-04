@@ -5,39 +5,51 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 // Environment variable names.
 const (
-	EnvListen          = "KURAKA_LISTEN"
-	EnvDB              = "KURAKA_DB"
-	EnvPublicURL       = "KURAKA_PUBLIC_URL"
-	EnvSecretKey       = "KURAKA_SECRET_KEY"
-	EnvStalwartURL     = "KURAKA_STALWART_URL"
-	EnvStalwartAPIKey  = "KURAKA_STALWART_API_KEY"
-	EnvInsecureCookies = "KURAKA_INSECURE_COOKIES"
+	EnvListen            = "KURAKA_LISTEN"
+	EnvDB                = "KURAKA_DB"
+	EnvPublicURL         = "KURAKA_PUBLIC_URL"
+	EnvSecretKey         = "KURAKA_SECRET_KEY"
+	EnvStalwartURL       = "KURAKA_STALWART_URL"
+	EnvStalwartAPIKey    = "KURAKA_STALWART_API_KEY"
+	EnvInsecureCookies   = "KURAKA_INSECURE_COOKIES"
+	EnvMailHost          = "KURAKA_MAIL_HOST"
+	EnvMailTLSSkipVerify = "KURAKA_MAIL_TLS_SKIP_VERIFY"
+	EnvDNSResolver       = "KURAKA_DNS_RESOLVER"
+	EnvMigrationWorkers  = "KURAKA_MIGRATION_WORKERS"
 )
 
 // Defaults for optional variables.
 const (
-	DefaultListen      = ":8080"
-	DefaultDBPath      = "kuraka.db"
-	DefaultStalwartURL = "http://stalwart:8080"
+	DefaultListen           = ":8080"
+	DefaultDBPath           = "kuraka.db"
+	DefaultStalwartURL      = "http://stalwart:8080"
+	DefaultDNSResolver      = "1.1.1.1:53"
+	DefaultMigrationWorkers = 2
 )
 
 // Config is the validated runtime configuration.
 type Config struct {
-	Listen          string
-	DBPath          string
-	PublicURL       string // scheme://host[:port], no trailing slash
-	SecretKeyHex    string // 64 hex chars
-	StalwartURL     string // no trailing slash
-	StalwartAPIKey  string
-	InsecureCookies bool
+	Listen            string
+	DBPath            string
+	PublicURL         string // scheme://host[:port], no trailing slash
+	SecretKeyHex      string // 64 hex chars
+	StalwartURL       string // no trailing slash
+	StalwartAPIKey    string
+	InsecureCookies   bool
+	MailHost          string
+	MailTLSSkipVerify bool
+	DNSResolver       string
+	MigrationWorkers  int
 }
 
 // Load reads the configuration from the process environment.
@@ -97,10 +109,45 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		c.InsecureCookies = b
 	}
 
+	c.MailHost = get(EnvMailHost, "")
+	if c.MailHost != "" && !validHostname(c.MailHost) {
+		errs = append(errs, fmt.Errorf("%s must be a hostname without scheme or port", EnvMailHost))
+	}
+	c.DNSResolver = get(EnvDNSResolver, DefaultDNSResolver)
+	host, port, err := net.SplitHostPort(c.DNSResolver)
+	p, portErr := strconv.Atoi(port)
+	if err != nil || host == "" || (!validHostname(host) && net.ParseIP(host) == nil) || portErr != nil || p < 1 || p > 65535 {
+		errs = append(errs, fmt.Errorf("%s must be host:port", EnvDNSResolver))
+	}
+	if raw := get(EnvMailTLSSkipVerify, "false"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s must be a boolean", EnvMailTLSSkipVerify))
+		}
+		c.MailTLSSkipVerify = b
+	}
+	c.MigrationWorkers, err = strconv.Atoi(get(EnvMigrationWorkers, "2"))
+	if err != nil || c.MigrationWorkers < 1 || c.MigrationWorkers > 8 {
+		errs = append(errs, fmt.Errorf("%s must be between 1 and 8", EnvMigrationWorkers))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+var hostLabel = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func validHostname(host string) bool {
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !hostLabel.MatchString(label) {
+			return false
+		}
+	}
+	return true
 }
 
 // PublicOrigin returns the scheme://host[:port] origin of PublicURL, as sent

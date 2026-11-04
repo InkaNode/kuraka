@@ -70,6 +70,8 @@ func TestLoadFromValid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.want.DNSResolver = DefaultDNSResolver
+			tt.want.MigrationWorkers = DefaultMigrationWorkers
 			got, err := LoadFrom(env(tt.env))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
