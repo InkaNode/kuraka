@@ -2,3 +2,5 @@ credentials*.txt
 *.local.*
 .env
 bin/
+deploy/sites/*
+!deploy/sites/.gitkeep

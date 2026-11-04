@@ -23,6 +23,7 @@ services:
       CADDY_EXTRA_GLOBAL: ${CADDY_EXTRA_GLOBAL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
       - caddy_data:/data
       - caddy_config:/config
     networks: [mail]

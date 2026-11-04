@@ -222,7 +222,7 @@ main() {
       cert_created=1
       log "certificate registered"
     else
-      warn "could not register the certificate ($(jmap_error "${resp:-}" c c)). SMTP/IMAP keep Stalwart's default certificate; see docs/install.md"
+      die "could not register the certificate ($(jmap_error "${resp:-}" c c)); see docs/install.md and re-run"
     fi
   fi
 
@@ -250,11 +250,13 @@ main() {
   # 4. Kuraka.
   log "starting kuraka"
   compose up -d kuraka >/dev/null
-  local token=""
+  local token="" since
+  # Only the running container's logs: older starts printed stale tokens.
+  since=$(docker inspect -f '{{.State.StartedAt}}' "$(compose ps -q kuraka)")
   deadline=$((SECONDS + 60))
   while [[ -z $token ]] && (( SECONDS < deadline )); do
     sleep 2
-    token=$(compose logs --no-log-prefix kuraka 2>/dev/null |
+    token=$(compose logs --no-log-prefix --since "$since" kuraka 2>/dev/null |
       jq -Rr 'fromjson? | select(.msg == "setup required") | .token // empty' | tail -n 1)
   done
 
