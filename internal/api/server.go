@@ -313,6 +313,7 @@ func conflict(message string) error {
 
 var unauthorized = &apiError{status: 401, code: "unauthorized", message: "Authentication required"}
 var invalidCredentials = &apiError{status: 401, code: "invalid_credentials", message: "Invalid credentials"}
+
 // wrongCredentials is a failed re-check by a signed-in user: a form error,
 // never 401, which the browser treats as a lost session.
 var wrongCredentials = &apiError{status: 422, code: "invalid_credentials", message: "Invalid credentials"}
