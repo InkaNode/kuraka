@@ -446,7 +446,7 @@ func TestPasswordRotationAndSessionStorage(t *testing.T) {
 	if session.ExpiresAt.Sub(session.CreatedAt) != 12*time.Hour {
 		t.Fatal("wrong session lifetime")
 	}
-	h.root.do("POST", "/auth/password", map[string]string{"current": "wrong", "new": rootPassword}, 401)
+	assertCode(t, h.root.do("POST", "/auth/password", map[string]string{"current": "wrong", "new": rootPassword}, 422), "invalid_credentials")
 	h.root.do("POST", "/auth/password", map[string]string{"current": rootPassword, "new": "short"}, 422)
 	next := "a different password 456!"
 	h.root.do("POST", "/auth/password", map[string]string{"current": rootPassword, "new": next}, 200)

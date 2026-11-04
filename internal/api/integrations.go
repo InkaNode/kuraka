@@ -467,10 +467,7 @@ func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (an
 	}
 	password := ""
 	if in.Mode == "self" {
-		// A wrong password is a form error here, never a lost session (401).
-		if err := s.checkPassword(r, in.Password); err == invalidCredentials {
-			return nil, invalid("password")
-		} else if err != nil {
+		if err := s.checkPassword(r, in.Password); err != nil {
 			return nil, err
 		}
 		if strongHelpdeskPassword(in.Password) {

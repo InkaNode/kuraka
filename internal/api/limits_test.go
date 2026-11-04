@@ -201,7 +201,7 @@ func TestPasswordRecheckLimited(t *testing.T) {
 		return h.s.checkPassword(r.WithContext(context.WithValue(r.Context(), stateKey{}, q)), password)
 	}
 	for i := 0; i < 5; i++ {
-		want := invalidCredentials
+		want := wrongCredentials
 		if i == 4 {
 			want = rateLimited
 		}

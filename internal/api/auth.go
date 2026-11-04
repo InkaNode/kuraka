@@ -223,7 +223,7 @@ func (s *Server) checkPassword(r *http.Request, password string) error {
 		return err
 	}
 	if !ok {
-		return s.loginFailed(r, u.Email)
+		return reauthFailed(s.loginFailed(r, u.Email))
 	}
 	s.limiter.clear(key)
 	return nil
@@ -350,7 +350,7 @@ func (s *Server) confirm(w http.ResponseWriter, r *http.Request) (any, error) {
 	if state(r).user.TOTPEnabled {
 		return nil, conflict("TOTP is already enabled")
 	}
-	if err := s.checkTOTP(r, in.Code); err != nil {
+	if err := reauthFailed(s.checkTOTP(r, in.Code)); err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -381,7 +381,7 @@ func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) (any, error
 	if !u.TOTPEnabled {
 		return nil, conflict("TOTP is not enabled")
 	}
-	if err := s.checkTOTP(r, in.Code); err != nil {
+	if err := reauthFailed(s.checkTOTP(r, in.Code)); err != nil {
 		return nil, err
 	}
 	disabled, empty := false, ""

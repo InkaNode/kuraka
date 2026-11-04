@@ -187,7 +187,7 @@ export async function integrationsView(ctx) {
         } else toast(t('integrations.accountSame', { url: result.url, email: result.email }));
       } catch (err) {
         if (!closed) formError(form, err.code === 'conflict' ? new Error(t('integrations.accountExists'))
-          : self && err.code === 'invalid_input' ? new Error(t('integrations.wrongPassword')) : err);
+          : self && err.code === 'invalid_credentials' ? new Error(t('integrations.wrongPassword')) : err);
       } finally { busy = false; submit.disabled = false; inputs.inert = false; form.removeAttribute('aria-busy'); }
     } }, inputs, submit);
     const dialog = modal({ title: t('integrations.accountTitle', { name: row.name }), body: form,
