@@ -249,7 +249,9 @@ func TestAdminDomainsAndImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.root.do("POST", path, map[string]string{"name": "import.test"}, 409)
+	if e := object(t, h.root.do("POST", path, map[string]string{"name": "import.test"}, 409))["error"].(map[string]any); e["code"] != "domain_in_stalwart" {
+		t.Fatal(e)
+	}
 	imported := object(t, h.root.do("POST", path+"/import", map[string]string{"name": "import.test"}, 201))
 	h.root.do("POST", path+"/import", map[string]string{"name": "import.test"}, 409)
 	h.root.do("DELETE", fmt.Sprintf("/tenants/%d", tenant), nil, 409)

@@ -44,6 +44,8 @@ func (s *Server) authorizedDomain(r *http.Request) (store.Domain, error) {
 
 // Besides primary names, reserve aliases of linked domains. Stalwart's name
 // lookup finds primary domains; aliases are exposed on the domain itself.
+var errInStalwart = conflict("Domain exists in Stalwart; use import to link it")
+
 func (s *Server) availableName(r *http.Request, name, exceptSID string) error {
 	if _, err := s.st.GetDomainByName(r.Context(), name); err == nil {
 		return conflict("Domain already linked")
@@ -51,7 +53,7 @@ func (s *Server) availableName(r *http.Request, name, exceptSID string) error {
 		return err
 	}
 	if _, err := s.sw.FindDomainByName(r.Context(), name); err == nil {
-		return conflict("Domain exists in Stalwart; use import to link it")
+		return errInStalwart
 	} else if !errors.Is(err, stalwart.ErrNotFound) {
 		return upstream(err)
 	}
@@ -122,7 +124,10 @@ func (s *Server) createDomain(_ http.ResponseWriter, r *http.Request) (any, erro
 	if _, err := s.st.GetTenant(r.Context(), tenant); err != nil {
 		return nil, err
 	}
-	if err := s.availableName(r, name, ""); err != nil {
+	if err := s.availableName(r, name, ""); err == errInStalwart {
+		// A distinct code lets the panel switch to import on its own.
+		return nil, &apiError{status: 409, code: "domain_in_stalwart", message: "Domain exists in Stalwart; use import to link it"}
+	} else if err != nil {
 		return nil, err
 	}
 	aliases, err := s.validateDomainAliases(r, in.Aliases, name, stalwart.Domain{})
