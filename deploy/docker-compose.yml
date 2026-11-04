@@ -10,7 +10,8 @@ x-logging: &logging
 
 services:
   caddy:
-    image: caddy:2
+    build: ./caddy
+    image: kuraka-caddy:local
     restart: unless-stopped
     ports:
       - "80:80"
@@ -32,7 +33,7 @@ services:
     logging: *logging
 
   stalwart:
-    # Pinned: update together with InkaNode/stalwart-webui (CI also tests v1).
+    # Pinned: check compatibility with the official web interface and Kuraka addon.
     # Integrations > Updates sets STALWART_VERSION in deploy/.env; keep the
     # default here in sync with KURAKA_STALWART_VERSION below.
     image: stalwartlabs/stalwart:${STALWART_VERSION:-v1.0.2}

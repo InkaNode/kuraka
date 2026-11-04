@@ -325,7 +325,7 @@ update_kuraka() {
   fi
   # From here the new version may have migrated the database.
   started=1
-  "${COMPOSE[@]}" up -d >&2 || { ERROR="could not start $image"; return 1; }
+  "${COMPOSE[@]}" up -d --build >&2 || { ERROR="could not start $image"; return 1; }
   "${COMPOSE[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile >&2 ||
     { ERROR="could not reload caddy"; return 1; }
   cid=$("${COMPOSE[@]}" ps -q kuraka) && [[ -n $cid ]] ||
@@ -367,7 +367,7 @@ rollback_kuraka() {
     fi
   fi
   if (( stopped )); then
-    if "${COMPOSE[@]}" up -d >&2; then
+    if "${COMPOSE[@]}" up -d --build >&2; then
       log "kuraka: restarted $old_version"
     else
       ERROR="$ERROR; could not restart kuraka:$old_version"
