@@ -97,3 +97,16 @@ func TestRewriteForAlias(t *testing.T) {
 		t.Fatal("input records were modified")
 	}
 }
+
+func TestRewriteForAliasSkipsMailHost(t *testing.T) {
+	recs := []Record{
+		{Name: "cliente1.test", Type: "MX", Value: "mail.cliente1.test.", Priority: 10},
+		{Name: "mail.cliente1.test", Type: "TXT", Value: "v=spf1 a -all"},
+		{Name: "_25._tcp.Mail.cliente1.test", Type: "TLSA", Value: "3 1 1 aa"},
+		{Name: "cliente1.test", Type: "TXT", Value: "v=spf1 mx -all"},
+	}
+	got := RewriteForAlias(recs, "cliente1.test", "alt.test")
+	if len(got) != 2 || got[0].Type != "MX" || got[0].Name != "alt.test" || got[1].Name != "alt.test" {
+		t.Fatalf("got %+v", got)
+	}
+}

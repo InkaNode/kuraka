@@ -228,9 +228,22 @@ func trimDot(s string) string { return strings.TrimSuffix(s, ".") }
 func RewriteForAlias(recs []Record, primary, alias string) []Record {
 	p := strings.ToLower(trimDot(primary))
 	a := trimDot(alias)
+	// Records of a mail host (an MX target), such as its SPF and TLSA, stay with that host.
+	var hosts []string
+	for _, r := range recs {
+		if strings.EqualFold(r.Type, "MX") {
+			hosts = append(hosts, strings.ToLower(trimDot(r.Value)))
+		}
+	}
 	out := make([]Record, 0, len(recs))
+outer:
 	for _, r := range recs {
 		name := strings.ToLower(r.Name)
+		for _, h := range hosts {
+			if name == h || strings.HasSuffix(name, "."+h) {
+				continue outer
+			}
+		}
 		switch {
 		case name == p:
 			r.Name = a
