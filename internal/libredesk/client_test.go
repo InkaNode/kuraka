@@ -173,6 +173,85 @@ func TestDeleteInbox(t *testing.T) {
 	}
 }
 
+func TestCreateAgentAndSetPassword(t *testing.T) {
+	calls := 0
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		calls++
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Error("missing JSON content type")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		want := map[string]any{
+			"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.test",
+			"roles": []any{"Admin"}, "teams": []any{}, "enabled": true,
+			"send_welcome_email": false, "availability_status": "offline",
+		}
+		if calls == 1 {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents" {
+				t.Errorf("create: %s %s", r.Method, r.URL.Path)
+			}
+		} else {
+			if r.Method != http.MethodPut || r.URL.Path != "/api/v1/agents/42" {
+				t.Errorf("password: %s %s", r.Method, r.URL.Path)
+			}
+			want["new_password"] = "Aa9!0123456789abcdef01234567"
+		}
+		if !reflect.DeepEqual(body, want) {
+			t.Error("invalid agent request body")
+		}
+		io.WriteString(w, `{"status":"success","data":{"id":42}}`)
+	})
+	a := NewAgent{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.test", Roles: []string{"Admin"}}
+	id, err := c.CreateAgent(context.Background(), a)
+	if err != nil || id != 42 {
+		t.Fatalf("CreateAgent: id=%d err=%v", id, err)
+	}
+	if err := c.SetAgentPassword(context.Background(), id, a, "Aa9!0123456789abcdef01234567"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestAgentErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		body     string
+		conflict bool
+	}{
+		{"conflict", 409, `{"status":"error","message":"Conflict"}`, true},
+		{"duplicate email", 500, `{"status":"error","message":"User with same email already exists"}`, true},
+		{"upstream failure", 500, `{"status":"error","message":"Something went wrong"}`, false},
+		{"error envelope", 200, `{"status":"error","message":"Invalid role"}`, false},
+		{"missing id", 200, `{"data":{}}`, false},
+		{"negative id", 200, `{"data":{"id":-1}}`, false},
+		{"invalid JSON", 200, `invalid`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+				checkAuth(t, r)
+				w.WriteHeader(tc.status)
+				io.WriteString(w, tc.body)
+			})
+			_, err := c.CreateAgent(context.Background(), NewAgent{})
+			if err == nil || errors.Is(err, ErrConflict) != tc.conflict {
+				t.Fatalf("CreateAgent: %v", err)
+			}
+			if tc.status != 200 || strings.Contains(tc.body, `"status":"error"`) {
+				if err := c.SetAgentPassword(context.Background(), 42, NewAgent{}, "password"); err == nil {
+					t.Fatal("password update ignored upstream error")
+				}
+			}
+		})
+	}
+}
+
 func TestSystemAPIKey(t *testing.T) {
 	calls := 0
 	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {

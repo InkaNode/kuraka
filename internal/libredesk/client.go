@@ -1,5 +1,5 @@
 // Package libredesk is a typed client for the parts of the Libredesk HTTP API
-// Kuraka needs: listing, creating and deleting email inboxes.
+// Kuraka needs: email inboxes, agents and activation.
 package libredesk
 
 import (
@@ -17,6 +17,9 @@ import (
 
 // ErrNotFound is returned when the requested object does not exist.
 var ErrNotFound = errors.New("libredesk: not found")
+
+// ErrConflict is returned when an agent's email already exists.
+var ErrConflict = errors.New("libredesk: conflict")
 
 const maxBody = 16 << 20
 
@@ -76,6 +79,52 @@ type NewEmailInbox struct {
 	From string
 	IMAP MailServer
 	SMTP MailServer
+}
+
+// NewAgent describes an agent with named Libredesk roles.
+type NewAgent struct {
+	FirstName string
+	LastName  string
+	Email     string
+	Roles     []string
+}
+
+func agentBody(a NewAgent) map[string]any {
+	return map[string]any{
+		"first_name":          a.FirstName,
+		"last_name":           a.LastName,
+		"email":               a.Email,
+		"send_welcome_email":  false,
+		"teams":               []string{},
+		"roles":               a.Roles,
+		"enabled":             true,
+		"availability_status": "offline",
+	}
+}
+
+// CreateAgent creates an agent; Libredesk generates its initial password.
+func (c *Client) CreateAgent(ctx context.Context, a NewAgent) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/agents", agentBody(a), &out); err != nil {
+		// v2.9.2 reports duplicate email as a GeneralError (HTTP 500).
+		if ae, ok := errors.AsType[*APIError](err); ok && (ae.Status == http.StatusConflict || strings.Contains(strings.ToLower(ae.Message), "already exists")) {
+			return 0, ErrConflict
+		}
+		return 0, err
+	}
+	if out.ID <= 0 {
+		return 0, errors.New("libredesk: agent create returned no id")
+	}
+	return out.ID, nil
+}
+
+// SetAgentPassword sets a password while preserving the newly created fields.
+func (c *Client) SetAgentPassword(ctx context.Context, id int64, a NewAgent, password string) error {
+	body := agentBody(a)
+	body["new_password"] = password
+	return c.do(ctx, http.MethodPut, "/api/v1/agents/"+strconv.FormatInt(id, 10), body, nil)
 }
 
 type envelope struct {
