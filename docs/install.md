@@ -116,7 +116,7 @@ unzip libredesk-<tenant>.zip -d /opt/libredesk-<tenant>
 cd /opt/libredesk-<tenant> && docker compose up -d
 ```
 
-The bundle joins `kuraka_mail`, so its container reaches Stalwart and is reachable by Caddy as `kuraka-<tenant>-app-1:9000`. Uncomment the desk block in `deploy/Caddyfile` with your hostname, add its DNS A record, run `docker compose restart caddy`, then register the instance in Kuraka.
+The bundle joins `kuraka_mail`, so its container reaches Stalwart and is reachable by Caddy as `kuraka-<tenant>-app-1:9000`. Copy the desk block from `deploy/Caddyfile` into `deploy/sites/desk.caddy` with your hostname, add its DNS A record, run `docker compose restart caddy`, then register the instance in Kuraka.
 
 ## Security notes
 

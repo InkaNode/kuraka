@@ -66,9 +66,10 @@ Deleting a tenant is refused while it still owns domains.
 
 Errors: `{"error": {"code": "not_found", "message": "..."}}` with a matching HTTP status.
 
+`GET /healthz` is served at the root, outside `/api/v1`, to anyone: 200 `{"status": "ok", "version", "stalwart": "ok"}`, or 503 with `"stalwart": "unreachable"` when Stalwart does not answer.
+
 | Method and path | Who | Purpose |
 |---|---|---|
-| `GET /healthz` | anyone | liveness + Stalwart reachability |
 | `POST /setup` | anyone with setup token | create the first superadmin; only while none exists |
 | `POST /auth/login` | anyone | `{email, password}` → session cookie; `{"mfa_required": true}` when TOTP is on |
 | `POST /auth/totp` | pending session | `{code}` completes login |
