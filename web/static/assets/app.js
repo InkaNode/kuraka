@@ -1,0 +1,20 @@
+import './i18n/core.js';
+import { route, start } from './core/router.js';
+import { loginView } from './views/login.js';
+import { setupView } from './views/setup.js';
+import { domainsView } from './views/domains.js';
+import { domainView } from './views/domain.js';
+import { tenantsView } from './views/tenants.js';
+import { usersView } from './views/users.js';
+import { auditView } from './views/audit.js';
+import { accountView } from './views/account.js';
+
+route('/login', loginView, { auth: false, layout: false });
+route('/setup', setupView, { auth: false, layout: false });
+route('/domains', domainsView);
+route('/domains/:id', domainView);
+route('/tenants', tenantsView, { superadmin: true });
+route('/users', usersView, { superadmin: true });
+route('/audit', auditView);
+route('/account', accountView);
+start();
