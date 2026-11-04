@@ -1,0 +1,6 @@
+.git
+bin/
+*.local.*
+.env*
+docs/
+node_modules
