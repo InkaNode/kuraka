@@ -58,6 +58,10 @@ func TestCreateRecordBodies(t *testing.T) {
 			Data: &SRVData{Priority: 0, Weight: 1, Port: 465, Target: "mail.example.com"}},
 			map[string]any{"type": "SRV", "name": "_submissions._tcp.example.com", "ttl": 1.0,
 				"data": map[string]any{"priority": 0.0, "weight": 1.0, "port": 465.0, "target": "mail.example.com"}}},
+		{"TLSA", Record{Type: "TLSA", Name: "_25._tcp.mail.example.com", Content: "ignored",
+			TLSA: &TLSAData{Usage: 3, Selector: 1, MatchingType: 1, Certificate: "abcd"}},
+			map[string]any{"type": "TLSA", "name": "_25._tcp.mail.example.com", "ttl": 1.0,
+				"data": map[string]any{"usage": 3.0, "selector": 1.0, "matching_type": 1.0, "certificate": "abcd"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

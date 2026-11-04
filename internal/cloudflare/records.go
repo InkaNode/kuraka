@@ -11,7 +11,8 @@ import (
 
 const perPage = 100
 
-// Record is a DNS record. Data is used for SRV only; Priority for MX only.
+// Record is a DNS record. Data is used for SRV only, TLSA for TLSA only;
+// Priority for MX only.
 type Record struct {
 	ID       string
 	Type     string
@@ -22,6 +23,7 @@ type Record struct {
 	Proxied  bool
 	Comment  string
 	Data     *SRVData
+	TLSA     *TLSAData
 }
 
 // SRVData is the structured content of an SRV record.
@@ -30,6 +32,14 @@ type SRVData struct {
 	Weight   int    `json:"weight"`
 	Port     int    `json:"port"`
 	Target   string `json:"target"`
+}
+
+// TLSAData is the structured content of a TLSA record.
+type TLSAData struct {
+	Usage        int    `json:"usage"`
+	Selector     int    `json:"selector"`
+	MatchingType int    `json:"matching_type"`
+	Certificate  string `json:"certificate"`
 }
 
 type wireRecord struct {
@@ -45,7 +55,7 @@ type wireRecord struct {
 }
 
 // MarshalJSON emits the request shape Cloudflare expects per record type:
-// SRV uses data, MX carries priority, and proxied is only sent for types
+// SRV and TLSA use data, MX carries priority, and proxied is only sent for types
 // that support the proxy.
 func (r Record) MarshalJSON() ([]byte, error) {
 	w := wireRecord{ID: r.ID, Type: r.Type, Name: r.Name, TTL: r.TTL}
@@ -56,6 +66,14 @@ func (r Record) MarshalJSON() ([]byte, error) {
 	case "SRV":
 		if r.Data != nil {
 			b, err := json.Marshal(r.Data)
+			if err != nil {
+				return nil, err
+			}
+			w.Data = b
+		}
+	case "TLSA":
+		if r.TLSA != nil {
+			b, err := json.Marshal(r.TLSA)
 			if err != nil {
 				return nil, err
 			}
@@ -101,6 +119,13 @@ func (r *Record) UnmarshalJSON(b []byte) error {
 			return err
 		}
 		r.Data = &d
+	}
+	if w.Type == "TLSA" && len(w.Data) > 0 && string(w.Data) != "null" {
+		var d TLSAData
+		if err := json.Unmarshal(w.Data, &d); err != nil {
+			return err
+		}
+		r.TLSA = &d
 	}
 	return nil
 }

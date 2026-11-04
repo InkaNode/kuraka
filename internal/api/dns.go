@@ -74,6 +74,9 @@ func loadDNS(ctx context.Context, client DNSAPI, names []string) (dnsSnapshot, e
 				priority = record.Data.Priority
 				content = fmt.Sprintf("%d %d %s", record.Data.Weight, record.Data.Port, record.Data.Target)
 			}
+			if record.Type == "TLSA" && record.TLSA != nil {
+				content = fmt.Sprintf("%d %d %d %s", record.TLSA.Usage, record.TLSA.Selector, record.TLSA.MatchingType, record.TLSA.Certificate)
+			}
 			snap.actual = append(snap.actual, dnsplan.Existing{ID: record.ID, Type: record.Type, Name: record.Name, Content: content, Priority: priority, Managed: record.Comment == managedComment})
 		}
 	}
@@ -143,6 +146,20 @@ func cloudflareRecord(r stalwart.Record) (cloudflare.Record, error) {
 		}
 		out.Content = ""
 		out.Data = &cloudflare.SRVData{Priority: r.Priority, Weight: weight, Port: port, Target: fields[2]}
+	}
+	if r.Type == "TLSA" {
+		fields := strings.Fields(r.Value)
+		if len(fields) != 4 {
+			return out, fmt.Errorf("invalid TLSA record")
+		}
+		usage, e1 := strconv.Atoi(fields[0])
+		selector, e2 := strconv.Atoi(fields[1])
+		matching, e3 := strconv.Atoi(fields[2])
+		if e1 != nil || e2 != nil || e3 != nil || usage < 0 || usage > 255 || selector < 0 || selector > 255 || matching < 0 || matching > 255 {
+			return out, fmt.Errorf("invalid TLSA record")
+		}
+		out.Content = ""
+		out.TLSA = &cloudflare.TLSAData{Usage: usage, Selector: selector, MatchingType: matching, Certificate: fields[3]}
 	}
 	return out, nil
 }
