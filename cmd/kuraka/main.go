@@ -30,6 +30,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		return healthcheck(os.Getenv(config.EnvListen))
+	}
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
