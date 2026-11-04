@@ -38,6 +38,7 @@ registerMessages({
     'integrations.dns.error': 'No se pudo crear el DNS; créelo a mano',
     'integrations.bundleFilename': 'libredesk-{tenant}.zip',
     'integrations.bundleError': 'No se pudo generar el despliegue. Inténtalo de nuevo.',
+    'integrations.provisionConflict': 'Este tenant ya tiene un helpdesk. Use su zip original, o bórrelo aquí y en el servidor (docker compose down -v, borra sus datos).',
   },
   en: {
     'nav.integrations': 'Integrations',
@@ -76,5 +77,6 @@ registerMessages({
     'integrations.dns.error': 'Could not create DNS; create it manually',
     'integrations.bundleFilename': 'libredesk-{tenant}.zip',
     'integrations.bundleError': 'Could not generate the deployment. Try again.',
+    'integrations.provisionConflict': 'This tenant already has a helpdesk. Use its original zip, or delete it here and on the server (docker compose down -v, deletes its data).',
   },
 });

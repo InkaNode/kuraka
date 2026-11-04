@@ -321,9 +321,21 @@ func (s *Server) provisionHelpdesk(w http.ResponseWriter, r *http.Request) (any,
 		return nil, err
 	}
 	state(r).tenant = &tenant.ID
+	s.helpdeskMu.Lock()
+	defer s.helpdeskMu.Unlock()
 	bundle, err := provision.Bundle(tenant.Name, host, provision.Options{})
 	if err != nil {
 		return nil, err
+	}
+	existing, err := s.st.ListHelpdesks(r.Context(), &tenant.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range existing {
+		// A new bundle has new secrets that the installed database would reject.
+		if e.URL == bundle.InternalURL {
+			return nil, conflict("Helpdesk already provisioned for this tenant")
+		}
 	}
 	enc, err := s.box.Seal([]byte(bundle.SystemPassword))
 	if err != nil {

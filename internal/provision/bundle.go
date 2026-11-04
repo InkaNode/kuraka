@@ -61,6 +61,12 @@ func Bundle(tenantName, host string, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	systemPass = "Aa9!" + systemPass
+	// Labels the database volume: Postgres keeps the password of the first
+	// install, so install.sh refuses to run another bundle over it.
+	bundleID, err := randomHex(8)
+	if err != nil {
+		return Result{}, err
+	}
 	compose := fmt.Sprintf(`name: kuraka-%s
 services:
   app:
@@ -106,8 +112,10 @@ networks:
 volumes:
   uploads:
   postgres-data:
+    labels:
+      kuraka.bundle: %s
   redis-data:
-`, name, name, opts.MailNetwork)
+`, name, name, opts.MailNetwork, bundleID)
 	config := fmt.Sprintf(`[app]
 env = "prod"
 log_level = "info"
@@ -147,11 +155,18 @@ expiry = "1h"
 set -eu
 cd "$(dirname "$0")"
 KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}
+VOLUME=kuraka-%[1]s_postgres-data
+if docker volume inspect "$VOLUME" >/dev/null 2>&1 &&
+	[ "$(docker volume inspect -f '{{index .Labels "kuraka.bundle"}}' "$VOLUME")" != %[2]s ]; then
+	echo 'Ya hay un Libredesk de otro zip. Use ese zip, o borre la instalación con docker compose down -v (borra sus datos).' >&2
+	echo 'A Libredesk from another zip exists. Use that zip, or remove it with docker compose down -v (deletes its data).' >&2
+	exit 1
+fi
 docker compose up -d
-cp desk.caddy "$KURAKA_DEPLOY/sites/%s-desk.caddy"
+cp desk.caddy "$KURAKA_DEPLOY/sites/%[1]s-desk.caddy"
 (cd "$KURAKA_DEPLOY" && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile)
 printf '%%s\n' 'Listo. En Kuraka > Integraciones pulse Activar.' 'Done. In Kuraka > Integrations press Activate.'
-`, name)
+`, name, bundleID)
 	readme := fmt.Sprintf(`Libredesk / Kuraka: %s
 
 ESPAÑOL

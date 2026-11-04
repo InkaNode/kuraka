@@ -598,6 +598,7 @@ func TestProvisionHelpdeskValidationAndPendingDelete(t *testing.T) {
 	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": 999, "host": "desk.test"}, 404)
 	h.admin(tenant, "tenant@admin.test").do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 403)
 	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 200)
+	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk2.test"}, 409)
 	rows, err := h.st.ListHelpdesks(context.Background(), &tenant)
 	if err != nil || len(rows) != 1 {
 		t.Fatal("pending row missing")

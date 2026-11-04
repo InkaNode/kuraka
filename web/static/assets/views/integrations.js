@@ -181,7 +181,7 @@ export async function integrationsView(ctx) {
         if (['created', 'exists', 'manual', 'error'].includes(dns)) toast(t(`integrations.dns.${dns}`, { host: host.value.trim().toLowerCase() }), ['manual', 'error'].includes(dns) ? 'warn' : 'ok');
         rows.helpdesks = await api('GET', '/helpdesks'); render();
       } catch (err) {
-        if (form.isConnected) formError(form, err instanceof ApiError ? err : new Error(t('integrations.bundleError')));
+        if (form.isConnected) formError(form, err.code === 'conflict' ? new Error(t('integrations.provisionConflict')) : err instanceof ApiError ? err : new Error(t('integrations.bundleError')));
       } finally { busy = false; submit.disabled = !tenants.length; tenant.disabled = false; host.disabled = false; form.removeAttribute('aria-busy'); }
     } }, h('h3', {}, t('integrations.bundle')), h('p', { class: 'muted' }, t('integrations.bundleHelp')),
     !tenants.length ? h('p', { class: 'help' }, t('integrations.noTenants')) : null,
