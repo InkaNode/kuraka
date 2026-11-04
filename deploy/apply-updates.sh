@@ -19,6 +19,7 @@ COMPOSE=(docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose
 # The STALWART_VERSION default in docker-compose.yml.
 STALWART_DEFAULT=v1.0.2
 CURL_IMAGE=curlimages/curl:latest
+BACKUPS=$DEPLOY/backups
 
 log() { printf '%s\n' "$*" >&2; }
 
@@ -145,7 +146,16 @@ stalwart_ready() {
   [[ $code == 200 || $code == 401 ]]
 }
 
-# update_stalwart TAG sets STALWART_VERSION in .env, starts the new image once
+# stalwart_volumes CMD... runs CMD as root in a throwaway container with
+# Stalwart's volumes and $BACKUPS at /backup.
+stalwart_volumes() {
+  local cid
+  cid=$("${COMPOSE[@]}" ps -aq stalwart 2>/dev/null) && [[ -n $cid ]] || return 1
+  docker run --rm --user 0 --network none --volumes-from "$cid" -v "$BACKUPS:/backup"     --entrypoint "$1" "$CURL_IMAGE" "${@:2}" >&2
+}
+
+# update_stalwart TAG stops Stalwart and copies its data to $BACKUPS, sets
+# STALWART_VERSION in .env, starts the new image once
 # with STALWART_UPDATE_ROLE_PERMISSIONS=true (adds new permissions to the
 # default roles) and waits for it, then recreates Stalwart without the
 # variable and Kuraka so KURAKA_STALWART_VERSION follows. On failure it sets
@@ -154,9 +164,23 @@ update_stalwart() {
   local tag=$1 deadline
   [[ -f $ENV_FILE && ! -L $ENV_FILE ]] || { ERROR="deploy/.env not found"; return 1; }
   old=$(stalwart_version)
+  install -d -m 0700 "$BACKUPS"
+  backup=stalwart-$(date -u +%Y%m%dT%H%M%SZ).tar
+  # Stopped, so the copy is consistent.
+  stopped=1
+  "${COMPOSE[@]}" stop stalwart >&2 || { ERROR="could not stop stalwart"; return 1; }
+  if ! stalwart_volumes tar -cf "/backup/$backup" /etc/stalwart /var/lib/stalwart; then
+    rm -f "$BACKUPS/$backup"
+    ERROR="data backup failed"
+    return 1
+  fi
+  chmod 600 "$BACKUPS/$backup"
+  log "stalwart: data saved to $BACKUPS/$backup"
   changed=1
   set_stalwart_version "$tag" || { ERROR="could not edit deploy/.env"; return 1; }
   "${COMPOSE[@]}" pull stalwart >&2 || { ERROR="could not pull stalwart:$tag"; return 1; }
+  # From here the new version may have changed the data.
+  started=1
   STALWART_UPDATE_ROLE_PERMISSIONS=true "${COMPOSE[@]}" up -d stalwart >&2 ||
     { ERROR="could not start stalwart:$tag"; return 1; }
   deadline=$((SECONDS + 180))
@@ -167,10 +191,23 @@ update_stalwart() {
   "${COMPOSE[@]}" up -d stalwart kuraka >&2 || { ERROR="could not restart stalwart and kuraka"; return 1; }
 }
 
-# rollback_stalwart puts the previous tag back and restarts Stalwart.
+# rollback_stalwart puts the previous tag back and restarts Stalwart. If the
+# new version started, its data is replaced by the backup first; the old
+# version may not read data the new one changed.
 rollback_stalwart() {
-  (( changed )) || return 0
-  set_stalwart_version "$old" || { log "could not restore $old in $ENV_FILE"; return 0; }
+  (( stopped )) || return 0
+  if (( changed )); then
+    set_stalwart_version "$old" || { log "could not restore $old in $ENV_FILE"; return 0; }
+  fi
+  if (( started )); then
+    if "${COMPOSE[@]}" stop stalwart >&2 &&
+      stalwart_volumes sh -c 'find /etc/stalwart /var/lib/stalwart -mindepth 1 -delete && tar -xf "/backup/$1" -C /'         sh "$backup"; then
+      log "stalwart: data restored from $BACKUPS/$backup"
+    else
+      ERROR="$ERROR; data restore failed, restore $BACKUPS/$backup by hand"
+      log "stalwart: data restore failed, restore $BACKUPS/$backup by hand"
+    fi
+  fi
   "${COMPOSE[@]}" up -d stalwart >&2 || log "could not restart stalwart:$old"
 }
 
@@ -206,7 +243,7 @@ done
 # deploys reset docker-compose.yml to origin/main.
 request=$DIR/stalwart.json
 if [[ -e $request || -L $request ]]; then
-  tag= old= changed=0 ERROR=
+  tag= old= backup= stopped=0 changed=0 started=0 ERROR=
   if [[ -f $request && ! -L $request ]]; then
     tag=$(jq -r '.tag // empty' "$request" 2>/dev/null) || tag=
   fi

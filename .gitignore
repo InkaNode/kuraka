@@ -6,3 +6,4 @@ deploy/sites/*
 !deploy/sites/.gitkeep
 deploy/updates/
 deploy/.updates-tmp/
+deploy/backups/
