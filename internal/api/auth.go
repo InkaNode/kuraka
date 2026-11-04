@@ -107,7 +107,7 @@ func (s *Server) setup(_ http.ResponseWriter, r *http.Request) (any, error) {
 	}
 	// Compare fixed-size digests to avoid leaking the token's length or prefix.
 	if subtle.ConstantTimeCompare([]byte(auth.HashToken(in.Token)), []byte(auth.HashToken(s.setupToken))) != 1 {
-		return nil, &apiError{403, "forbidden", "Invalid setup token"}
+		return nil, &apiError{status: 403, code: "forbidden", message: "Invalid setup token"}
 	}
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.Name = strings.TrimSpace(in.Name)

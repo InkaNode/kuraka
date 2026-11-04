@@ -27,7 +27,7 @@ func hostname(raw, field string) (string, error) {
 	return name, nil
 }
 func domainJSON(d store.Domain) map[string]any {
-	return map[string]any{"id": d.ID, "name": d.Name, "tenant_id": d.TenantID, "created_at": d.CreatedAt}
+	return map[string]any{"id": d.ID, "name": d.Name, "tenant_id": d.TenantID, "dns_provider_id": d.DNSProviderID, "created_at": d.CreatedAt}
 }
 func (s *Server) domains(_ http.ResponseWriter, r *http.Request) (any, error) {
 	rows, err := s.st.ListDomains(r.Context(), authz.TenantScope(state(r).principal))

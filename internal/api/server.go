@@ -19,7 +19,10 @@ import (
 
 	"github.com/InkaNode/kuraka/internal/auth"
 	"github.com/InkaNode/kuraka/internal/authz"
+	"github.com/InkaNode/kuraka/internal/cloudflare"
 	"github.com/InkaNode/kuraka/internal/config"
+	"github.com/InkaNode/kuraka/internal/dnsplan"
+	"github.com/InkaNode/kuraka/internal/libredesk"
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
@@ -38,23 +41,28 @@ type Stalwart interface {
 	UpdateAccount(context.Context, string, stalwart.AccountPatch) error
 	DeleteAccount(context.Context, string) error
 	ListDkim(context.Context, string) ([]stalwart.DkimKey, error)
+	CreateAppPassword(context.Context, string, string) (string, string, error)
+	DeleteAppPassword(context.Context, string, string) error
 }
 
 var _ Stalwart = (*stalwart.Client)(nil)
 
 type Server struct {
-	cfg        config.Config
-	st         *store.Store
-	sw         Stalwart
-	log        *slog.Logger
-	box        *auth.Box
-	az         *authz.Authz
-	now        func() time.Time
-	adminMu    sync.Mutex // serializes setup and last-enabled-superadmin checks
-	domainMu   sync.Mutex // serializes domain and alias name reservations
-	setupToken string
-	limiter    failureLimiter
-	ui         fs.FS
+	cfg         config.Config
+	st          *store.Store
+	sw          Stalwart
+	log         *slog.Logger
+	box         *auth.Box
+	az          *authz.Authz
+	now         func() time.Time
+	adminMu     sync.Mutex // serializes setup and last-enabled-superadmin checks
+	domainMu    sync.Mutex // serializes domain and alias name reservations
+	setupToken  string
+	limiter     failureLimiter
+	ui          fs.FS
+	newDNS      func(string) DNSAPI
+	newHelpdesk func(string, string, string) HelpdeskAPI
+	resolver    dnsplan.Resolver
 }
 
 func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Server, error) {
@@ -70,6 +78,9 @@ func New(cfg config.Config, st *store.Store, sw Stalwart, log *slog.Logger) (*Se
 		log = slog.Default()
 	}
 	s := &Server{cfg: cfg, st: st, sw: sw, log: log, box: box, az: authz.New(st, sw), now: time.Now}
+	s.newDNS = func(token string) DNSAPI { return cloudflare.New(token) }
+	s.newHelpdesk = func(url, key, secret string) HelpdeskAPI { return libredesk.New(url, key, secret) }
+	s.resolver = dnsplan.NewResolver(cfg.DNSResolver)
 	if n == 0 {
 		s.setupToken, err = auth.NewToken()
 	}
@@ -141,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 	route("PATCH /api/v1/domains/{id}/mailboxes/{mid}", "mailbox.update", false, false, s.updateMailbox)
 	route("DELETE /api/v1/domains/{id}/mailboxes/{mid}", "mailbox.delete", false, false, s.deleteMailbox)
 	route("GET /api/v1/audit", "audit.list", false, false, s.audit)
+	s.integrationRoutes(route)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 			writeError(w, 404, "not_found", "Resource not found")
@@ -221,7 +233,12 @@ func (s *Server) endpoint(action string, public, admin bool, h endpoint) http.Ha
 			s.fail(w, err)
 			return
 		}
-		if v, ok := body.(reply); ok {
+		if v, ok := body.(download); ok {
+			w.Header().Set("Content-Type", v.contentType)
+			w.Header().Set("Content-Disposition", "attachment; filename=\"libredesk-bundle.zip\"")
+			w.WriteHeader(200)
+			_, _ = w.Write(v.data)
+		} else if v, ok := body.(reply); ok {
 			writeJSON(w, v.status, v.body)
 		} else {
 			writeJSON(w, 200, body)
@@ -262,19 +279,26 @@ func clientIP(r *http.Request) string {
 type apiError struct {
 	status        int
 	code, message string
+	cause         error // logged, never sent to the client
 }
 
-func (e *apiError) Error() string { return e.message }
+func (e *apiError) Error() string {
+	if e.cause != nil {
+		return e.message + ": " + e.cause.Error()
+	}
+	return e.message
+}
+func (e *apiError) Unwrap() error { return e.cause }
 func invalid(field string) error {
-	return &apiError{422, "invalid_input", "Invalid " + field}
+	return &apiError{status: 422, code: "invalid_input", message: "Invalid " + field}
 }
 func conflict(message string) error {
-	return &apiError{409, "conflict", message}
+	return &apiError{status: 409, code: "conflict", message: message}
 }
 
-var unauthorized = &apiError{401, "unauthorized", "Authentication required"}
-var invalidCredentials = &apiError{401, "invalid_credentials", "Invalid credentials"}
-var rateLimited = &apiError{429, "rate_limited", "Too many attempts; try again later"}
+var unauthorized = &apiError{status: 401, code: "unauthorized", message: "Authentication required"}
+var invalidCredentials = &apiError{status: 401, code: "invalid_credentials", message: "Invalid credentials"}
+var rateLimited = &apiError{status: 429, code: "rate_limited", message: "Too many attempts; try again later"}
 
 type upstreamError struct{ error }
 
@@ -332,7 +356,7 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return &apiError{422, "invalid_input", fmt.Sprintf("Invalid JSON body: %v", err)}
+		return &apiError{status: 422, code: "invalid_input", message: fmt.Sprintf("Invalid JSON body: %v", err)}
 	}
 	if err := dec.Decode(new(any)); err != io.EOF {
 		return invalid("JSON body: expected one object")

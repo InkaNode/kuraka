@@ -26,9 +26,39 @@ type fakeStalwart struct {
 	mutations         int
 	fail              error
 	afterDomainCreate func(string, string) error
+	appPasswords      map[string]string
+	appDescriptions   []string
+	appCreated        int
+	appDeleted        int
 }
 
 var _ Stalwart = (*fakeStalwart)(nil)
+
+func (f *fakeStalwart) CreateAppPassword(_ context.Context, accountID, desc string) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return "", "", f.fail
+	}
+	if f.appPasswords == nil {
+		f.appPasswords = map[string]string{}
+	}
+	f.appCreated++
+	id := fmt.Sprintf("app%d", f.appCreated)
+	f.appPasswords[accountID+"/"+id] = "app-secret-" + id
+	f.appDescriptions = append(f.appDescriptions, desc)
+	return id, "app-secret-" + id, nil
+}
+func (f *fakeStalwart) DeleteAppPassword(_ context.Context, accountID, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	delete(f.appPasswords, accountID+"/"+id)
+	f.appDeleted++
+	return nil
+}
 
 func (f *fakeStalwart) Ping(context.Context) error {
 	f.mu.Lock()
