@@ -208,6 +208,18 @@ if docker volume inspect "$VOLUME" >/dev/null 2>&1 &&
 	exit 1
 fi
 docker compose up -d
+attempt=0
+until docker compose logs app | grep -q 'server starting'; do
+	if [ "$attempt" -ge 60 ]; then
+		echo 'Libredesk no inició en 180 segundos.' >&2
+		echo 'Libredesk did not start within 180 seconds.' >&2
+		exit 1
+	fi
+	attempt=$((attempt + 1))
+	sleep 3
+done
+# Only the first --install needs this password; later installs are idempotent.
+sed -i '/^LIBREDESK_SYSTEM_USER_PASSWORD=/d' .env
 cp desk.caddy "$KURAKA_DEPLOY/sites/%[1]s-desk.caddy"
 (cd "$KURAKA_DEPLOY" && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile)
 printf '%%s\n' 'Listo. En Kuraka > Integraciones pulse Activar.' 'Done. In Kuraka > Integrations press Activate.'
@@ -217,6 +229,8 @@ printf '%%s\n' 'Listo. En Kuraka > Integraciones pulse Activar.' 'Done. In Kurak
 ESPAÑOL
 Descomprima el ZIP en el servidor y ejecute: sh install.sh
 Luego, en Kuraka > Integraciones pulse Activar.
+Kuraka solo usa la contraseña de System una vez al activar.
+Después de Activar, borre el zip descargado.
 El host %s debe apuntar al servidor. Kuraka crea el CNAME DNS cuando
 el dominio tiene Cloudflare; en otro caso, créelo manualmente.
 La red Docker externa %s debe existir y permitir acceso a Stalwart.
@@ -225,6 +239,8 @@ Los archivos .env y config.toml contienen secretos: guárdelos de forma privada.
 ENGLISH
 Unzip on the server and run: sh install.sh
 Then, in Kuraka > Integrations press Activate.
+Kuraka only uses the System password once at activation.
+After Activate, delete the downloaded zip.
 Host %s must point to the server. Kuraka creates the DNS CNAME when
 the domain has Cloudflare; otherwise create it manually.
 The external Docker network %s must exist and provide access to Stalwart.

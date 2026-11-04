@@ -85,7 +85,7 @@ func TestBundle(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"sh install.sh", "Activar", "Activate", "CNAME", "desk.example.com", "Kuraka > Integraciones", "ENGLISH", "ESPAÑOL"} {
+	for _, want := range []string{"sh install.sh", "Activar", "Activate", "CNAME", "desk.example.com", "Kuraka > Integraciones", "ENGLISH", "ESPAÑOL", "solo usa la contraseña de System una vez", "only uses the System password once", "borre el zip descargado", "delete the downloaded zip"} {
 		if !strings.Contains(files["README.txt"], want) {
 			t.Errorf("README missing %s", want)
 		}
@@ -99,10 +99,18 @@ func TestBundle(t *testing.T) {
 	if files["desk.caddy"] != "desk.example.com {\n\timport security_headers\n\treverse_proxy kuraka-team-one-desk:9000\n}\n" {
 		t.Fatal("Caddy site mismatch")
 	}
-	for _, want := range []string{"set -eu", `cd "$(dirname "$0")"`, "KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}", "docker compose up -d", `cp desk.caddy "$KURAKA_DEPLOY/sites/team-one-desk.caddy"`, `docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile`, "Listo.", "Done."} {
+	for _, want := range []string{"set -eu", `cd "$(dirname "$0")"`, "KURAKA_DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}", "docker compose up -d", "docker compose logs app | grep -q 'server starting'", `"$attempt" -ge 60`, "sleep 3", "exit 1", "sed -i '/^LIBREDESK_SYSTEM_USER_PASSWORD=/d' .env", `cp desk.caddy "$KURAKA_DEPLOY/sites/team-one-desk.caddy"`, `docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile`, "Listo.", "Done."} {
 		if !strings.Contains(files["install.sh"], want) {
 			t.Errorf("installer missing %s", want)
 		}
+	}
+	install := files["install.sh"]
+	up := strings.Index(install, "docker compose up -d")
+	wait := strings.Index(install, "until docker compose logs app")
+	remove := strings.Index(install, "sed -i")
+	copySite := strings.Index(install, "cp desk.caddy")
+	if !(up < wait && wait < remove && remove < copySite) {
+		t.Fatal("installer must wait before removing password and publishing site")
 	}
 
 }

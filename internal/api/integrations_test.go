@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +97,26 @@ type fakeHelpdesk struct {
 	pingErr, createErr, deleteErr error
 	setupErr                      error
 	setupPasswords                []string
+	agents                        []libredesk.NewAgent
+	passwordAgents                []libredesk.NewAgent
+	agentIDs                      []int64
+	agentPasswords                []string
+	agentErr, passwordErr         error
+}
+
+func (f *fakeHelpdesk) CreateAgent(_ context.Context, a libredesk.NewAgent) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agents = append(f.agents, a)
+	return int64(len(f.agents)), f.agentErr
+}
+func (f *fakeHelpdesk) SetAgentPassword(_ context.Context, id int64, a libredesk.NewAgent, password string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passwordAgents = append(f.passwordAgents, a)
+	f.agentIDs = append(f.agentIDs, id)
+	f.agentPasswords = append(f.agentPasswords, password)
+	return f.passwordErr
 }
 
 func (f *fakeHelpdesk) SystemAPIKey(_ context.Context, password string) (string, string, error) {
@@ -319,6 +340,82 @@ func TestDNSRecordMapping(t *testing.T) {
 		if _, err := cloudflareRecord(stalwart.Record{Type: "SRV", Value: value}); err == nil {
 			t.Fatalf("accepted SRV %q", value)
 		}
+	}
+}
+
+func TestCreateHelpdeskAgent(t *testing.T) {
+	h, _, hd := integrations(t)
+	tenant := h.tenant("Agents")
+	admin := h.admin(tenant, "agent@example.test")
+	id := helpdesk(t, h.root, tenant)
+	path := fmt.Sprintf("/helpdesks/%d/agents", id)
+	other := map[string]any{"mode": "other", "name": "Ada Lovelace Byron", "email": "ada@example.test"}
+	admin.do("POST", path, other, 403)
+	result := object(t, h.root.do("POST", path, other, 201))
+	password, _ := result["password"].(string)
+	if result["email"] != "ada@example.test" || result["url"] != "https://Support" || len(password) != 28 || !strings.HasPrefix(password, "Aa9!") {
+		t.Fatal("invalid agent credentials")
+	}
+	if _, err := hex.DecodeString(password[4:]); err != nil || hd.agentPasswords[0] != password || hd.agentIDs[0] != 1 {
+		t.Fatal("agent password not set")
+	}
+	if a := hd.agents[0]; a.FirstName != "Ada" || a.LastName != "Lovelace Byron" || a.Roles[0] != "Admin" || hd.passwordAgents[0].Email != a.Email {
+		t.Fatalf("invalid agent: %+v", a)
+	}
+	for _, body := range []map[string]any{
+		{"mode": "other", "name": "Ada", "email": "bad"}, {"mode": "other", "name": " ", "email": "a@example.test"},
+		{"mode": "other", "name": "Ada", "email": "a@example.test", "role": "admin"}, {"mode": "self"}, {"name": "Ada", "email": "a@example.test"},
+	} {
+		h.root.do("POST", path, body, 422)
+	}
+	// Wrong Kuraka password: form error, session kept.
+	h.root.do("POST", path, map[string]any{"mode": "self", "password": "wrong"}, 422)
+	h.root.do("GET", "/auth/me", nil, 200)
+	if len(hd.agents) != 1 {
+		t.Fatal("rejected request reached Libredesk")
+	}
+	// The root password is not strong enough for Libredesk: a generated one is returned.
+	result = object(t, h.root.do("POST", path, map[string]any{"mode": "self", "password": rootPassword, "role": "Agent"}, 201))
+	if result["email"] != "root@example.test" || result["password"] == nil || hd.agents[1].FirstName != "Root" || hd.agents[1].Roles[0] != "Agent" {
+		t.Fatalf("invalid self agent: %v", result)
+	}
+	const strong = "Strong Pass 123!"
+	h.root.do("POST", "/users", map[string]any{"email": "boss@example.test", "name": "Boss", "role": "superadmin", "password": strong}, 201)
+	boss := h.newClient()
+	boss.login("boss@example.test", strong, 200)
+	result = object(t, boss.do("POST", path, map[string]any{"mode": "self", "password": strong}, 201))
+	if _, ok := result["password"]; ok || hd.agentPasswords[2] != strong {
+		t.Fatal("strong Kuraka password not reused")
+	}
+	h.root.do("POST", "/helpdesks/provision", map[string]any{"tenant_id": tenant, "host": "desk.test"}, 200)
+	rows, err := h.st.ListHelpdesks(context.Background(), &tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, desk := range rows {
+		if desk.Status == "pending" {
+			assertCode(t, h.root.do("POST", fmt.Sprintf("/helpdesks/%d/agents", desk.ID), other, 409), "helpdesk_not_ready")
+		}
+	}
+	hd.agentErr = libredesk.ErrConflict
+	assertCode(t, h.root.do("POST", path, other, 409), "conflict")
+	hd.agentErr = errors.New("private-upstream-secret")
+	if b := h.root.do("POST", path, other, 502); strings.Contains(string(b), "private-") {
+		t.Fatal("upstream error leaked")
+	}
+	hd.agentErr = nil
+	hd.passwordErr = errors.New("private-upstream-password")
+	if b := h.root.do("POST", path, other, 502); strings.Contains(string(b), "private-") || strings.Contains(string(b), "Aa9!") {
+		t.Fatal("password failure leaked credentials")
+	}
+	found := false
+	for _, row := range array(t, h.root.do("GET", "/audit", nil, 200)) {
+		if row["action"] == "helpdesk.agent.create" && row["result"] == "ok" && row["target"] == "ada@example.test" && row["tenant_id"] == float64(tenant) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing agent audit")
 	}
 }
 

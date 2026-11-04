@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/InkaNode/kuraka/internal/authz"
@@ -31,6 +34,8 @@ type HelpdeskAPI interface {
 	ListInboxes(context.Context) ([]libredesk.Inbox, error)
 	CreateEmailInbox(context.Context, libredesk.NewEmailInbox) (int64, error)
 	DeleteInbox(context.Context, int64) error
+	CreateAgent(context.Context, libredesk.NewAgent) (int64, error)
+	SetAgentPassword(context.Context, int64, libredesk.NewAgent, string) error
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)
@@ -49,6 +54,7 @@ func (s *Server) integrationRoutes(route func(string, string, bool, bool, endpoi
 	route("POST /api/v1/helpdesks", "helpdesk.create", false, false, s.createHelpdesk)
 	route("DELETE /api/v1/helpdesks/{id}", "helpdesk.delete", false, false, s.deleteHelpdesk)
 	route("POST /api/v1/helpdesks/provision", "helpdesk.provision", false, true, s.provisionHelpdesk)
+	route("POST /api/v1/helpdesks/{id}/agents", "helpdesk.agent.create", false, true, s.createHelpdeskAgent)
 	route("POST /api/v1/helpdesks/{id}/activate", "helpdesk.activate", false, false, s.activateHelpdesk)
 	route("GET /api/v1/domains/{id}/mailboxes/{mid}/helpdesk", "mailbox.helpdesk.list", false, false, s.mailboxHelpdesks)
 	route("POST /api/v1/domains/{id}/mailboxes/{mid}/helpdesk", "mailbox.helpdesk.connect", false, false, s.connectHelpdesk)
@@ -393,6 +399,115 @@ func (s *Server) provisionHelpdeskDNS(ctx context.Context, tenantID int64, host 
 }
 
 var helpdeskNotReady = &apiError{status: 409, code: "helpdesk_not_ready", message: "Libredesk is not ready"}
+
+var helpdeskPasswordClasses = []*regexp.Regexp{regexp.MustCompile(`[A-Z]`), regexp.MustCompile(`[a-z]`), regexp.MustCompile(`[0-9]`), regexp.MustCompile(`[\W_]`)}
+
+// strongHelpdeskPassword mirrors Libredesk v2.9.2 user.IsStrongPassword.
+func strongHelpdeskPassword(p string) bool {
+	if len(p) < 10 || len(p) > 72 {
+		return false
+	}
+	for _, re := range helpdeskPasswordClasses {
+		if !re.MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// createHelpdeskAgent creates a Libredesk account for the signed-in user
+// ("self", reusing the Kuraka password when Libredesk accepts it) or for
+// another person by name and email. Generated passwords are returned once.
+func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (any, error) {
+	id, err := pathID(r)
+	if err != nil {
+		return nil, err
+	}
+	var in struct {
+		Mode     string `json:"mode"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+		Role     string `json:"role"`
+	}
+	if err := decode(r, &in); err != nil {
+		return nil, err
+	}
+	if in.Role == "" {
+		in.Role = "Admin"
+	}
+	if in.Role != "Admin" && in.Role != "Agent" {
+		return nil, invalid("role")
+	}
+	name, email := strings.TrimSpace(in.Name), strings.TrimSpace(in.Email)
+	switch in.Mode {
+	case "self":
+		if in.Password == "" {
+			return nil, invalid("password")
+		}
+		u := state(r).user
+		name, email = u.Name, u.Email
+	case "other":
+		if name == "" || len(name) > 200 || !validEmail(email) {
+			return nil, invalid("agent")
+		}
+	default:
+		return nil, invalid("mode")
+	}
+	h, err := s.st.GetHelpdesk(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	state(r).tenant = &h.TenantID
+	state(r).target = email
+	if h.Status != "ready" {
+		return nil, helpdeskNotReady
+	}
+	password := ""
+	if in.Mode == "self" {
+		// A wrong password is a form error here, never a lost session (401).
+		if err := s.checkPassword(r, in.Password); err == invalidCredentials {
+			return nil, invalid("password")
+		} else if err != nil {
+			return nil, err
+		}
+		if strongHelpdeskPassword(in.Password) {
+			password = in.Password
+		}
+	}
+	generated := password == ""
+	if generated {
+		var random [12]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return nil, err
+		}
+		password = "Aa9!" + hex.EncodeToString(random[:])
+	}
+	first, last, _ := strings.Cut(strings.TrimSpace(name), " ")
+	if first == "" {
+		first, _, _ = strings.Cut(email, "@")
+	}
+	a := libredesk.NewAgent{FirstName: first, LastName: strings.TrimSpace(last), Email: email, Roles: []string{in.Role}}
+	client, err := s.helpdeskClient(h)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := client.CreateAgent(r.Context(), a)
+	if errors.Is(err, libredesk.ErrConflict) {
+		return nil, conflict("Agent already exists in this helpdesk")
+	}
+	if err != nil {
+		return nil, integrationFailure("Helpdesk agent creation failed", err)
+	}
+	if err := client.SetAgentPassword(r.Context(), agentID, a, password); err != nil {
+		return nil, integrationFailure("Helpdesk agent creation failed", err)
+	}
+	out := map[string]any{"email": email, "url": "https://" + h.Name}
+	if generated {
+		out["password"] = password
+	}
+	return reply{201, out}, nil
+}
 
 func (s *Server) activateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, error) {
 	s.helpdeskMu.Lock()
