@@ -88,6 +88,18 @@ After activation, a superadmin presses **Create account** on a ready helpdesk in
 
 The manual **Connect Libredesk** form still registers existing instances as `ready`. New mailbox forms offer a checked **Connect to Libredesk** option when the domain's tenant has a ready helpdesk. Connection failures show a warning while preserving the created mailbox and its generated password.
 
+## Updates
+
+Superadmins see an **Updates** card in Integrations for the Stalwart web interface ([InkaNode/stalwart-webui](https://github.com/InkaNode/stalwart-webui)) and for every helpdesk provisioned by Kuraka (internal URL host `kuraka-<name>-desk`; helpdesks connected by URL are not listed).
+
+- **Check:** Kuraka reads `GET https://api.github.com/repos/{owner}/{repo}/releases/latest` (`tag_name`) for `abhinavxd/libredesk` and `InkaNode/stalwart-webui`, one minute after start and then every 24 hours, plus **Check now** (`POST /updates/check`, at most once per 30 seconds; otherwise the cached result is returned). Tags are kept in memory; a failed lookup keeps the previous tag and reports `error`.
+- **States:** `current` (up to date), `available` (update found), `updating`, `error` (with a message), `unknown` (no release read yet).
+- **Web interface:** Stalwart's `x:Application` `resourceUrl` always points to `.../releases/latest/download/webui.zip` (set by `deploy/setup.sh`). **Update now** runs the JMAP action `x:Action/set` `{"@type": "UpdateApps"}`, which makes Stalwart download its app bundles again, and stores the applied tag in the `settings` table (migration 0006). Until the first update the current tag is empty and shown as an available update.
+- **Libredesk:** new bundles install `provision.LibredeskVersion` (v2.9.2). **Update now** asks for confirmation, then writes `KURAKA_UPDATES_DIR/libredesk-<container>.json` = `{"container", "tag"}` atomically. Only stable tags (`vX.Y.Z`) are accepted; a request already pending returns `409`, and so does an unset `KURAKA_UPDATES_DIR` (`updates_disabled`). The page re-reads the state every 10 seconds while an update runs.
+- **Host timer:** `kuraka-updates.timer` (installed by `deploy/setup.sh`, every minute) runs `deploy/apply-updates.sh` as root under `flock /run/kuraka-updates.lock`. For each request it dumps the database to `backup-<UTC time>.sql` (mode 600) in the helpdesk's compose directory, changes the `libredesk/libredesk` image tag in its `docker-compose.yml`, runs `docker compose pull app` and `docker compose up -d app` (the app runs `--upgrade` on every start) and waits up to 180 seconds for `server starting`. On any failure it restores the previous tag and restarts the app. It then writes `libredesk-<container>.result.json` = `{"tag", "status": "ok"|"error", "message", "at", "current"}` (owned by the Kuraka uid 65532) and removes the request.
+- **Version shown:** a pending request is `updating`; otherwise `current` from the result file, else `provision.LibredeskVersion`. An `error` result for the latest tag shows its message, and **Update now** retries it.
+- **Security:** Kuraka never gets the Docker socket. It only writes a container name and a tag into a directory; the root script ignores everything else, requires `^kuraka-[a-z0-9-]+-desk$` and `^v[0-9]+\.[0-9]+\.[0-9]+$`, checks that the file name matches the container, skips symlinks, and takes the compose directory from the container's `com.docker.compose.project.working_dir` label, never from the request.
+
 ## New configuration
 
 | Variable | Default | Purpose |
@@ -96,6 +108,7 @@ The manual **Connect Libredesk** form still registers existing instances as `rea
 | `KURAKA_MAIL_TLS_SKIP_VERIFY` | `false` | lab only: self-signed certificates |
 | `KURAKA_DNS_RESOLVER` | `1.1.1.1:53` | resolver for public DNS checks |
 | `KURAKA_MIGRATION_WORKERS` | `2` | concurrent migration jobs |
+| `KURAKA_UPDATES_DIR` | empty (Libredesk updates disabled) | absolute directory shared with `deploy/apply-updates.sh`; `/updates` in `deploy/docker-compose.yml` |
 
 ## HTTP API additions (`/api/v1`)
 
@@ -110,6 +123,9 @@ The manual **Connect Libredesk** form still registers existing instances as `rea
 | `GET/POST /helpdesks`, `DELETE /helpdesks/{id}` | superadmin; tenant_admin for own tenant | credentials verified on create |
 | `POST /helpdesks/provision` | superadmin | `{tenant_id, host}`; deployment ZIP and `X-Kuraka-DNS`; stores pending helpdesk |
 | `POST /helpdesks/{id}/agents` | superadmin only | `{mode:"self", password, role, sync}` (`sync` defaults to `true`) or `{mode:"other", name, email, role}` (Admin default or Agent); returns 201 `{email, url}` plus a generated `password` once; ready helpdesk required |
+| `GET /updates`, `POST /updates/check` | superadmin only | `{checked_at, error?, updates_dir, webui: {latest, current, state}, libredesk: {latest, helpdesks: [{id, name, current, state, message?}]}}` |
+| `POST /updates/webui` | superadmin only | Stalwart `UpdateApps`, stores the applied tag; same body |
+| `POST /helpdesks/{id}/update` | superadmin only | provisioned helpdesk with an available update (or a failed one); writes the request file; same body |
 | `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |

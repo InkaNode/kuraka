@@ -10,6 +10,8 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- **Updates** in Integrations (superadmins): daily GitHub release check plus **Check now** for the Stalwart web interface and each provisioned Libredesk. The web interface updates through Stalwart's `UpdateApps` action; Libredesk updates are applied by the new root `kuraka-updates.timer` (`deploy/apply-updates.sh`, database backup first, rollback on failure), so Kuraka never needs the Docker socket. New `KURAKA_UPDATES_DIR`; re-run `deploy/setup.sh` to install the timer.
+
 - **Create account** on ready helpdesks in Integrations: Libredesk Admin or Agent for the current Kuraka user (reusing the Kuraka password when Libredesk accepts it, and by default changing it in Libredesk whenever the Kuraka password changes) or for another person, with generated passwords shown once. The installer waits for Libredesk startup and removes the System password from `.env`; delete the downloaded ZIP after activation.
 
 - Plug-and-play Libredesk v2.9.2 setup: tenant/host form, VPS installer with Caddy HTTPS, Cloudflare CNAME provisioning, automatic API-key activation and optional connection when creating mailboxes.
