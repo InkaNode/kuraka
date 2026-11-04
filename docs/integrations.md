@@ -12,12 +12,13 @@ Builds on [architecture.md](architecture.md). Same rules: tenancy is decided in 
 
 A helpdesk is never global: one Libredesk shared by two tenants would let their agents read each other's tickets.
 
-## Data model (migration 0002)
+## Data model (migrations 0002 and 0004)
 
 ```
 dns_providers   (id, tenant_id NULL→tenants, kind CHECK kind='cloudflare', name, token_enc, created_at)
 domains         + dns_provider_id NULL→dns_providers ON DELETE SET NULL
-helpdesks       (id, tenant_id NOT NULL→tenants, kind CHECK kind='libredesk', name, url, api_key, api_secret_enc, created_at)
+helpdesks       (id, tenant_id NOT NULL→tenants, kind CHECK kind='libredesk', name, url, api_key, api_secret_enc,
+                 status CHECK IN (pending,ready) DEFAULT ready, setup_secret_enc DEFAULT '', created_at)
 helpdesk_links  (id, domain_id→domains ON DELETE CASCADE, account_id, helpdesk_id→helpdesks ON DELETE CASCADE,
                  inbox_id INTEGER, app_password_id TEXT, created_at, UNIQUE(account_id, helpdesk_id))
 migrations      (id, domain_id→domains ON DELETE CASCADE, account_id, source_host, source_port, source_tls,
@@ -43,7 +44,7 @@ Package `internal/dnsplan`:
 
 ## Libredesk (Phase 2.5)
 
-Package `internal/libredesk`: `Ping`, `ListInboxes`, `CreateEmailInbox`, `DeleteInbox`. Auth is `Authorization: token key:secret`.
+Package `internal/libredesk`: `Ping`, `SystemAPIKey`, `ListInboxes`, `CreateEmailInbox`, `DeleteInbox`. Auth is `Authorization: token key:secret`.
 
 **Connect a mailbox:**
 1. Stalwart `x:AppPassword/set` with `accountId` = the mailbox creates a revocable password (verified live: IMAP login works with it).
@@ -71,7 +72,15 @@ Package `internal/migrate` copies one mailbox from any IMAP server into a Stalwa
 
 ## Libredesk provisioning (Phase 5)
 
-Kuraka does not get the Docker socket, which is equivalent to root on the host. Instead, a superadmin generates a **deployment bundle** per tenant: a zip with `docker-compose.yml` (Libredesk, Postgres, Redis, joined to the mail network), `config.toml` and `.env` with random secrets. The operator runs `docker compose up -d`, then registers the instance in Kuraka with the API key it creates, which takes one form.
+A superadmin fills **Create helpdesk** with the tenant and public hostname. `POST /api/v1/helpdesks/provision` returns a ZIP containing `docker-compose.yml`, `config.toml`, `.env`, `desk.caddy`, `install.sh` and bilingual `README.txt`, and stores a `pending` helpdesk with its System password encrypted. Keep the ZIP and extracted secrets private.
+
+Unzip on the VPS and run `sh install.sh`. The installer starts Libredesk **v2.9.2**, Postgres and Redis, copies the HTTPS site into `${KURAKA_DEPLOY:-/root/kuraka/deploy}/sites/` and reloads Caddy. Caddy and Kuraka reach `http://kuraka-<name>-desk:9000` over `kuraka_mail`; Libredesk has no published host port. Kuraka never gets the Docker socket.
+
+The hostname must point to the VPS. When a matching tenant domain has a Cloudflare provider, Kuraka creates an unproxied CNAME to `KURAKA_MAIL_HOST`; any existing record at that name is preserved. `X-Kuraka-DNS` reports `created`, `exists`, `manual` (no provider) or `error`. A DNS failure never discards the ZIP.
+
+Press **Activate** in Kuraka (opening Integrations also tries once for each pending row). Kuraka logs in as System, takes the returned user ID, manually carries the Secure session and CSRF cookies over internal HTTP, and creates an agent API key with `X-CSRFTOKEN`. Login itself requires no CSRF token or Origin/Referer header. Activation verifies the new key, encrypts its secret, clears the stored setup password and marks the helpdesk `ready`. Activations are serialized so concurrent calls never regenerate an already stored key. Unavailable instances return `409 helpdesk_not_ready`; pending instances cannot connect mailboxes.
+
+The manual **Connect Libredesk** form still registers existing instances as `ready`. New mailbox forms offer a checked **Connect to Libredesk** option when the domain's tenant has a ready helpdesk. Connection failures show a warning while preserving the created mailbox and its generated password.
 
 ## New configuration
 
@@ -93,7 +102,8 @@ Kuraka does not get the Docker socket, which is equivalent to root on the host. 
 | `POST /domains/{id}/dns/apply` | domain access, provider set | `{replace_conflicts}`; returns applied changes |
 | `PUT /domains/{id}/alias-redirect` | domain access, provider set | `{target}`: alias domains' web redirects to the target URL |
 | `GET/POST /helpdesks`, `DELETE /helpdesks/{id}` | superadmin; tenant_admin for own tenant | credentials verified on create |
-| `GET /helpdesks/bundle?tenant_id=` | superadmin | deployment zip |
+| `POST /helpdesks/provision` | superadmin | `{tenant_id, host}`; deployment ZIP and `X-Kuraka-DNS`; stores pending helpdesk |
+| `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
 

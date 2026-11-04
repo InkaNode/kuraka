@@ -10,6 +10,8 @@ First release, planned as 0.1.0.
 
 ### Added
 
+- Plug-and-play Libredesk v2.9.2 setup: tenant/host form, VPS installer with Caddy HTTPS, Cloudflare CNAME provisioning, automatic API-key activation and optional connection when creating mailboxes.
+
 - Mail queue with tenant-scoped visibility, immediate retries and cancellation.
 - Metrics dashboard with Prometheus sampling, seven-day retention and 24-hour sparklines.
 - Threshold alerts with firing and resolved webhooks, including Stalwart reachability, retried up to 3 times on network errors, 429 and 5xx. The payload carries `text` and `content`, so Slack and Discord webhooks work directly.
