@@ -137,6 +137,7 @@ func TestLoadFromInvalid(t *testing.T) {
 		{"alert email invalid", with(EnvMailHost, "mail.example.com", EnvAlertEmailFrom, "Alertas <alertas@example.com>"), []string{EnvAlertEmailFrom}},
 		{"alert email without mail host", with(EnvAlertEmailFrom, "alertas@example.com"), []string{EnvAlertEmailFrom, EnvMailHost}},
 		{"updates dir relative", with(EnvUpdatesDir, "updates"), []string{EnvUpdatesDir}},
+		{"maintenance dir relative", with(EnvMaintenanceDir, "maintenance"), []string{EnvMaintenanceDir}},
 		{
 			"several at once",
 			with(EnvPublicURL, "nope", EnvSecretKey, "abc", EnvInsecureCookies, "x"),
@@ -161,5 +162,17 @@ func TestLoadFromInvalid(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMaintenanceDir(t *testing.T) {
+	dir := t.TempDir()
+	c, err := LoadFrom(env(with(EnvMaintenanceDir, "  "+dir+"  ")))
+	if err != nil || c.MaintenanceDir != dir {
+		t.Fatalf("maintenance dir: %q, %v", c.MaintenanceDir, err)
+	}
+	c, err = LoadFrom(env(with(EnvMaintenanceDir, "  ")))
+	if err != nil || c.MaintenanceDir != "" {
+		t.Fatalf("disabled maintenance dir: %q, %v", c.MaintenanceDir, err)
 	}
 }

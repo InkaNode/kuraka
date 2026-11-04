@@ -32,6 +32,7 @@ const (
 	EnvDNSResolver           = "KURAKA_DNS_RESOLVER"
 	EnvMigrationWorkers      = "KURAKA_MIGRATION_WORKERS"
 	EnvUpdatesDir            = "KURAKA_UPDATES_DIR"
+	EnvMaintenanceDir        = "KURAKA_MAINTENANCE_DIR"
 	EnvStalwartVersion       = "KURAKA_STALWART_VERSION"
 )
 
@@ -61,7 +62,8 @@ type Config struct {
 	MailTLSSkipVerify     bool
 	DNSResolver           string
 	MigrationWorkers      int
-	UpdatesDir            string // absolute; empty disables Stalwart and Libredesk updates
+	UpdatesDir            string // absolute; empty disables host update requests
+	MaintenanceDir        string // absolute; empty disables maintenance page rendering
 	StalwartVersion       string // image tag the compose file runs
 }
 
@@ -161,6 +163,10 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	c.UpdatesDir = get(EnvUpdatesDir, "")
 	if c.UpdatesDir != "" && !filepath.IsAbs(c.UpdatesDir) {
 		errs = append(errs, fmt.Errorf("%s must be an absolute path", EnvUpdatesDir))
+	}
+	c.MaintenanceDir = get(EnvMaintenanceDir, "")
+	if c.MaintenanceDir != "" && !filepath.IsAbs(c.MaintenanceDir) {
+		errs = append(errs, fmt.Errorf("%s must be an absolute path", EnvMaintenanceDir))
 	}
 	c.StalwartVersion = get(EnvStalwartVersion, DefaultStalwartVersion)
 	if err := errors.Join(errs...); err != nil {
