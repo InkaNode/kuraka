@@ -150,6 +150,8 @@ export async function domainView(ctx) {
     function syncPassword() {
       const hide = shared || sharedInput.checked;
       passwordGroup.hidden = hide;
+      // Groups cannot sign in, so they cannot get the helpdesk app password.
+      if (connect) connect.hidden = hide;
       passwordField.hidden = hide || passwordMode !== 'manual';
       password.required = !passwordField.hidden;
     }
@@ -211,7 +213,7 @@ export async function domainView(ctx) {
         dialog.close();
         toast(t(editing ? 'mailbox.updated' : 'mailbox.created', { email: result.email }));
         if (result.generated_password) secretOnce({ title: t('mailbox.secret.title', { email: result.email }), label: t('mailbox.password'), secret: result.generated_password });
-        if (connect?.querySelector('input').checked) {
+        if (!isShared && connect?.querySelector('input').checked) {
           try { await api('POST', `${base}/mailboxes/${encodeURIComponent(result.id)}/helpdesk`, { helpdesk_id: helpdesk.id }); }
           catch { toast(t('mailbox.helpdeskFailed', { email: result.email }), 'warn'); }
         }
