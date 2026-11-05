@@ -36,6 +36,16 @@
       const backing = view.startsWith('Dashboard/') || view === 'CustomComponent/Dashboard' ? schema?.objects['x:Metric'] : resolved;
       return managed.has(view) || view === 'CustomComponent/LiveTracing' || !!backing?.enterprise;
     }
+    // Same shape as WebUI navTree.ts: top-level { link } / { container }, nested { type }.
+    function navNode(item) {
+      const link = item.link || (item.type === 'link' ? item : null);
+      if (link) return { view: link.viewName };
+      const box = item.container || (item.type === 'container' ? item : null);
+      return box ? { name: box.name, children: (box.items || []).map(navNode).filter(Boolean) } : null;
+    }
+    // frugal: links upstream hides for permissions count as shown, so a group mixing
+    // those with Enterprise links stays visible; the fork hid it.
+    const allHidden = nodes => nodes.every(node => node.view ? hiddenView(node.view) : allHidden(node.children));
     function loadSchema() {
       if (!admin() || schemaRequested || failed.has('view-schema')) return;
       // Same endpoint and persisted bearer token as services/jmap/client.ts and authStore.ts.
@@ -104,6 +114,32 @@
         document.querySelectorAll('#app-sidebar nav button[aria-describedby]').forEach(node => setHidden(node, !!node.querySelector('svg.lucide-lock')));
         if (!failed.has('search-items')) document.querySelectorAll(probes['search-items']).forEach(node => {
           setHidden(node, hiddenView(node.getAttribute('data-value').split('|')[2]));
+        });
+        // The fork hid groups and sections left without links, and the Try Enterprise menu item.
+        const layouts = schema.layouts.map(layout => ({ name: layout.name, children: (layout.items || []).map(navNode).filter(Boolean) }));
+        const nav = document.querySelector('#app-sidebar nav[aria-label]');
+        const section = layouts.find(layout => layout.name === nav?.getAttribute('aria-label'));
+        if (section) {
+          const shown = new Set(), gone = new Set();
+          const walk = nodes => nodes.forEach(node => {
+            if (node.view) return;
+            (allHidden(node.children) ? gone : shown).add(node.name);
+            walk(node.children);
+          });
+          walk(section.children);
+          // Radix CollapsibleTrigger sets aria-controls; its parent is the Collapsible root.
+          nav.querySelectorAll('button[aria-controls]').forEach(button => {
+            const name = button.querySelector('span.truncate')?.textContent;
+            if (gone.has(name) && !shown.has(name)) setHidden(button.parentElement, true);
+          });
+        }
+        document.querySelectorAll('#app-sidebar [role="group"] button[aria-label]:not([aria-pressed="true"])').forEach(button => {
+          const layout = layouts.find(item => item.name === button.getAttribute('aria-label'));
+          if (layout && allHidden(layout.children)) setHidden(button, true);
+        });
+        if (!failed.has('user-menu')) document.querySelectorAll('[data-slot="dropdown-menu-content"] [data-slot="dropdown-menu-item"]:has(svg.lucide-sparkles)').forEach(item => {
+          setHidden(item, true);
+          if (item.nextElementSibling?.matches('[data-slot="dropdown-menu-separator"]')) setHidden(item.nextElementSibling, true);
         });
       }
       const trigger = document.querySelector(probes['user-menu']);
