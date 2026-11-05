@@ -1,6 +1,8 @@
-/* Libredesk's source/color encoding is unavailable. Override only standard
-   Tailwind primary utilities; JS enables this scope only with a configured color.
-   Do not assign --primary: shadcn versions may expect HSL channels or a color. */
-.kuraka-desk #app .bg-primary { background-color: var(--kuraka-color); }
-.kuraka-desk #app .text-primary { color: var(--kuraka-color); }
-.kuraka-desk #app .border-primary { border-color: var(--kuraka-color); }
+/* Libredesk 2.9 keeps shadcn colors as bare HSL channels ("152 58% 54%").
+   JS enables this scope only with a configured color. */
+:root.kuraka-desk {
+  --primary: var(--kuraka-color-hsl);
+  --primary-foreground: var(--kuraka-color-foreground-hsl);
+  --ring: var(--kuraka-color-hsl);
+}
+[data-kuraka-logo] { display: block; height: 3rem; width: auto; max-width: 220px; margin: 0 auto 0.5rem; object-fit: contain; }

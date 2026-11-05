@@ -8,6 +8,18 @@
   }).then(config => {
     if (config.disabled) return;
     if (config.color) document.documentElement.classList.add('kuraka-desk');
+    if (config.logo) {
+      // Login card heading; Libredesk only shows the name there.
+      const addLogo = () => {
+        const heading = document.querySelector('#app .space-y-1.text-center > h3.ui-display-heading');
+        if (!heading || heading.parentElement.querySelector('[data-kuraka-logo]')) return;
+        const image = document.createElement('img');
+        image.src = config.logo; image.alt = ''; image.setAttribute('data-kuraka-logo', '');
+        heading.before(image);
+      };
+      new MutationObserver(addLogo).observe(document.documentElement, { subtree: true, childList: true });
+      addLogo();
+    }
     if (config.icon) {
       const icons = document.querySelectorAll('link[rel~="icon"]');
       const targets = icons.length ? icons : [document.head.appendChild(document.createElement('link'))];

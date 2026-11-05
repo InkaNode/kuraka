@@ -5,6 +5,7 @@
   --primary-foreground: var(--kuraka-color-foreground, #ffffff);
   --brand-text: var(--kuraka-color, #bf1f45);
   --ring: var(--kuraka-color, #bf1f45);
+  --highlight: var(--kuraka-highlight, #fbe7ea);
 }
 .dark.kuraka-stalwart {
   --primary: var(--kuraka-color, #db2d54);
@@ -12,5 +13,6 @@
   --primary-foreground: var(--kuraka-color-foreground, #ffffff);
   --brand-text: var(--kuraka-color, #ff8199);
   --ring: var(--kuraka-color, #ff8199);
+  --highlight: var(--kuraka-highlight-dark, #2f1a21);
 }
 [data-kuraka-hidden], [data-kuraka-logo-original] { display: none !important; }

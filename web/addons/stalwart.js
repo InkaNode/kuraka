@@ -5,7 +5,7 @@
     'sidebar-toggle': 'header [aria-controls="app-sidebar"][aria-expanded]',
     'nav-links': '#app-sidebar nav a[href], #app-sidebar nav button[aria-describedby]',
     'user-menu': 'header [data-slot="dropdown-menu-trigger"]',
-    'brand-logo': 'header a:is([href="/"], [href="/admin"], [href="/admin/"], [href="/account"], [href="/account/"]) > :is(img, svg)',
+    'brand-logo': 'header a:is([href="/"], [href="/admin"], [href="/admin/"], [href="/account"], [href="/account/"]) > :is(img, svg), .tile svg[aria-label="Stalwart Logo"]',
     'search-items': '[data-slot="command-item"][data-value]',
   };
   const managed = new Set(['x:Account/User', 'x:Tenant', 'x:Domain', 'x:DkimSignature']);

@@ -34,7 +34,7 @@ func (s *Server) brandingRoutes(route func(string, string, bool, bool, endpoint)
 // resolveBranding takes each field from the first non-empty of tenant[app],
 // tenant["default"], global[app] and global["default"]. Stalwart is shared
 // by all tenants, so tenant rows never apply to it; Libredesk only takes the
-// name, logo and icon.
+// name, logo, icon and color.
 func resolveBranding(app string, tenant, global map[string]store.Branding) store.Branding {
 	layers := []store.Branding{tenant[app], tenant["default"], global[app], global["default"]}
 	if app == "stalwart" {
@@ -51,7 +51,7 @@ func resolveBranding(app string, tenant, global map[string]store.Branding) store
 		}
 	}
 	if app == "desk" {
-		out = store.Branding{Name: out.Name, Logo: out.Logo, Icon: out.Icon}
+		out = store.Branding{Name: out.Name, Logo: out.Logo, Icon: out.Icon, Color: out.Color}
 	}
 	return out
 }
@@ -260,7 +260,7 @@ func (s *Server) pushDeskBranding(ctx context.Context, tenant *int64) []deskBran
 // Nothing is sent when all three are empty, so Libredesk keeps its own.
 func (s *Server) applyDeskBranding(ctx context.Context, h store.Helpdesk) (bool, error) {
 	b, err := s.resolvedBranding(ctx, "desk", &h.TenantID)
-	if err != nil || b == (store.Branding{}) {
+	if err != nil || b.Name == "" && b.Logo == "" && b.Icon == "" {
 		return false, err
 	}
 	client, err := s.helpdeskClient(h)

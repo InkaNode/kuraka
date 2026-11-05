@@ -56,7 +56,7 @@ func TestResolveBranding(t *testing.T) {
 	}{
 		{"kuraka", store.Branding{Name: "Acme", Logo: "glogo", Icon: "ticon", Color: "#222222", GradientFrom: "#333333", Banner: "gbanner"}},
 		{"stalwart", store.Branding{Name: "Inka Mail", Logo: "glogo", Color: "#111111", Banner: "gbanner"}},
-		{"desk", store.Branding{Name: "Acme", Logo: "glogo", Icon: "ticon"}},
+		{"desk", store.Branding{Name: "Acme", Logo: "glogo", Icon: "ticon", Color: "#111111"}},
 	} {
 		if got := resolveBranding(c.app, tenant, global); got != c.want {
 			t.Errorf("%s: got %+v, want %+v", c.app, got, c.want)

@@ -111,8 +111,15 @@ func addonCSS(b store.Branding) string {
 	var css strings.Builder
 	css.WriteString(":root{")
 	if brandingColor.MatchString(b.Color) {
-		hover, foreground := addonColor(b.Color)
+		channels, hover, foreground := addonColor(b.Color)
+		foregroundChannels := "0 0% 100%"
+		if foreground != "#ffffff" {
+			foregroundChannels = "24 9.8% 10%"
+		}
 		fmt.Fprintf(&css, "--kuraka-color:%s;--kuraka-color-hover:%s;--kuraka-color-foreground:%s;", b.Color, hover, foreground)
+		// Libredesk (shadcn) takes bare HSL channels; the highlights match Stalwart's light and dark backgrounds.
+		fmt.Fprintf(&css, "--kuraka-color-hsl:%s;--kuraka-color-foreground-hsl:%s;", channels, foregroundChannels)
+		fmt.Fprintf(&css, "--kuraka-highlight:color-mix(in srgb,%[1]s 16%%,#ffffff);--kuraka-highlight-dark:color-mix(in srgb,%[1]s 18%%,#121213);", b.Color)
 	}
 	for _, c := range []struct{ name, value string }{
 		{"gradient-from", b.GradientFrom}, {"gradient-to", b.GradientTo},
@@ -130,7 +137,7 @@ func addonCSS(b store.Branding) string {
 
 // addonColor uses HSL lightness for hover and WCAG relative luminance for text,
 // matching the panel's onColor threshold.
-func addonColor(color string) (hover, foreground string) {
+func addonColor(color string) (channels, hover, foreground string) {
 	var rgb [3]float64
 	luminance := 0.0
 	for i, weight := range []float64{0.2126, 0.7152, 0.0722} {
@@ -166,7 +173,8 @@ func addonColor(color string) (hover, foreground string) {
 			h += 360
 		}
 	}
-	return fmt.Sprintf("hsl(%.2f %.2f%% %.2f%%)", h, saturation*100, math.Max(0, l-0.08)*100), foreground
+	channels = fmt.Sprintf("%.2f %.2f%% %.2f%%", h, saturation*100, l*100)
+	return channels, fmt.Sprintf("hsl(%.2f %.2f%% %.2f%%)", h, saturation*100, math.Max(0, l-0.08)*100), foreground
 }
 
 type addonReport struct {

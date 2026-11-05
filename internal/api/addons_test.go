@@ -78,12 +78,12 @@ func TestAddonBranding(t *testing.T) {
 	for _, app := range []string{"stalwart", "desk"} {
 		w := addonRequest(t, h, "GET", "/_kuraka/addon/"+app+".json?tenant=1", "", 200)
 		got := object(t, w.Body.Bytes())
-		wantName, wantColor := "Mail", "#123456"
+		wantName := "Mail"
 		if app == "desk" {
-			wantName, wantColor = "Desk", ""
+			wantName = "Desk"
 		}
 		if len(got) != 7 || got["name"] != wantName || got["logo"] != logo || got["icon"] != logo ||
-			got["color"] != wantColor || got["disabled"] != false ||
+			got["color"] != "#123456" || got["disabled"] != false ||
 			w.Header().Get("Cache-Control") != "public, max-age=300" || w.Header().Get("Content-Type") != "application/json" {
 			t.Fatalf("%s branding: %v %v", app, got, w.Header())
 		}
@@ -93,7 +93,7 @@ func TestAddonBranding(t *testing.T) {
 	}
 	w := addonRequest(t, h, "GET", "/_kuraka/addon/stalwart.css", "", 200)
 	for _, want := range []string{":root{", "--kuraka-color:#123456;", "--kuraka-color-hover:hsl(",
-		"--kuraka-color-foreground:#ffffff;", "--kuraka-gradient-from:#abcdef;", "--kuraka-gradient-to:#ffffff;",
+		"--kuraka-color-foreground:#ffffff;", "--kuraka-color-hsl:210.00 65.38% 20.39%;", "--kuraka-color-foreground-hsl:0 0% 100%;", "--kuraka-gradient-from:#abcdef;", "--kuraka-gradient-to:#ffffff;",
 		`--kuraka-logo:url("` + logo + `");`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("CSS missing %q", want)
@@ -126,7 +126,7 @@ func TestAddonCSSValidation(t *testing.T) {
 		{"#757575", "hsl(0.00 0.00% 37.88%)", "#ffffff"},
 		{"#767676", "hsl(0.00 0.00% 38.27%)", "#1c1917"},
 	} {
-		if hover, foreground := addonColor(tc.color); hover != tc.hover || foreground != tc.foreground {
+		if _, hover, foreground := addonColor(tc.color); hover != tc.hover || foreground != tc.foreground {
 			t.Errorf("%s: %s %s", tc.color, hover, foreground)
 		}
 	}
