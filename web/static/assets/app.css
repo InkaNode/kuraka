@@ -1,8 +1,12 @@
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: brand (Kuraka) · redesign: restyle
- * paper: oklch(99% 0.002 70) / oklch(17% 0.006 60) · accent: oklch(50% 0.14 40), the favicon terracotta · display: system-ui · body: system-ui
+ * paper: oklch(99% 0.002 70) / oklch(17% 0.006 60) · accent: oklch(50% 0.14 40), the favicon terracotta · display: Plus Jakarta Sans · body: Inter · mono: JetBrains Mono (Stalwart WebUI faces)
  * nav: kept (sidebar, menu under 768px) · signature: kept (domain table) · states: loading, empty, error, full
  * axes: light/grotesk-sans/warm · posture: Libredesk/Stalwart admin, warm stone panels, one terracotta signal · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V4 · weakest: H, system face kept: the panel ships no font files under its CSP */
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V4 */
+/* Latin subsets of the Fontsource variable fonts, OFL 1.1: see fonts/LICENSE-*.txt. Other scripts fall back to system faces. */
+@font-face { font-family: "Inter Variable"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(fonts/inter.woff2) format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans Variable"; font-style: normal; font-display: swap; font-weight: 200 800; src: url(fonts/plus-jakarta-sans.woff2) format("woff2"); }
+@font-face { font-family: "JetBrains Mono Variable"; font-style: normal; font-display: swap; font-weight: 100 800; src: url(fonts/jetbrains-mono.woff2) format("woff2"); }
 /* Hallmark · tokens inline under the project's own names; base.css not imported, its page heads and block svg fight the app shell */
 /* Hallmark · answered F24 · the modal keeps its hairline: the dark theme drops shadows, the edge carries it there */
 :root {
@@ -32,8 +36,9 @@
   --transition: 120ms;
   --sidebar-width: 248px;
   --space: 8px;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Plus Jakarta Sans Variable", var(--font);
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -59,6 +64,7 @@ a { color: var(--accent-text); text-underline-offset: 3px; }
 svg, img { flex-shrink: 0; vertical-align: middle; }
 img { max-width: 100%; }
 h1, h2, h3, p { margin: 0; }
+h1, h2, h3, .brand { font-family: var(--font-display); }
 h1, h2, h3 { font-weight: 600; letter-spacing: -.015em; min-width: 0; overflow-wrap: break-word; text-wrap: balance; }
 h1 { font-size: 1.5rem; line-height: 1.25; }
 h2 { font-size: 1.125rem; line-height: 1.4; }
