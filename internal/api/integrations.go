@@ -26,7 +26,7 @@ type DNSAPI interface {
 	CreateRecord(context.Context, string, cloudflare.Record) (cloudflare.Record, error)
 	UpdateRecord(context.Context, string, string, cloudflare.Record) (cloudflare.Record, error)
 	DeleteRecord(context.Context, string, string) error
-	SetRedirect(context.Context, string, string) error
+	SetRedirect(context.Context, string, string, string) error
 }
 
 type HelpdeskAPI interface {

@@ -27,23 +27,42 @@ type redirectRule struct {
 }
 
 // SetRedirect replaces the zone's Single Redirect rules with one rule that
-// sends every request to targetURL with a 301, keeping path and query.
-func (c *Client) SetRedirect(ctx context.Context, zoneID, targetURL string) error {
+// sends every request for alias, or any of its subdomains, to the same
+// subdomain of targetURL's host, keeping the path and query string.
+func (c *Client) SetRedirect(ctx context.Context, zoneID, alias, targetURL string) error {
 	target, err := redirectTarget(targetURL)
 	if err != nil {
 		return err
 	}
+	if !validAlias(alias) {
+		return ErrInvalidTarget
+	}
+	u, _ := url.Parse(target)
 	var rule redirectRule
 	rule.Description = "kuraka alias redirect"
 	rule.Expression = "true"
 	rule.Action = "redirect"
 	rule.ActionParameters.FromValue.StatusCode = 301
-	rule.ActionParameters.FromValue.TargetURL.Expression = `concat("` + target + `", http.request.uri.path)`
+	rule.ActionParameters.FromValue.TargetURL.Expression = `concat("https://", wildcard_replace(http.host, "*` + alias + `", "${1}` + u.Host + `"), "` + u.Path + `", http.request.uri.path)`
 	rule.ActionParameters.FromValue.PreserveQueryString = true
 	body := map[string]any{"rules": []redirectRule{rule}}
 	path := "/zones/" + url.PathEscape(zoneID) + "/rulesets/phases/http_request_dynamic_redirect/entrypoint"
 	_, err = c.do(ctx, http.MethodPut, path, body, nil)
 	return err
+}
+
+// validAlias reports whether alias is a plain DNS name safe to embed in a
+// rule expression.
+func validAlias(alias string) bool {
+	if alias == "" || strings.HasPrefix(alias, ".") || strings.HasSuffix(alias, ".") {
+		return false
+	}
+	for _, r := range alias {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // redirectTarget validates targetURL and returns it without a trailing slash.

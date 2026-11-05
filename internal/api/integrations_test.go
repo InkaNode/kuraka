@@ -95,7 +95,7 @@ func (f *fakeDNS) DeleteRecord(_ context.Context, zone, id string) error {
 	f.records[zone] = out
 	return nil
 }
-func (f *fakeDNS) SetRedirect(_ context.Context, zone, target string) error {
+func (f *fakeDNS) SetRedirect(_ context.Context, zone, _, target string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.redirects == nil {
@@ -380,11 +380,16 @@ func TestPublicDNSAndRedirect(t *testing.T) {
 	p := provider(t, h.root, tenant)
 	h.root.do("PUT", base+"/dns-provider", map[string]any{"provider_id": p}, 200)
 	h.root.do("PUT", base+"/alias-redirect", map[string]any{"target": "https://a.test"}, 200)
-	if dns.redirects["alias.test"] != "https://a.test" || len(dns.created) != 1 || !dns.created[0].Proxied || dns.created[0].Content != "192.0.2.1" {
+	if dns.redirects["alias.test"] != "https://a.test" || len(dns.created) != 2 || dns.created[0].Name != "alias.test" || dns.created[1].Name != "*.alias.test" {
 		t.Fatal("redirect not configured")
 	}
+	for _, r := range dns.created {
+		if r.Type != "A" || !r.Proxied || r.Content != "192.0.2.1" {
+			t.Fatalf("alias address = %+v", r)
+		}
+	}
 	h.root.do("PUT", base+"/alias-redirect", map[string]any{"target": "https://a.test"}, 200)
-	if len(dns.created) != 1 {
+	if len(dns.created) != 2 {
 		t.Fatal("duplicate alias address")
 	}
 	dns.records["alias.test"] = append(dns.records["alias.test"], cloudflare.Record{ID: "conflict", Name: "alias.test", Type: "AAAA", Content: "::1"})

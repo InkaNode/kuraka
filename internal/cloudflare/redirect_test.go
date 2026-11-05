@@ -12,7 +12,7 @@ func TestSetRedirect(t *testing.T) {
 	c, calls := newTestClient(t, func(r *http.Request) (int, string) {
 		return 200, ok(`{"id":"rs1","phase":"http_request_dynamic_redirect","rules":[]}`)
 	})
-	if err := c.SetRedirect(context.Background(), "z1", "https://primary.example/"); err != nil {
+	if err := c.SetRedirect(context.Background(), "z1", "alias.example", "https://primary.example/"); err != nil {
 		t.Fatal(err)
 	}
 	cl := (*calls)[0]
@@ -25,7 +25,7 @@ func TestSetRedirect(t *testing.T) {
 		"action":      "redirect",
 		"action_parameters": map[string]any{"from_value": map[string]any{
 			"status_code":           301.0,
-			"target_url":            map[string]any{"expression": `concat("https://primary.example", http.request.uri.path)`},
+			"target_url":            map[string]any{"expression": `concat("https://", wildcard_replace(http.host, "*alias.example", "${1}primary.example"), "", http.request.uri.path)`},
 			"preserve_query_string": true,
 		}},
 	}}}
@@ -53,8 +53,13 @@ func TestSetRedirectInvalidTargets(t *testing.T) {
 		"https://primary.example/?q=1",
 		"https://primary.example/#frag",
 	} {
-		if err := c.SetRedirect(context.Background(), "z1", target); !errors.Is(err, ErrInvalidTarget) {
+		if err := c.SetRedirect(context.Background(), "z1", "alias.example", target); !errors.Is(err, ErrInvalidTarget) {
 			t.Errorf("target %q: err = %v", target, err)
+		}
+	}
+	for _, alias := range []string{"", ".alias.example", "alias.example.", `alias"),true`, "Alias.example", "*.alias.example"} {
+		if err := c.SetRedirect(context.Background(), "z1", alias, "https://primary.example"); !errors.Is(err, ErrInvalidTarget) {
+			t.Errorf("alias %q: err = %v", alias, err)
 		}
 	}
 	if len(*calls) != 0 {

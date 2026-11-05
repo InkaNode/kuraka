@@ -359,8 +359,8 @@ func (s *Server) aliasRedirect(_ http.ResponseWriter, r *http.Request) (any, err
 		return nil, upstream(err)
 	}
 	type redirect struct {
-		zone   cloudflare.Zone
-		create bool
+		zone    cloudflare.Zone
+		missing []string // proxied placeholder addresses still to create
 	}
 	var plans []redirect
 	for _, alias := range remote.Aliases {
@@ -377,25 +377,33 @@ func (s *Server) aliasRedirect(_ http.ResponseWriter, r *http.Request) (any, err
 		if err != nil {
 			return nil, integrationFailure("Alias DNS lookup failed", err)
 		}
-		create := true
-		for _, record := range records {
-			if dnsName(record.Name) != dnsName(alias) || (record.Type != "A" && record.Type != "AAAA" && record.Type != "CNAME") {
-				continue
+		// The apex and the wildcard need proxied addresses so Cloudflare
+		// answers every host of the alias and the redirect rule can run.
+		plan := redirect{zone: zone}
+		for _, name := range []string{dnsName(zone.Name), "*." + dnsName(zone.Name)} {
+			found := false
+			for _, record := range records {
+				if dnsName(record.Name) != name || (record.Type != "A" && record.Type != "AAAA" && record.Type != "CNAME") {
+					continue
+				}
+				if record.Type != "A" || record.Content != "192.0.2.1" || !record.Proxied {
+					return nil, conflict("Alias already has an address record for " + name)
+				}
+				found = true
 			}
-			if record.Type != "A" || record.Content != "192.0.2.1" || !record.Proxied {
-				return nil, conflict("Alias apex already has an address record")
+			if !found {
+				plan.missing = append(plan.missing, name)
 			}
-			create = false
 		}
-		plans = append(plans, redirect{zone, create})
+		plans = append(plans, plan)
 	}
 	for _, plan := range plans {
-		if plan.create {
-			if _, err := client.CreateRecord(r.Context(), plan.zone.ID, cloudflare.Record{Type: "A", Name: plan.zone.Name, Content: "192.0.2.1", TTL: 1, Proxied: true, Comment: managedComment}); err != nil {
+		for _, name := range plan.missing {
+			if _, err := client.CreateRecord(r.Context(), plan.zone.ID, cloudflare.Record{Type: "A", Name: name, Content: "192.0.2.1", TTL: 1, Proxied: true, Comment: managedComment}); err != nil {
 				return nil, integrationFailure("Alias address creation failed", err)
 			}
 		}
-		if err := client.SetRedirect(r.Context(), plan.zone.ID, in.Target); err != nil {
+		if err := client.SetRedirect(r.Context(), plan.zone.ID, dnsName(plan.zone.Name), in.Target); err != nil {
 			return nil, integrationFailure("Alias redirect failed", err)
 		}
 	}
