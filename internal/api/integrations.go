@@ -409,6 +409,8 @@ func (s *Server) provisionHelpdeskDNS(ctx context.Context, tenantID int64, host 
 
 var helpdeskNotReady = &apiError{status: 409, code: "helpdesk_not_ready", message: "Libredesk is not ready"}
 
+var sharedMailbox = &apiError{status: 409, code: "shared_mailbox", message: "Shared mailboxes cannot connect to a helpdesk"}
+
 var helpdeskPasswordClasses = []*regexp.Regexp{regexp.MustCompile(`[A-Z]`), regexp.MustCompile(`[a-z]`), regexp.MustCompile(`[0-9]`), regexp.MustCompile(`[\W_]`)}
 
 // strongHelpdeskPassword mirrors Libredesk v2.9.2 user.IsStrongPassword.

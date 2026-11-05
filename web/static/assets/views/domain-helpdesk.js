@@ -10,6 +10,7 @@ function helpdeskError(err) {
   if (err?.code === 'helpdesk_not_ready') return { message: t('helpdesk.error.notReady') };
   if (err?.code === 'upstream_error') return { message: t('helpdesk.error.upstream') };
   if (err?.code === 'conflict') return { message: t('helpdesk.error.conflict') };
+  if (err?.code === 'shared_mailbox') return { message: t('helpdesk.shared') };
   return err;
 }
 
@@ -82,7 +83,8 @@ export function helpdeskDialog(view, m, onChange) {
     const linked = new Set(links.map(link => link.helpdesk_id));
     const available = helpdesks.filter(x => x.status === 'ready' && !linked.has(x.id));
     let connect;
-    if (!helpdesks.length) connect = h('p', { class: 'muted' }, t('helpdesk.none'));
+    if (m.kind === 'shared') connect = h('p', { class: 'muted' }, t('helpdesk.shared'));
+    else if (!helpdesks.length) connect = h('p', { class: 'muted' }, t('helpdesk.none'));
     else if (!available.length) connect = h('p', { class: 'muted' }, t(helpdesks.some(x => x.status === 'pending' && !linked.has(x.id)) ? 'helpdesk.error.notReady' : 'helpdesk.all'));
     else connect = connectForm(available);
     mount(body,

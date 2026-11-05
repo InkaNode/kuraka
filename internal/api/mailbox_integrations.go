@@ -47,6 +47,10 @@ func (s *Server) connectHelpdesk(_ http.ResponseWriter, r *http.Request) (any, e
 	if err != nil {
 		return nil, err
 	}
+	// Groups have no credentials in Stalwart, so they cannot get an app password.
+	if a.Kind == stalwart.KindGroup {
+		return nil, sharedMailbox
+	}
 	if err := s.requireMailHost(); err != nil {
 		return nil, err
 	}
