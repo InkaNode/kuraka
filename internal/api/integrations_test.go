@@ -29,6 +29,8 @@ type fakeDNS struct {
 	verifyErr                 error
 	listErr                   error
 	next                      int
+	missing                   map[string]bool
+	createZoneErr             error
 }
 
 func (f *fakeDNS) VerifyToken(context.Context) error { return f.verifyErr }
@@ -36,7 +38,19 @@ func (f *fakeDNS) FindZone(_ context.Context, name string) (cloudflare.Zone, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.found = append(f.found, name)
+	if f.missing[name] {
+		return cloudflare.Zone{}, cloudflare.ErrZoneNotFound
+	}
 	return cloudflare.Zone{ID: name, Name: name}, nil
+}
+func (f *fakeDNS) CreateZone(_ context.Context, name string) (cloudflare.Zone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createZoneErr != nil {
+		return cloudflare.Zone{}, f.createZoneErr
+	}
+	delete(f.missing, name)
+	return cloudflare.Zone{ID: name, Name: name, Status: "pending", NameServers: []string{"a.ns.test", "b.ns.test"}}, nil
 }
 func (f *fakeDNS) ListRecords(_ context.Context, zone string) ([]cloudflare.Record, error) {
 	f.mu.Lock()
@@ -259,6 +273,48 @@ func TestProviderOwnershipAndSecrets(t *testing.T) {
 	h.root.do("POST", "/dns-providers", map[string]any{"tenant_id": a, "name": "bad", "token": "private-token"}, 422)
 	if rows, err := h.st.ListDNSProviders(context.Background(), &a, false); err != nil || len(rows) != 0 {
 		t.Fatal("invalid token persisted")
+	}
+}
+
+func TestDetectDNSProvider(t *testing.T) {
+	h, dns, _ := integrations(t)
+	tenant := h.tenant("A")
+	provider(t, h.root, nil)
+	p := provider(t, h.root, tenant)
+	dns.missing = map[string]bool{"new.test": true}
+	known := object(t, h.root.do("POST", fmt.Sprintf("/tenants/%d/domains", tenant), map[string]any{"name": "known.test"}, 201))
+	if known["dns_provider_id"] != float64(p) {
+		t.Fatalf("tenant provider not detected: %v", known)
+	}
+	if d, err := h.st.GetDomain(context.Background(), int64(known["id"].(float64))); err != nil || d.DNSProviderID == nil || *d.DNSProviderID != p {
+		t.Fatalf("provider not stored: %+v %v", d, err)
+	}
+	if unknown := object(t, h.root.do("POST", fmt.Sprintf("/tenants/%d/domains", tenant), map[string]any{"name": "new.test"}, 201)); unknown["dns_provider_id"] != nil {
+		t.Fatalf("provider assigned without zone: %v", unknown)
+	}
+}
+
+func TestCreateZone(t *testing.T) {
+	h, dns, _ := integrations(t)
+	a, b := h.tenant("A"), h.tenant("B")
+	pb := provider(t, h.root, b)
+	domain := h.domain(a, "a.test")
+	ca := h.admin(a, "a@admin.test")
+	path := fmt.Sprintf("/domains/%d/dns/zone", domain)
+	ca.do("POST", path, map[string]any{"provider_id": pb}, 404)
+	ca.do("POST", path, map[string]any{}, 422)
+	pa := provider(t, ca, a)
+	ca.do("POST", path, map[string]any{"provider_id": pa}, 409)
+	dns.missing = map[string]bool{"a.test": true}
+	dns.createZoneErr = &cloudflare.APIError{Status: 403, Messages: []string{"denied"}}
+	assertCode(t, ca.do("POST", path, map[string]any{"provider_id": pa}, 422), "zone_permission")
+	dns.createZoneErr = nil
+	out := object(t, ca.do("POST", path, map[string]any{"provider_id": pa}, 201))
+	if out["domain"].(map[string]any)["dns_provider_id"] != float64(pa) || len(out["zone"].(map[string]any)["name_servers"].([]any)) != 2 {
+		t.Fatalf("zone: %v", out)
+	}
+	if d, err := h.st.GetDomain(context.Background(), domain); err != nil || d.DNSProviderID == nil || *d.DNSProviderID != pa {
+		t.Fatalf("provider not stored: %+v %v", d, err)
 	}
 }
 

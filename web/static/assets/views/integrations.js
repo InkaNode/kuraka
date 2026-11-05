@@ -141,6 +141,8 @@ export async function integrationsView(ctx) {
     tenant ? field({ label: t(isDNS ? 'integrations.scope' : 'integrations.tenant'), input: tenant }) : null,
     url ? field({ label: t('integrations.url'), input: url, help: t('integrations.urlHelp') }) : null,
     key ? field({ label: t('integrations.apiKey'), input: key }) : null,
+    isDNS ? h('div', { class: 'stack gap-1' }, h('p', { class: 'muted' }, t('integrations.tokenGuide')),
+      h('ul', { class: 'stack gap-1 muted' }, ['existing', 'new', 'redirect'].map(k => h('li', {}, t(`integrations.tokenGuide.${k}`))))) : null,
     field({ label: t(isDNS ? 'integrations.token' : 'integrations.apiSecret'), input: secret }),
     admin && !isDNS && !tenants.length ? h('p', { class: 'help' }, t('integrations.noTenants')) : null, submit);
     const dialog = modal({ title, body: form, onClose: () => { closed = true; secret.value = ''; if (key) key.value = ''; },

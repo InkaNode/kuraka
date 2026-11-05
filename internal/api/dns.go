@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -44,6 +46,92 @@ func (s *Server) dnsClient(ctx context.Context, d store.Domain) (DNSAPI, error) 
 		return nil, err
 	}
 	return s.newDNS(string(token)), nil
+}
+
+// usableProvider returns provider id when the caller may assign it to d:
+// global providers need a superadmin, tenant ones must belong to d's tenant.
+func (s *Server) usableProvider(r *http.Request, d store.Domain, id int64) (store.DNSProvider, error) {
+	p, err := s.st.GetDNSProvider(r.Context(), id)
+	if err != nil {
+		return p, err
+	}
+	if p.TenantID == nil {
+		return p, authz.RequireSuperadmin(state(r).principal)
+	}
+	if *p.TenantID != d.TenantID {
+		return p, authz.ErrNotFound
+	}
+	return p, nil
+}
+
+// detectDNSProvider assigns the first usable provider that already hosts the
+// domain's zone. It never fails the request: errors are logged and skipped.
+func (s *Server) detectDNSProvider(r *http.Request, d *store.Domain) {
+	ctx := r.Context()
+	providers, err := s.st.ListDNSProviders(ctx, &d.TenantID, state(r).principal.IsSuperadmin())
+	if err != nil {
+		s.log.Warn("DNS provider detection failed", "domain_id", d.ID, "error", err)
+		return
+	}
+	sort.SliceStable(providers, func(i, j int) bool { return providers[i].TenantID != nil && providers[j].TenantID == nil })
+	for _, p := range providers {
+		token, err := s.box.Open(p.TokenEnc)
+		if err == nil {
+			_, err = s.newDNS(string(token)).FindZone(ctx, d.Name)
+		}
+		if err == nil {
+			err = s.st.SetDomainDNSProvider(ctx, d.ID, &p.ID)
+		}
+		if err != nil {
+			s.log.Warn("DNS provider detection skipped provider", "domain_id", d.ID, "provider_id", p.ID, "error", err)
+			continue
+		}
+		d.DNSProviderID = &p.ID
+		return
+	}
+}
+
+func (s *Server) createZone(_ http.ResponseWriter, r *http.Request) (any, error) {
+	d, err := s.authorizedDomain(r)
+	if err != nil {
+		return nil, err
+	}
+	var in struct {
+		ProviderID int64 `json:"provider_id"`
+	}
+	if err := decode(r, &in); err != nil {
+		return nil, err
+	}
+	if in.ProviderID <= 0 {
+		return nil, invalid("provider")
+	}
+	p, err := s.usableProvider(r, d, in.ProviderID)
+	if err != nil {
+		return nil, err
+	}
+	token, err := s.box.Open(p.TokenEnc)
+	if err != nil {
+		return nil, err
+	}
+	client := s.newDNS(string(token))
+	if _, err := client.FindZone(r.Context(), d.Name); err == nil {
+		return nil, conflict("Zone already exists in Cloudflare")
+	} else if !errors.Is(err, cloudflare.ErrZoneNotFound) {
+		return nil, integrationFailure("DNS zone lookup failed", err)
+	}
+	zone, err := client.CreateZone(r.Context(), d.Name)
+	var ce *cloudflare.APIError
+	if errors.As(err, &ce) && ce.Status >= 400 && ce.Status < 500 {
+		return nil, &apiError{status: 422, code: "zone_permission", message: "Cloudflare refused to create the zone; the token needs Zone:Edit on the account", cause: err}
+	}
+	if err != nil {
+		return nil, integrationFailure("DNS zone creation failed", err)
+	}
+	if err := s.st.SetDomainDNSProvider(r.Context(), d.ID, &p.ID); err != nil {
+		return nil, err
+	}
+	d.DNSProviderID = &p.ID
+	return reply{201, map[string]any{"domain": domainJSON(d), "zone": map[string]any{"name": zone.Name, "status": zone.Status, "name_servers": nonNilStrings(zone.NameServers)}}}, nil
 }
 
 type dnsSnapshot struct {

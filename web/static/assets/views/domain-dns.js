@@ -77,12 +77,14 @@ export function dnsAutomation(view) {
     try {
       const all = await api('GET', '/dns-providers');
       const usable = all.filter(p => p.tenant_id == null || p.tenant_id === domain.tenant_id).sort((a, b) => a.name.localeCompare(b.name));
-      const options = [{ value: '', label: t('dns.provider.none') },
-        ...usable.map(p => ({ value: String(p.id), label: p.tenant_id == null ? t('dns.provider.global', { name: p.name }) : p.name }))];
+      const choices = usable.map(p => ({ value: String(p.id), label: p.tenant_id == null ? t('dns.provider.global', { name: p.name }) : p.name }));
+      const options = [{ value: '', label: t('dns.provider.none') }, ...choices];
       if (hasProvider && !usable.some(p => p.id === domain.dns_provider_id)) options.push({ value: saved, label: t('dns.provider.unknown', { id: saved }) });
       mount(providerSelect, options.map(option => h('option', { value: option.value }, option.label)));
       providerSelect.value = saved;
       providerSelect.disabled = false;
+      mount(zoneSelect, choices.map(option => h('option', { value: option.value }, option.label)));
+      zoneSelect.disabled = zoneButton.disabled = !choices.length;
     } catch (err) {
       mount(providerSelect, h('option', { value: saved }, t('dns.provider.unavailable')));
       mount(notice, errorBox(err));
@@ -102,6 +104,27 @@ export function dnsAutomation(view) {
       mount(notice, errorBox(err)); notice.firstChild?.focus();
     }
   });
+
+  // ---- Zone creation ----
+  const zoneSelect = select({ options: [], disabled: true });
+  const zoneButton = button({ label: t('dns.zone.create'), icon: 'globe', disabled: true, onClick: () => createZone() });
+  async function createZone() {
+    if (zoneButton.disabled || !zoneSelect.value) return;
+    zoneButton.disabled = true; mount(notice);
+    try {
+      const result = await api('POST', `${view.base}/dns/zone`, { provider_id: Number(zoneSelect.value) });
+      view.domain.dns_provider_id = result.domain?.dns_provider_id ?? null;
+      toast(t('dns.zone.created', { name: domain.name }));
+      const dialog = modal({ title: t('dns.zone.created', { name: domain.name }), body: [
+        h('p', {}, t('dns.zone.nameservers')),
+        h('ul', { class: 'stack gap-1' }, (result.zone?.name_servers || []).map(ns => h('li', { class: 'mono' }, ns))),
+      ], actions: [button({ label: t('close'), variant: 'primary', onClick: () => dialog.close() })] });
+      view.show();
+    } catch (err) {
+      zoneButton.disabled = false;
+      mount(notice, errorBox(dnsError(err))); notice.firstChild?.focus();
+    }
+  }
   loadProviders();
 
   // ---- Verification ----
@@ -207,6 +230,8 @@ export function dnsAutomation(view) {
     h('h2', {}, t('dns.automation')),
     field({ label: t('dns.provider'), input: providerSelect, help: t(hasProvider ? 'dns.provider.help.set' : 'dns.provider.help.none') }),
     h('div', { class: 'row gap-1' }, verify, hasProvider ? publish : null),
+    hasProvider ? null : field({ label: t('dns.zone'), input: zoneSelect, help: t('dns.zone.help') }),
+    hasProvider ? null : h('div', {}, zoneButton),
     notice, summary,
     hasProvider && domain.aliases?.length ? redirectForm() : null));
   return { node, slot };

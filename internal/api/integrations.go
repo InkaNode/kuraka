@@ -21,6 +21,7 @@ import (
 type DNSAPI interface {
 	VerifyToken(context.Context) error
 	FindZone(context.Context, string) (cloudflare.Zone, error)
+	CreateZone(context.Context, string) (cloudflare.Zone, error)
 	ListRecords(context.Context, string) ([]cloudflare.Record, error)
 	CreateRecord(context.Context, string, cloudflare.Record) (cloudflare.Record, error)
 	UpdateRecord(context.Context, string, string, cloudflare.Record) (cloudflare.Record, error)
@@ -48,6 +49,7 @@ func (s *Server) integrationRoutes(route func(string, string, bool, bool, endpoi
 	route("POST /api/v1/dns-providers", "dns_provider.create", false, false, s.createDNSProvider)
 	route("DELETE /api/v1/dns-providers/{id}", "dns_provider.delete", false, false, s.deleteDNSProvider)
 	route("PUT /api/v1/domains/{id}/dns-provider", "domain.dns_provider", false, false, s.assignDNSProvider)
+	route("POST /api/v1/domains/{id}/dns/zone", "dns.zone", false, false, s.createZone)
 	route("GET /api/v1/domains/{id}/dns/check", "dns.check", false, false, s.checkDNS)
 	route("POST /api/v1/domains/{id}/dns/plan", "dns.plan", false, false, s.planDNS)
 	route("POST /api/v1/domains/{id}/dns/apply", "dns.apply", false, false, s.applyDNS)
@@ -186,16 +188,8 @@ func (s *Server) assignDNSProvider(_ http.ResponseWriter, r *http.Request) (any,
 		return nil, err
 	}
 	if in.ProviderID != nil {
-		p, err := s.st.GetDNSProvider(r.Context(), *in.ProviderID)
-		if err != nil {
+		if _, err := s.usableProvider(r, d, *in.ProviderID); err != nil {
 			return nil, err
-		}
-		if p.TenantID == nil {
-			if err := authz.RequireSuperadmin(state(r).principal); err != nil {
-				return nil, err
-			}
-		} else if *p.TenantID != d.TenantID {
-			return nil, authz.ErrNotFound
 		}
 	}
 	if err := s.st.SetDomainDNSProvider(r.Context(), d.ID, in.ProviderID); err != nil {
@@ -316,9 +310,13 @@ func (s *Server) provisionHelpdesk(w http.ResponseWriter, r *http.Request) (any,
 	var in struct {
 		TenantID int64  `json:"tenant_id"`
 		Host     string `json:"host"`
+		Install  bool   `json:"install"`
 	}
 	if err := decode(r, &in); err != nil {
 		return nil, err
+	}
+	if in.Install && s.cfg.UpdatesDir == "" {
+		return nil, &apiError{status: 409, code: "updates_disabled", message: "KURAKA_UPDATES_DIR is not set"}
 	}
 	host, err := hostname(in.Host, "helpdesk")
 	if err != nil || !strings.Contains(host, ".") || in.TenantID <= 0 {
@@ -349,12 +347,21 @@ func (s *Server) provisionHelpdesk(w http.ResponseWriter, r *http.Request) (any,
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.st.CreateHelpdesk(r.Context(), store.Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: host,
+	h, err := s.st.CreateHelpdesk(r.Context(), store.Helpdesk{TenantID: tenant.ID, Kind: "libredesk", Name: host,
 		URL: bundle.InternalURL, Status: "pending", SetupSecretEnc: enc})
 	if err != nil {
 		return nil, err
 	}
-	w.Header().Set("X-Kuraka-DNS", s.provisionHelpdeskDNS(r.Context(), tenant.ID, host))
+	dns := s.provisionHelpdeskDNS(r.Context(), tenant.ID, host)
+	if in.Install {
+		if err := writeInstallRequest(s.cfg.UpdatesDir, provision.Name(tenant.Name), host, bundle.SystemPassword); err != nil {
+			return nil, errors.Join(err, s.st.DeleteHelpdesk(context.WithoutCancel(r.Context()), h.ID))
+		}
+		out := helpdeskJSON(h)
+		out["dns"] = dns
+		return reply{201, out}, nil
+	}
+	w.Header().Set("X-Kuraka-DNS", dns)
 	return download{"application/zip", bundle.Zip}, nil
 }
 
@@ -533,30 +540,38 @@ func (s *Server) activateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, 
 	if h.Status == "ready" {
 		return helpdeskJSON(h), nil
 	}
-	password, err := s.box.Open(h.SetupSecretEnc)
+	h, err = s.activate(r.Context(), h)
 	if err != nil {
 		return nil, err
 	}
-	key, secret, err := s.newHelpdesk(h.URL, "", "").SystemAPIKey(r.Context(), string(password))
+	return helpdeskJSON(h), nil
+}
+
+func (s *Server) activate(ctx context.Context, h store.Helpdesk) (store.Helpdesk, error) {
+	password, err := s.box.Open(h.SetupSecretEnc)
 	if err != nil {
-		return nil, helpdeskNotReady
+		return store.Helpdesk{}, err
 	}
-	if err := s.newHelpdesk(h.URL, key, secret).Ping(r.Context()); err != nil {
-		return nil, helpdeskNotReady
+	key, secret, err := s.newHelpdesk(h.URL, "", "").SystemAPIKey(ctx, string(password))
+	if err != nil {
+		return store.Helpdesk{}, helpdeskNotReady
+	}
+	if err := s.newHelpdesk(h.URL, key, secret).Ping(ctx); err != nil {
+		return store.Helpdesk{}, helpdeskNotReady
 	}
 	enc, err := s.box.Seal([]byte(secret))
 	if err != nil {
-		return nil, err
+		return store.Helpdesk{}, err
 	}
-	if err := s.st.ActivateHelpdesk(r.Context(), id, key, enc); err != nil {
-		return nil, err
+	if err := s.st.ActivateHelpdesk(ctx, h.ID, key, enc); err != nil {
+		return store.Helpdesk{}, err
 	}
-	h, err = s.st.GetHelpdesk(r.Context(), id)
+	h, err = s.st.GetHelpdesk(ctx, h.ID)
 	if err != nil {
-		return nil, err
+		return store.Helpdesk{}, err
 	}
-	if _, err := s.applyDeskBranding(r.Context(), h); err != nil {
+	if _, err := s.applyDeskBranding(ctx, h); err != nil {
 		s.log.Warn("helpdesk branding failed", "helpdesk_id", h.ID, "error", err)
 	}
-	return helpdeskJSON(h), nil
+	return h, nil
 }

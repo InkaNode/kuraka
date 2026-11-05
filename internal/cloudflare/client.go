@@ -144,8 +144,25 @@ func (c *Client) VerifyToken(ctx context.Context) error {
 
 // Zone is a Cloudflare zone.
 type Zone struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Status      string   `json:"status"`
+	NameServers []string `json:"name_servers"`
+}
+
+// CreateZone adds a full zone for name. The account is set only when the token
+// sees exactly one; otherwise Cloudflare picks the token's default account.
+func (c *Client) CreateZone(ctx context.Context, name string) (Zone, error) {
+	body := map[string]any{"name": name, "type": "full"}
+	var accounts []struct {
+		ID string `json:"id"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/accounts", nil, &accounts); err == nil && len(accounts) == 1 {
+		body["account"] = map[string]string{"id": accounts[0].ID}
+	}
+	var z Zone
+	_, err := c.do(ctx, http.MethodPost, "/zones", body, &z)
+	return z, err
 }
 
 // FindZone returns the zone for name, trying name itself and then each

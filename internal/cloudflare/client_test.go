@@ -123,7 +123,7 @@ func TestFindZoneExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if z != (Zone{ID: "z1", Name: "example.com"}) {
+	if z.ID != "z1" || z.Name != "example.com" {
 		t.Fatalf("zone = %+v", z)
 	}
 	if len(*calls) != 1 || (*calls)[0].Query != "name=example.com" {
@@ -152,6 +152,42 @@ func TestFindZoneParentFallback(t *testing.T) {
 	want := "name=a.b.example.com,name=b.example.com,name=example.com"
 	if strings.Join(names, ",") != want {
 		t.Fatalf("queries = %v", names)
+	}
+}
+
+func TestCreateZone(t *testing.T) {
+	for _, tc := range []struct {
+		accounts string
+		account  string
+	}{
+		{`[{"id":"acc1"}]`, "acc1"},
+		{`[{"id":"acc1"},{"id":"acc2"}]`, ""},
+		{"", ""},
+	} {
+		c, calls := newTestClient(t, func(r *http.Request) (int, string) {
+			if r.URL.Path == "/accounts" {
+				if tc.accounts == "" {
+					return 403, `{"success":false,"errors":[{"code":9109,"message":"denied"}]}`
+				}
+				return 200, ok(tc.accounts)
+			}
+			return 200, ok(`{"id":"z1","name":"example.com","status":"pending","name_servers":["a.ns.cloudflare.com","b.ns.cloudflare.com"]}`)
+		})
+		z, err := c.CreateZone(context.Background(), "example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if z.ID != "z1" || z.Status != "pending" || len(z.NameServers) != 2 {
+			t.Fatalf("zone = %+v", z)
+		}
+		post := (*calls)[1]
+		if post.Method != "POST" || post.Path != "/zones" || post.Body["name"] != "example.com" || post.Body["type"] != "full" {
+			t.Fatalf("call = %+v", post)
+		}
+		got, _ := post.Body["account"].(map[string]any)
+		if id, _ := got["id"].(string); (got != nil) != (tc.account != "") || id != tc.account {
+			t.Fatalf("account = %v", post.Body["account"])
+		}
 	}
 }
 

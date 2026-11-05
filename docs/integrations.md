@@ -31,7 +31,17 @@ migrations      (id, domain_id→domains ON DELETE CASCADE, account_id, source_h
 
 ## Cloudflare (Phase 2.5)
 
-Package `internal/cloudflare`: `VerifyToken`, `FindZone(name)` (exact name, then parent labels), paginated `ListRecords`, `CreateRecord`, `UpdateRecord` (PATCH), `DeleteRecord`, `SetRedirect(zoneID, target)` (Single Redirects ruleset, path and query preserved). Records created by Kuraka carry the comment `managed by Kuraka`.
+Package `internal/cloudflare`: `VerifyToken`, `FindZone(name)` (exact name, then parent labels), paginated `ListRecords`, `CreateRecord`, `UpdateRecord` (PATCH), `DeleteRecord`, `SetRedirect(zoneID, target)` (Single Redirects ruleset, path and query preserved). Records created by Kuraka carry the comment `managed by Kuraka`. `CreateZone(name)` adds a `full` zone; it sets the account only when `GET /accounts` returns exactly one, otherwise Cloudflare picks the token's account. The reply carries `status` and `name_servers`.
+
+When a domain is created or imported, Kuraka assigns the first usable provider whose token finds the zone: the tenant's providers first, then global ones when a superadmin made the request. A failed lookup is logged and never fails the request.
+
+`POST /domains/{id}/dns/zone` creates the zone for a domain that is not in Cloudflare yet, assigns the provider and returns the name servers to set at the registrar. It answers 409 when the zone already exists and 422 `zone_permission` when Cloudflare refuses the creation (4xx).
+
+Token profiles (Cloudflare > My Profile > API Tokens > Create Token > Custom token):
+
+- Domain already in Cloudflare: Zone > Zone > Read and Zone > DNS > Edit, scoped to the zones you manage.
+- New domain (Kuraka creates the zone): Zone > Zone > Edit and Zone > DNS > Edit, scoped to all zones of the account.
+- Alias redirects (optional): add Zone > Single Redirect > Edit.
 
 Package `internal/dnsplan`:
 
@@ -74,6 +84,12 @@ Package `internal/migrate` copies one mailbox from any IMAP server into a Stalwa
 
 A superadmin fills **Create helpdesk** with the tenant and public hostname. `POST /api/v1/helpdesks/provision` returns a ZIP containing `docker-compose.yml`, `config.toml`, `.env`, `desk.caddy`, `install.sh` and bilingual `README.txt`, and stores a `pending` helpdesk with its System password encrypted. Keep the ZIP and extracted secrets private.
 
+For installation from the panel without SSH, send `{tenant_id, host, install:true}` to the same endpoint. `KURAKA_UPDATES_DIR` must be set; otherwise it returns `409 updates_disabled` with `KURAKA_UPDATES_DIR is not set`. Kuraka creates the same pending helpdesk and DNS record, writes `install-<name>.json` atomically with mode `0600` and fields `{name, host, system_password}`, then returns `201` with the helpdesk JSON plus `dns` (`created`, `exists`, `manual` or `error`). The name is the sanitized tenant name, capped at 48 characters, with `tenant` as fallback. The System password in this request is a secret; the host removes the request after processing. If writing the request fails, Kuraka removes the new pending helpdesk so provisioning can be retried.
+
+The existing root host timer installs into `${KURAKA_DEPLOY:-/root/kuraka/deploy}/desks/<name>`. It validates all three fields and the request filename, then runs the trusted `ghcr.io/inkanode/kuraka:<KURAKA_VERSION>` image (`latest` by default) with `--network none` and `KURAKA_BUNDLE_SYSTEM_PASSWORD` to render `kuraka bundle <name> <host>` as a tar stream. Root extracts that stream and runs its `install.sh`; it never executes a compose file or script written by Kuraka. An existing `docker-compose.yml` returns `already installed`. Failed rendering removes the directory; once the installer may have started Compose, the directory is retained to protect partial installation data.
+
+Poll `GET /api/v1/helpdesks/{id}/install` as a superadmin. It returns `{status, message}`: `installing` while the request exists; otherwise `ok` or `error` from `install-<name>.result.json`, or `none` without an install request/result (also when updates are disabled or the helpdesk was connected by URL). The name comes from the stored internal container URL, so renaming the tenant does not change the status path. A pending request takes precedence over an older result. Kuraka activates the helpdesk automatically within ~20 s after the host install finishes, without the panel open. Omitting `install` or sending `false` keeps the ZIP download as a fallback.
+
 Unzip on the VPS and run `sh install.sh`. The installer starts Libredesk **v2.9.2**, Postgres and Redis, waits up to 180 seconds for the app logs to contain `server starting`, removes `LIBREDESK_SYSTEM_USER_PASSWORD` from `.env` (only the first idempotent install needs it), copies the HTTPS site into `${KURAKA_DEPLOY:-/root/kuraka/deploy}/sites/` and reloads Caddy. Caddy and Kuraka reach `http://kuraka-<name>-desk:9000` over `kuraka_mail`; Libredesk has no published host port. Kuraka never gets the Docker socket.
 
 The hostname must point to the VPS. When a matching tenant domain has a Cloudflare provider, Kuraka creates an unproxied CNAME to `KURAKA_MAIL_HOST`; any existing record at that name is preserved. `X-Kuraka-DNS` reports `created`, `exists`, `manual` (no provider) or `error`. A DNS failure never discards the ZIP.
@@ -90,6 +106,8 @@ The manual **Connect Libredesk** form still registers existing instances as `rea
 
 ## Updates
 
+Before processing Libredesk updates, the same host timer processes regular, non-symlink `install-*.json` requests, skipping `*.result.json`. Names must match `^[a-z0-9]+(-[a-z0-9]+)*$` and be at most 48 characters; hosts must match `^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`; passwords must match `^Aa9![0-9a-f]{48}$`; the filename must be exactly `install-<name>.json`. Invalid requests are logged and removed. Each valid attempt writes `install-<name>.result.json` through the existing root-only temporary directory with `status` `ok` or `error`, `message` and `at` (and empty `tag`, `current`, `commit`), then removes the request. Results contain no passwords.
+
 Superadmins see an **Updates** card on the **System** page (`#/system`) for Kuraka itself, the Stalwart mail server ([stalwartlabs/stalwart](https://github.com/stalwartlabs/stalwart)), the official Stalwart web interface ([stalwartlabs/webui](https://github.com/stalwartlabs/webui)) and every helpdesk provisioned by Kuraka (internal URL host `kuraka-<name>-desk`; helpdesks connected by URL are not listed).
 
 - **Check:** Kuraka reads `GET https://api.github.com/repos/{owner}/{repo}/releases/latest` (`tag_name`) for `stalwartlabs/stalwart`, `abhinavxd/libredesk` and `stalwartlabs/webui`, one minute after start and then every 24 hours, plus **Check now** (`POST /updates/check`, at most once per 30 seconds; otherwise the cached result is returned). Tags are kept in memory; a failed lookup keeps the previous tag and reports `error`.
@@ -102,7 +120,7 @@ Superadmins see an **Updates** card on the **System** page (`#/system`) for Kura
 - **Kuraka:** releases come from `InkaNode/kuraka`. `.github/workflows/release.yml` runs after every successful CI push to `main` and republishes the release `v<version>` (version from `internal/version/version.go`) with every commit since `chore: bump version to <version>`, targeting the pushed commit, plus the images `<version>`, `<major>.<minor>`, `latest` (stable versions only) and `sha-<commit>`. Kuraka reads the release's `target_commitish` and `html_url` and compares them with its own `version.Version` and `version.Commit` (set at build time from the `KURAKA_COMMIT` build argument). `available` has `kind` `version` (new tag) or `commits` (same tag, new commits). **Update Kuraka** asks for confirmation (the panel is down for a few minutes, mail and helpdesks keep working) and writes `kuraka.json` = `{"tag", "commit"}` (`POST /updates/kuraka`). The host timer handles it last: it requires a full commit on `origin/main`, stops Kuraka, saves its data volume to `deploy/backups/kuraka-<UTC time>.tar`, runs `git reset --hard <commit>` in the checkout, sets `KURAKA_VERSION=sha-<commit>` in `deploy/.env`, pulls that image (or builds it from the checkout when the pull fails), runs `docker compose up -d`, reloads Caddy and waits up to 180 seconds for a healthy container. On failure it restores the checkout, `KURAKA_VERSION` and the data, then restarts. The script runs from a private copy because the checkout can replace it.
 - **Maintenance page:** while Kuraka is down, Caddy answers the panel with `503` and `KURAKA_MAINTENANCE_DIR/index.html` (`deploy/maintenance/`, written by Kuraka at start and whenever the global Kuraka branding is saved: name, color, logo inlined, optional `maintenance_message`), or `deploy/maintenance.html` if Kuraka never wrote one. It reloads itself every 20 seconds.
 - **Waiting for Kuraka:** `internal/addons.Supported` holds the highest `MAJOR.MINOR` of Stalwart (`1.0`), the web interface (`2.0`) and Libredesk (`2.9`) the addons were tested with. A newer release shows `waiting` with `supported`, and its update request returns `409` until a Kuraka release raises the table.
-- **Security:** Kuraka never gets the Docker socket. It only writes a container name and a tag into a directory; the root script ignores everything else, requires `^kuraka-[a-z0-9-]+-desk$` and `^v[0-9]+\.[0-9]+\.[0-9]+$`, checks that the file name matches the container, skips symlinks, and takes the compose directory from the container's `com.docker.compose.project.working_dir` label, never from the request. For Stalwart it reads only the tag and always uses its own deploy directory (`KURAKA_DEPLOY`); for Kuraka only the tag and a 40-character commit that must be on `origin/main`.
+- **Security:** Kuraka never gets the Docker socket. For Libredesk updates it only writes a container name and a tag into a directory; the root script ignores everything else, requires `^kuraka-[a-z0-9-]+-desk$` and `^v[0-9]+\.[0-9]+\.[0-9]+$`, checks that the file name matches the container, skips symlinks, and takes the compose directory from the container's `com.docker.compose.project.working_dir` label, never from the request. For Stalwart it reads only the tag and always uses its own deploy directory (`KURAKA_DEPLOY`); for Kuraka only the tag and a 40-character commit that must be on `origin/main`.
 
 ## Branding
 
@@ -134,7 +152,7 @@ Stalwart blocks addresses that look like attacks, such as many failed logins or 
 | `KURAKA_MAIL_TLS_SKIP_VERIFY` | `false` | lab only: self-signed certificates |
 | `KURAKA_DNS_RESOLVER` | `1.1.1.1:53` | resolver for public DNS checks |
 | `KURAKA_MIGRATION_WORKERS` | `2` | concurrent migration jobs |
-| `KURAKA_UPDATES_DIR` | empty (Stalwart and Libredesk updates disabled) | absolute directory shared with `deploy/apply-updates.sh`; `/updates` in `deploy/docker-compose.yml` |
+| `KURAKA_UPDATES_DIR` | empty (host updates and Libredesk panel installation disabled) | absolute directory shared with `deploy/apply-updates.sh`; `/updates` in `deploy/docker-compose.yml` |
 | `KURAKA_MAINTENANCE_DIR` | empty (no branded maintenance page) | absolute directory where Kuraka writes `index.html` for Caddy; `/maintenance` in `deploy/docker-compose.yml` |
 | `KURAKA_STALWART_VERSION` | `v1.0.2` | Stalwart version shown before the first update; `STALWART_VERSION` from `deploy/.env` in `deploy/docker-compose.yml` |
 
@@ -144,12 +162,14 @@ Stalwart blocks addresses that look like attacks, such as many failed logins or 
 |---|---|---|
 | `GET/POST /dns-providers`, `DELETE /dns-providers/{id}` | superadmin; tenant_admin for own tenant | token verified on create, never returned |
 | `PUT /domains/{id}/dns-provider` | domain access + provider usable | `{provider_id|null}` |
+| `POST /domains/{id}/dns/zone` | domain access + provider usable | `{provider_id}`; creates the Cloudflare zone, assigns the provider, returns `{domain, zone: {name, status, name_servers}}` |
 | `GET /domains/{id}/dns/check` | domain access | per-record status and summary |
 | `POST /domains/{id}/dns/plan` | domain access, provider set | dry run: changes and conflicts |
 | `POST /domains/{id}/dns/apply` | domain access, provider set | `{replace_conflicts}`; returns applied changes |
 | `PUT /domains/{id}/alias-redirect` | domain access, provider set | `{target}`: alias domains' web redirects to the target URL |
 | `GET/POST /helpdesks`, `DELETE /helpdesks/{id}` | superadmin; tenant_admin for own tenant | credentials verified on create |
-| `POST /helpdesks/provision` | superadmin | `{tenant_id, host}`; deployment ZIP and `X-Kuraka-DNS`; stores pending helpdesk |
+| `POST /helpdesks/provision` | superadmin | `{tenant_id, host, install?}`; deployment ZIP and `X-Kuraka-DNS` by default; `install:true` queues host installation and returns `201` helpdesk JSON plus `dns`; stores pending helpdesk |
+| `GET /helpdesks/{id}/install` | superadmin only | `{status:"installing"|"ok"|"error"|"none", message}` from the install request/result |
 | `POST /helpdesks/{id}/agents` | superadmin only | `{mode:"self", password, role, sync}` (`sync` defaults to `true`) or `{mode:"other", name, email, role}` (Admin default or Agent); returns 201 `{email, url}` plus a generated `password` once; ready helpdesk required |
 | `GET /updates`, `POST /updates/check` | superadmin only | `{checked_at, error?, updates_dir, kuraka: {current, commit, latest, latest_commit, url, state, kind?, message?}, webui: {latest, current, state}, libredesk: {latest, helpdesks: [{id, name, current, state, message?}]}}` |
 | `POST /updates/kuraka` | superadmin only | Kuraka update available (or a failed one) and a release commit; writes the request file; same body |

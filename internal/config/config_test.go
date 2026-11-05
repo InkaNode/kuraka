@@ -28,6 +28,7 @@ func with(kv ...string) map[string]string {
 }
 
 func TestLoadFromValid(t *testing.T) {
+	updatesDir := t.TempDir()
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -79,12 +80,12 @@ func TestLoadFromValid(t *testing.T) {
 		},
 		{
 			name: "updates dir",
-			env:  with(EnvUpdatesDir, "/updates"),
+			env:  with(EnvUpdatesDir, updatesDir),
 			want: Config{
 				Listen: ":8080", DBPath: "kuraka.db",
 				PublicURL: "https://panel.inkanode.com", SecretKeyHex: testKey,
 				StalwartURL: "http://stalwart:8080", StalwartAPIKey: "API_supersecretvalue",
-				UpdatesDir: "/updates",
+				UpdatesDir: updatesDir,
 			},
 		},
 		{

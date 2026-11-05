@@ -1,4 +1,5 @@
 import '../i18n/domains.js';
+import '../i18n/onboard.js';
 import { h, mount } from '../core/h.js';
 import { t } from '../core/i18n.js';
 import { api, errorMessage } from '../core/api.js';
@@ -17,7 +18,8 @@ export async function domainsView() {
   const body = h('div', { class: 'stack gap-2' }, spinner());
   let tenants = [];
   const addButton = () => button({ label: t('domains.add'), icon: 'plus', variant: 'primary', onClick: () => addDomainDialog(tenants) });
-  const root = h('div', { class: 'stack gap-2' }, pageHeader(t('nav.domains'), admin ? addButton() : null), notice, body);
+  const onboardButton = admin ? button({ label: t('onboard.title'), icon: 'plus', variant: 'primary', onClick: () => navigate('/onboard') }) : null;
+  const root = h('div', { class: 'stack gap-2' }, pageHeader(t('nav.domains'), onboardButton, admin ? addButton() : null), notice, body);
 
   async function load() {
     mount(notice);
@@ -80,6 +82,24 @@ function fillAliases(domains, cells, root) {
   setTimeout(() => { for (let i = 0; i < 4; i++) worker(); }, 0);
 }
 
+// A domain that already exists in Stalwart is imported instead of created.
+export async function createOrImportDomain(tenantId, name, aliases) {
+  const path = `/tenants/${encodeURIComponent(tenantId)}/domains`;
+  try {
+    return { domain: await api('POST', path, { name, aliases }), imported: false };
+  } catch (err) {
+    if (err.code !== 'domain_in_stalwart') throw err;
+  }
+  const domain = await api('POST', `${path}/import`, { name });
+  const merged = [...new Set([...(domain.aliases || []), ...aliases])];
+  // The domain is linked by now: an alias failure is reported, not retried.
+  if (merged.length > (domain.aliases || []).length) {
+    try { await api('PUT', `/domains/${domain.id}/aliases`, { aliases: merged }); }
+    catch (aliasErr) { toast(errorMessage(aliasErr), 'danger'); }
+  }
+  return { domain, imported: true };
+}
+
 // One form for every case: a new client can be created inline, and a domain
 // that already exists in Stalwart is imported instead of created.
 function addDomainDialog(tenants) {
@@ -107,22 +127,7 @@ function addDomainDialog(tenants) {
       tenants.push(created);
       syncTenant();
     }
-    const path = `/tenants/${encodeURIComponent(tenant.value)}/domains`;
-    let domain;
-    let imported = false;
-    try {
-      domain = await api('POST', path, { name: domainName, aliases: aliasNames });
-    } catch (err) {
-      if (err.code !== 'domain_in_stalwart') throw err;
-      domain = await api('POST', `${path}/import`, { name: domainName });
-      imported = true;
-      const merged = [...new Set([...(domain.aliases || []), ...aliasNames])];
-      // The domain is linked by now: an alias failure is reported, not retried.
-      if (merged.length > (domain.aliases || []).length) {
-        try { await api('PUT', `/domains/${domain.id}/aliases`, { aliases: merged }); }
-        catch (aliasErr) { toast(errorMessage(aliasErr), 'danger'); }
-      }
-    }
+    const { domain, imported } = await createOrImportDomain(tenant.value, domainName, aliasNames);
     dialog.close();
     toast(t(imported ? 'domains.imported' : 'domains.created', { name: domainName }));
     navigate(`/domains/${domain.id}`);

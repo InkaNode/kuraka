@@ -130,3 +130,35 @@ func TestBundleOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestName(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"../Á Team: ONE\n", "team-one"}, {"", "tenant"}, {"---", "tenant"},
+		{strings.Repeat("a", 49), strings.Repeat("a", 48)},
+		{strings.Repeat("a", 47) + "-tail", strings.Repeat("a", 47)},
+	} {
+		if got := Name(tc.input); got != tc.want {
+			t.Fatalf("Name(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+		bundle, err := Bundle(tc.input, "desk.example.com", Options{})
+		if err != nil || bundle.InternalURL != "http://kuraka-"+tc.want+"-desk:9000" {
+			t.Fatalf("bundle name: %q %v", bundle.InternalURL, err)
+		}
+	}
+}
+
+func TestBundleSystemPassword(t *testing.T) {
+	password := "Aa9!" + strings.Repeat("a0", 24)
+	bundle, err := Bundle("test", "desk.example.com", Options{SystemPassword: password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.SystemPassword != password || !strings.Contains(unzip(t, bundle.Zip)[".env"], "LIBREDESK_SYSTEM_USER_PASSWORD="+password+"\n") {
+		t.Fatal("system password ignored")
+	}
+	for _, bad := range []string{password + "\n", password[:51], password + "0", strings.ToUpper(password), "${PASSWORD}", "weak"} {
+		if _, err := Bundle("test", "desk.example.com", Options{SystemPassword: bad}); err == nil || err.Error() != "invalid bundle options" {
+			t.Fatalf("invalid password: %v", err)
+		}
+	}
+}

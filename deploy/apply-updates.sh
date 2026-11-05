@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Applies Libredesk, Stalwart and Kuraka updates requested in the panel.
+# Installs Libredesk and applies Libredesk, Stalwart and Kuraka updates requested in the panel.
 # Runs as root from kuraka-updates.timer, installed by deploy/setup.sh.
 #
 # Kuraka only writes <dir>/libredesk-<container>.json = {"container", "tag"}
 # and <dir>/stalwart.json = {"tag"}, <dir>/kuraka.json = {"tag", "commit"}.
+# Installs use <dir>/install-<name>.json = {"name", "host", "system_password"}.
+# Root renders install files with its trusted Kuraka image, never with panel files.
 # Kuraka runs last because its checkout can replace this script.
 # No field is trusted: all must match
 # strict patterns, and the compose directory comes from the container's
-# Docker labels (Libredesk) or is this deploy directory (Stalwart and Kuraka), never
-# from the file. The result goes to <request>.result.json.
+# Docker labels (Libredesk updates), $DEPLOY/desks/<name> (installs) or this
+# deploy directory (Stalwart and Kuraka), never from a path in the request.
+# The result goes to <request>.result.json.
 set -euo pipefail
 umask 077
 
@@ -220,6 +223,62 @@ rollback_stalwart() {
   fi
   "${COMPOSE[@]}" up -d stalwart >&2 || log "could not restart stalwart:$old"
 }
+
+install_desk() {
+  local name=$1 host=$2 password=$3 desk_dir version image started=0
+  desk_dir=$DEPLOY/desks/$name
+  [[ ! -e $desk_dir/docker-compose.yml ]] || { ERROR="already installed"; return 1; }
+  install -d -m 0700 "$desk_dir" || { ERROR="could not create desk directory"; return 1; }
+  if [[ ! -f $ENV_FILE || -L $ENV_FILE ]]; then
+    ERROR="deploy/.env not found"
+  elif ! version=$(awk 'index($0, "KURAKA_VERSION=") == 1 { v = substr($0, 16) } END { print v }' "$ENV_FILE"); then
+    ERROR="could not read KURAKA_VERSION"
+  else
+    version=${version%$'\r'}
+    version=${version//[\"\']/}
+    version=${version:-latest}
+    image=ghcr.io/inkanode/kuraka:$version
+    # Passed through the environment, not argv, so ps never shows it.
+    if KURAKA_BUNDLE_SYSTEM_PASSWORD=$password docker run --rm --network none -e KURAKA_BUNDLE_SYSTEM_PASSWORD "$image" bundle "$name" "$host" |
+      tar -xf - -C "$desk_dir"; then
+      # The installer may partially start Compose even when it fails.
+      started=1
+      (cd "$desk_dir" && KURAKA_DEPLOY="$DEPLOY" sh install.sh) >&2 && return 0
+      ERROR="Libredesk install failed"
+    else
+      ERROR="could not render Libredesk bundle"
+    fi
+  fi
+  if (( ! started )); then
+    rm -rf -- "$desk_dir"
+  fi
+  return 1
+}
+
+for request in "$DIR"/install-*.json; do
+  [[ $request == *.result.json ]] && continue
+  [[ -f $request && ! -L $request ]] || continue
+  name= host= password= ERROR=
+  name=$(jq -r '.name // empty' "$request" 2>/dev/null) || name=
+  host=$(jq -r '.host // empty' "$request" 2>/dev/null) || host=
+  password=$(jq -r '.system_password // empty' "$request" 2>/dev/null) || password=
+  if [[ ! $name =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || ${#name} -gt 48 ||
+    ! $host =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ||
+    ! $password =~ ^Aa9![0-9a-f]{48}$ || $request != "$DIR/install-$name.json" ]]; then
+    log "rejected $request"
+    rm -f "$request"
+    continue
+  fi
+  log "$name: installing Libredesk"
+  if install_desk "$name" "$host" "$password"; then
+    write_result "$DIR/install-$name.result.json" "" ok "" ""
+    log "$name: installed"
+  else
+    log "$name: $ERROR"
+    write_result "$DIR/install-$name.result.json" "" error "$ERROR" ""
+  fi
+  rm -f "$request"
+done
 
 for request in "$DIR"/libredesk-*.json; do
   [[ $request == *.result.json ]] && continue

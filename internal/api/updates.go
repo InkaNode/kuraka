@@ -52,6 +52,7 @@ func (s *Server) updateRoutes(route func(string, string, bool, bool, endpoint)) 
 	route("POST /api/v1/updates/stalwart", "update.stalwart", false, true, s.updateStalwart)
 	route("POST /api/v1/updates/kuraka", "update.kuraka", false, true, s.updateKuraka)
 	route("POST /api/v1/helpdesks/{id}/update", "helpdesk.update", false, true, s.updateHelpdesk)
+	route("GET /api/v1/helpdesks/{id}/install", "helpdesk.install", false, true, s.installStatus)
 }
 
 // StartUpdateChecks reads GitHub releases a minute after start and then

@@ -148,6 +148,7 @@ func (s *Server) createDomain(_ http.ResponseWriter, r *http.Request) (any, erro
 		s.log.Error("could not link created domain", "stalwart_id", sid, "error", err)
 		return nil, err
 	}
+	s.detectDNSProvider(r, &d)
 	out := domainJSON(d)
 	out["aliases"] = aliases
 	return reply{201, out}, nil
@@ -190,6 +191,7 @@ func (s *Server) importDomain(_ http.ResponseWriter, r *http.Request) (any, erro
 	if err != nil {
 		return nil, err
 	}
+	s.detectDNSProvider(r, &d)
 	out := domainJSON(d)
 	out["aliases"] = nonNilStrings(remote.Aliases)
 	return reply{201, out}, nil

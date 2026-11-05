@@ -1,14 +1,20 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +22,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/auth"
 	"github.com/InkaNode/kuraka/internal/config"
 	"github.com/InkaNode/kuraka/internal/jobs"
+	"github.com/InkaNode/kuraka/internal/provision"
 	"github.com/InkaNode/kuraka/internal/stalwart"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
@@ -32,6 +39,20 @@ func main() {
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		return healthcheck(os.Getenv(config.EnvListen))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "bundle" {
+		if len(os.Args) != 4 {
+			return errors.New("usage: kuraka bundle <name> <host>")
+		}
+		name, host := os.Args[2], os.Args[3]
+		if len(name) > 48 || !regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`).MatchString(name) || !config.ValidHostname(host) || !strings.Contains(host, ".") {
+			return errors.New("invalid bundle name or host")
+		}
+		bundle, err := provision.Bundle(name, host, provision.Options{SystemPassword: os.Getenv("KURAKA_BUNDLE_SYSTEM_PASSWORD")})
+		if err != nil {
+			return err
+		}
+		return zipToTar(os.Stdout, bundle.Zip)
 	}
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -68,7 +89,8 @@ func run() error {
 	runner.Start(ctx)
 	metricsDone := jobs.StartMetrics(ctx, st, sw, cfg, log)
 	updatesDone := app.StartUpdateChecks(ctx)
-	defer func() { stop(); runner.Wait(); <-metricsDone; <-updatesDone }()
+	activationDone := app.StartHelpdeskActivation(ctx)
+	defer func() { stop(); runner.Wait(); <-metricsDone; <-updatesDone; <-activationDone }()
 	purgeDone := make(chan struct{})
 	go func() {
 		defer close(purgeDone)
@@ -113,4 +135,30 @@ func run() error {
 		}
 		return nil
 	}
+}
+
+func zipToTar(w io.Writer, data []byte) error {
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return err
+	}
+	tw := tar.NewWriter(w)
+	for _, file := range z.File {
+		if err := tw.WriteHeader(&tar.Header{Name: file.Name, Mode: int64(file.Mode().Perm()), Size: int64(file.UncompressedSize64)}); err != nil {
+			return err
+		}
+		r, err := file.Open()
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(tw, r)
+		closeErr := r.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return tw.Close()
 }

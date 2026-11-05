@@ -16,7 +16,8 @@ import (
 const LibredeskVersion = "v2.9.2"
 
 type Options struct {
-	MailNetwork string
+	MailNetwork    string
+	SystemPassword string
 }
 
 type Result struct {
@@ -27,6 +28,19 @@ type Result struct {
 
 var unsafeName = regexp.MustCompile(`[^a-z0-9]+`)
 var networkName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+var systemPassword = regexp.MustCompile(`^Aa9![0-9a-f]{48}$`)
+
+// Name returns the deployment name for a tenant.
+func Name(tenantName string) string {
+	name := strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(tenantName), "-"), "-")
+	if len(name) > 48 {
+		name = strings.TrimRight(name[:48], "-")
+	}
+	if name == "" {
+		name = "tenant"
+	}
+	return name
+}
 
 func randomHex(n int) (string, error) {
 	b := make([]byte, n)
@@ -43,16 +57,10 @@ func Bundle(tenantName, host string, opts Options) (Result, error) {
 	if opts.MailNetwork == "" {
 		opts.MailNetwork = "kuraka_mail"
 	}
-	if !networkName.MatchString(opts.MailNetwork) {
+	if !networkName.MatchString(opts.MailNetwork) || (opts.SystemPassword != "" && !systemPassword.MatchString(opts.SystemPassword)) {
 		return Result{}, fmt.Errorf("invalid bundle options")
 	}
-	name := strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(tenantName), "-"), "-")
-	if len(name) > 48 {
-		name = strings.TrimRight(name[:48], "-")
-	}
-	if name == "" {
-		name = "tenant"
-	}
+	name := Name(tenantName)
 	key, err := randomHex(16)
 	if err != nil {
 		return Result{}, err
@@ -61,11 +69,14 @@ func Bundle(tenantName, host string, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	systemPass, err := randomHex(24)
-	if err != nil {
-		return Result{}, err
+	systemPass := opts.SystemPassword
+	if systemPass == "" {
+		systemPass, err = randomHex(24)
+		if err != nil {
+			return Result{}, err
+		}
+		systemPass = "Aa9!" + systemPass
 	}
-	systemPass = "Aa9!" + systemPass
 	// Labels the database volume: Postgres keeps the password of the first
 	// install, so install.sh refuses to run another bundle over it.
 	bundleID, err := randomHex(8)

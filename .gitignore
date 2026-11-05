@@ -7,4 +7,5 @@ deploy/sites/*
 deploy/updates/
 deploy/.updates-tmp/
 deploy/backups/
+deploy/desks/
 deploy/maintenance/
