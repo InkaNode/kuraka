@@ -27,7 +27,9 @@
 			"</head>" `<link rel="stylesheet" href="/_kuraka/addon/{args[0]}.css"><script defer src="/_kuraka/addon/{args[0]}.js"></script></head>`
 		}
 		reverse_proxy {args[1]} {
-			header_up Accept-Encoding identity
+			# Go's transport then asks for gzip and decompresses it, so replace sees
+			# plain HTML even from upstreams that always send gzip.
+			header_up -Accept-Encoding
 		}
 	}
 }
@@ -67,6 +69,8 @@
 	handle @admin {
 		respond 404
 	}
+	# The addon proxy receives plain responses; compress them again here.
+	encode zstd gzip
 	import kuraka_addon_proxy stalwart stalwart:8080
 }
 

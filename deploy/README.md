@@ -14,8 +14,9 @@ Kuraka's addon hides the views Kuraka manages. Caddy injects
 `/_kuraka/addon/<app>.css` and `/_kuraka/addon/<app>.js` into HTML responses
 (`stalwart` for mail, `desk` for Libredesk), and proxies those asset paths to
 Kuraka. The `kuraka_addon_proxy` snippet takes the app name and upstream and
-requests uncompressed responses with `Accept-Encoding: identity`. It preserves
-the public 404 for Stalwart's `/admin*` and `/login*` paths and adds no CSP.
+drops the client's `Accept-Encoding`, so Go's transport decompresses gzip from
+the upstream before the replacement. It preserves the public 404 for Stalwart's
+`/admin*` paths and adds no CSP.
 
 The custom Caddy image, `kuraka-caddy:local`, is built locally from
 `deploy/caddy/Dockerfile` with `github.com/caddyserver/replace-response`.

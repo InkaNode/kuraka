@@ -53,7 +53,8 @@ Caddy's `kuraka_addon_proxy <app> <upstream>` snippet uses the
 `github.com/caddyserver/replace-response` module in `kuraka-caddy:local`, built
 from `deploy/caddy`. It sets `order replace after encode`, limits replacements
 to `Content-Type: text/html*`, buffers HTML (no `stream`), and sends
-`Accept-Encoding: identity` to the app upstream. The module replaces every
+no `Accept-Encoding` to the app upstream, so Caddy's transport decompresses
+gzip (Stalwart's `/login` is always gzip). The module replaces every
 literal `</head>` and has no first-match-only option; application HTML must
 contain a single such marker. The Stalwart `/admin*` 404 block and
 security headers remain in place; no CSP is added.
