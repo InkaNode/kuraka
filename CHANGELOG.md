@@ -4,9 +4,9 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-04
 
-First release, planned as 0.1.0.
+First release.
 
 ### Added
 
@@ -41,3 +41,5 @@ First release, planned as 0.1.0.
 - IMAP migration tool: idempotent, cancellable background jobs with progress.
 - CI with GitHub Actions: Go and web checks plus integration tests against a real Stalwart.
 - Deployment bundle (`deploy/`) with Caddy, Stalwart and Kuraka, and an install guide.
+
+[0.1.0]: https://github.com/InkaNode/kuraka/releases/tag/v0.1.0
