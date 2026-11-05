@@ -67,8 +67,8 @@ export async function onboardView() {
       field({ label: t('onboard.admin.name'), input: adminName }), field({ label: t('onboard.admin.email'), input: adminEmail })),
     section(t('onboard.mailboxes'), field({ label: t('onboard.mailboxes.list'), input: mailboxes, help: t('onboard.mailboxes.help') })),
     section(t('onboard.helpdesk'), helpdeskBox, hostField));
-  const form = h('form', { class: 'stack gap-2' }, inputs, h('div', { class: 'row gap-1' }, button({ label: t('onboard.submit'), variant: 'primary', type: 'submit' })));
-  const progress = h('div', { class: 'stack gap-2' });
+  const form = h('form', { class: 'stack gap-2 form-page' }, inputs, h('div', { class: 'row gap-1' }, button({ label: t('onboard.submit'), variant: 'primary', type: 'submit' })));
+  const progress = h('div', { class: 'stack gap-2 form-page' });
   const credentials = h('div', {});
   const root = h('div', { class: 'stack gap-2' }, pageHeader(t('onboard.title')), h('p', { class: 'muted' }, t('onboard.intro')), form, progress, credentials);
 
@@ -265,7 +265,7 @@ export async function onboardView() {
     ];
     mount(credentials, card(h('div', { class: 'stack gap-2' },
       h('h2', {}, t('onboard.creds')), h('p', { class: 'secret-warning row gap-1' }, icon('alert'), t('onboard.creds.warning')), table({ columns, rows: creds }),
-      h('a', { class: 'btn btn-primary', href: `#/domains/${s.domain.id}` }, h('span', {}, t('onboard.goDomain'))))));
+      h('a', { class: 'btn btn-secondary', href: `#/domains/${s.domain.id}` }, h('span', {}, t('onboard.goDomain'))))));
   }
 
   submitForm(form, async () => {
