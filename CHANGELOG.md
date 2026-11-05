@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-05
+
+### Added
+
+- **Client onboarding wizard** (`#/onboard`, superadmins): creates or picks the client, adds or imports the domain with its alias domains, sets up DNS, creates the tenant admin and the mailboxes, installs Libredesk, adds the admin as agent and connects the mailboxes, then shows every generated password once. A retry skips the steps that already worked.
+
+- **Automatic DNS**: a new or imported domain picks the DNS provider whose account holds its zone. `POST /api/v1/domains/{id}/dns/zone` creates the Cloudflare zone and returns its name servers; the DNS tab offers it, and Integrations shows which token permissions each case needs.
+
+- **Libredesk install without SSH**: `POST /api/v1/helpdesks/provision` with `install: true` asks the root updates timer to render the bundle with the running Kuraka image into `deploy/desks/<name>` and start it; `GET /api/v1/helpdesks/{id}/install` reports the progress, and Kuraka activates the helpdesk when it answers. No new settings; `git pull` brings the new `deploy/apply-updates.sh`.
+
 ## [0.1.1] - 2026-11-05
 
 ### Changed
