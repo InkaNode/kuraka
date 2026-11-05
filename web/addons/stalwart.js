@@ -5,7 +5,7 @@
     'sidebar-toggle': 'header [aria-controls="app-sidebar"][aria-expanded]',
     'nav-links': '#app-sidebar nav a[href], #app-sidebar nav button[aria-describedby]',
     'user-menu': 'header [data-slot="dropdown-menu-trigger"]',
-    'brand-logo': 'header a:is([href="/"], [href="/admin"], [href="/admin/"], [href="/account"], [href="/account/"]) > :is(img, svg), .tile svg[aria-label="Stalwart Logo"], #logo-wrap > :is(img:not([data-kuraka-logo]), svg[aria-label="Stalwart"]), .app-header:has(#title[data-kuraka-client]) > #app-tile > img',
+    'brand-logo': 'header a:is([href="/"], [href="/admin"], [href="/admin/"], [href="/account"], [href="/account/"]) > :is(img, svg), .tile svg[aria-label="Stalwart Logo"], #logo-wrap > :is(img:not([data-kuraka-logo]), svg[aria-label="Stalwart"])',
     'search-items': '[data-slot="command-item"][data-value]',
   };
   const managed = new Set(['x:Account/User', 'x:Tenant', 'x:Domain', 'x:DkimSignature']);
@@ -59,7 +59,7 @@
         brandedTitle = document.title.replace('Stalwart WebUI', () => config.name);
         document.title = brandedTitle;
       }
-      // OAuth /login names Stalwart's own WebUI client and shows its logo in #app-tile.
+      // OAuth /login names Stalwart's own WebUI client; CSS hides its #app-tile logo.
       const loginTitle = document.getElementById('title');
       if (loginTitle?.textContent.includes('Stalwart Web Interface')) {
         if (!loginTitle.hasAttribute('data-kuraka-client')) loginTitle.setAttribute('data-kuraka-client', '');

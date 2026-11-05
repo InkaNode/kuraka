@@ -23,3 +23,4 @@
 [data-kuraka-hidden], [data-kuraka-logo-original] { display: none !important; }
 /* OAuth /login page: its script fills #logo-wrap and has no Tailwind classes. */
 #logo-wrap > [data-kuraka-logo] { height: 3rem; width: auto; max-width: 220px; object-fit: contain; }
+.app-header:has(#title[data-kuraka-client]) > #app-tile { display: none !important; }
