@@ -61,6 +61,7 @@ Requirements, DNS and next steps: [docs/install.md](docs/install.md).
 - [Integrations](docs/integrations.md): Cloudflare, Libredesk, branding and updates
 - [UI](docs/ui.md)
 - [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md): versions and commits
 
 ## License
 

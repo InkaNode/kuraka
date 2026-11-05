@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-05
+
+### Changed
+
+- The panel uses the Stalwart web interface fonts: Inter for text, Plus Jakarta Sans for headings and JetBrains Mono for code (latin subsets, OFL 1.1, served from `web/static/assets/vendor/fonts`).
+
 ## [0.1.0] - 2026-11-04
 
 First release.
@@ -42,4 +48,5 @@ First release.
 - CI with GitHub Actions: Go and web checks plus integration tests against a real Stalwart.
 - Deployment bundle (`deploy/`) with Caddy, Stalwart and Kuraka, and an install guide.
 
+[0.1.1]: https://github.com/InkaNode/kuraka/releases/tag/v0.1.1
 [0.1.0]: https://github.com/InkaNode/kuraka/releases/tag/v0.1.0
