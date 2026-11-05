@@ -180,6 +180,19 @@ EOF
   log "kuraka-updates.timer enabled"
 }
 
+# Desk sites from older bundles proxy Libredesk directly; route them through
+# the addon snippet. Returns 0 when a file changed.
+migrate_desk_sites() {
+  local f changed=1
+  for f in "$DEPLOY_DIR"/sites/*.caddy; do
+    [[ -f $f ]] && grep -Eq $'^\treverse_proxy kuraka-[a-z0-9-]+-desk:9000$' "$f" || continue
+    sed -Ei 's/^\treverse_proxy (kuraka-[a-z0-9-]+-desk:9000)$/\timport kuraka_addon_proxy desk \1/' "$f"
+    log "$(basename "$f"): Libredesk now goes through the Kuraka addons"
+    changed=0
+  done
+  return "$changed"
+}
+
 refresh_cert() {
   load_env
   fix_cert_perms
@@ -211,6 +224,9 @@ main() {
   # 2. Caddy and Stalwart; wait for the MAIL_HOST certificate.
   log "starting caddy and stalwart"
   compose up -d --build caddy stalwart >/dev/null
+  if migrate_desk_sites; then
+    compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1
+  fi
   local dir deadline=$((SECONDS + 300))
   dir=/data$(cert_dir)
   log "waiting for the certificate of $MAIL_HOST (up to 5 minutes)"
