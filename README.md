@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/InkaNode/kuraka/releases/latest"><img src="https://img.shields.io/github/v/release/InkaNode/kuraka?color=A5431E" alt="Release"></a>
-  <a href="https://github.com/InkaNode/kuraka/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/InkaNode/kuraka/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://github.com/InkaNode/kuraka/actions/workflows/ci.yml"><img src="https://github.com/InkaNode/kuraka/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-A5431E" alt="License: AGPL-3.0"></a>
 </p>
 
