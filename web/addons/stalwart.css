@@ -7,6 +7,7 @@
   --ring: var(--kuraka-color, #bf1f45);
   --highlight: var(--kuraka-highlight, #fbe7ea);
   --highlight-foreground: var(--kuraka-color, #bf1f45);
+  --highlight-strong: var(--kuraka-highlight-strong, #f7d5db);
 }
 .dark.kuraka-stalwart {
   --primary: var(--kuraka-color, #db2d54);
@@ -16,6 +17,7 @@
   --ring: var(--kuraka-color, #ff8199);
   --highlight: var(--kuraka-highlight-dark, #2f1a21);
   --highlight-foreground: var(--kuraka-color, #ff8199);
+  --highlight-strong: var(--kuraka-highlight-strong-dark, #45212d);
 }
 [data-kuraka-hidden], [data-kuraka-logo-original] { display: none !important; }
 /* OAuth /login page: its script fills #logo-wrap and has no Tailwind classes. */

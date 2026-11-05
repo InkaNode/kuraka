@@ -120,6 +120,8 @@ func addonCSS(b store.Branding) string {
 		// Libredesk (shadcn) takes bare HSL channels; the highlights match Stalwart's light and dark backgrounds.
 		fmt.Fprintf(&css, "--kuraka-color-hsl:%s;--kuraka-color-foreground-hsl:%s;", channels, foregroundChannels)
 		fmt.Fprintf(&css, "--kuraka-highlight:color-mix(in srgb,%[1]s 16%%,#ffffff);--kuraka-highlight-dark:color-mix(in srgb,%[1]s 18%%,#121213);", b.Color)
+		// Stronger tint for Stalwart's ::selection.
+		fmt.Fprintf(&css, "--kuraka-highlight-strong:color-mix(in srgb,%[1]s 28%%,#ffffff);--kuraka-highlight-strong-dark:color-mix(in srgb,%[1]s 32%%,#121213);", b.Color)
 	}
 	for _, c := range []struct{ name, value string }{
 		{"gradient-from", b.GradientFrom}, {"gradient-to", b.GradientTo},
