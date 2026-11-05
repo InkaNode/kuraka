@@ -8,6 +8,7 @@
   --highlight: var(--kuraka-highlight, #fbe7ea);
   --highlight-foreground: var(--kuraka-color, #bf1f45);
   --highlight-strong: var(--kuraka-highlight-strong, #f7d5db);
+  --shadow-primary: 0 8px 20px -12px color-mix(in srgb, var(--kuraka-color, #db2d54) 80%, transparent);
 }
 .dark.kuraka-stalwart {
   --primary: var(--kuraka-color, #db2d54);
