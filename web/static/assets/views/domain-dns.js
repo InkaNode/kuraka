@@ -10,6 +10,17 @@ const LONG_VALUE = 60;
 const STATUS_KIND = { ok: 'ok', missing: 'danger', different: 'warn' };
 const OPS = ['conflict', 'create', 'update', 'ok'];
 const OP_KIND = { conflict: 'danger', create: 'ok', update: 'warn', ok: 'neutral' };
+// What each record is for, so the plan reads as a summary before the record list.
+const PURPOSES = [
+  ['mx', c => c.type === 'MX'],
+  ['spf', c => /^"?v=spf1/i.test(String(c.value ?? ''))],
+  ['dkim', c => /(^|\.)_domainkey\./i.test(c.name)],
+  ['dmarc', c => /^_dmarc\./i.test(c.name)],
+  ['apps', c => c.type === 'SRV' || /^(autoconfig|autodiscover)\./i.test(c.name)],
+  ['tls', c => c.type === 'TLSA' || /^(_?mta-sts|_smtp\._tls)\./i.test(c.name)],
+  ['other', () => true],
+];
+const purposeOf = c => PURPOSES.find(([, test]) => test(c))[0];
 
 const normName = name => String(name ?? '').trim().toLowerCase().replace(/\.$/, '');
 function recordKey(r) {
@@ -144,6 +155,7 @@ export function dnsAutomation(view) {
       for (const cell of slots.get(recordKey(entry)) || []) { cell.className = ''; mount(cell, statusNode(entry)); }
     }
     const s = { ok: 0, missing: 0, different: 0, ...(result.summary || {}) };
+    view.dnsChecked?.(s);
     const kind = s.missing ? 'danger' : s.different ? 'warn' : 'ok';
     mount(summary,
       h('p', { class: ['row gap-1', kind] }, icon(kind === 'ok' ? 'check' : 'alert'), h('span', {}, t('dns.check.summary', s))),
@@ -169,14 +181,22 @@ export function dnsAutomation(view) {
     const apply = button({ label: t('dns.plan.apply'), variant: 'primary', onClick: run });
     const sync = () => { apply.disabled = busy || !(pending || (conflicts && replace)); };
     const replaceBox = conflicts ? checkbox({ label: t('dns.plan.replace'), onChange: event => { replace = event.target.checked; sync(); } }) : null;
-    const groups = OPS.map(op => [op, changes.filter(c => c.op === op)]).filter(([, list]) => list.length).map(([op, list]) => {
-      const heading = h('span', { class: 'row gap-1' }, badge(t(`dns.op.${op}`), OP_KIND[op]), h('span', {}, t('dns.plan.count', { n: list.length })));
-      const items = h('ul', { class: 'stack gap-1' }, list.map(changeItem));
-      // Records already in place are context only, so they start collapsed.
-      return op === 'ok'
-        ? h('details', {}, h('summary', {}, heading), items)
-        : h('section', { class: 'stack gap-1' }, h('h3', {}, heading), items);
-    });
+    const group = op => {
+      const list = changes.filter(c => c.op === op);
+      return list.length ? h('section', { class: 'stack gap-1' },
+        h('h3', { class: 'row gap-1' }, badge(t(`dns.op.${op}`), OP_KIND[op]), h('span', {}, t('dns.plan.count', { n: list.length }))),
+        h('ul', { class: 'stack gap-1' }, list.map(changeItem))) : null;
+    };
+    const stats = h('div', { class: 'plan-stats' }, ['create', 'update', 'conflict', 'ok'].map(op => h('div', { class: 'plan-stat' },
+      h('span', { class: ['plan-stat-value', count(op) ? OP_KIND[op] : 'neutral'] }, String(count(op))), h('span', { class: 'muted' }, t(`dns.op.${op}`)))));
+    const overview = h('ul', { class: 'plan-overview' }, PURPOSES.map(([key]) => {
+      const list = changes.filter(c => purposeOf(c) === key);
+      return list.length ? h('li', { class: 'row gap-1' }, h('span', { class: 'grow' }, t(`dns.purpose.${key}`)),
+        OPS.map(op => list.filter(c => c.op === op).length).map((n, i) => n ? badge(`${t(`dns.op.${OPS[i]}`)} ${n}`, OP_KIND[OPS[i]]) : null)) : null;
+    }));
+    // Conflicts need a decision, so they stay visible; the rest is detail.
+    const detail = h('details', {}, h('summary', {}, t('dns.plan.details', { n: changes.length - conflicts })),
+      h('div', { class: 'stack gap-2' }, ['create', 'update', 'ok'].map(group)));
     async function run() {
       if (busy) return;
       busy = true; sync(); mount(status);
@@ -190,11 +210,12 @@ export function dnsAutomation(view) {
     }
     sync();
     const dialog = modal({ title: t('dns.plan.title', { name: domain.name }), body: [
-      h('p', {}, changes.length ? t('dns.plan.summary', { create: count('create'), update: count('update'), conflict: conflicts, ok: count('ok') }) : t('dns.plan.empty')),
-      status, groups,
+      changes.length ? [stats, overview] : h('p', {}, t('dns.plan.empty')),
+      status, group('conflict'),
       conflicts ? h('div', { class: 'stack gap-1' }, replaceBox,
         h('p', { class: 'secret-warning row gap-1' }, icon('alert'), h('span', {}, t('dns.plan.replace.warning')))) : null,
       !pending && !conflicts && changes.length ? h('p', { class: 'muted' }, t('dns.plan.nothing')) : null,
+      changes.length > conflicts ? detail : null,
     ], actions: [button({ label: t('cancel'), onClick: () => dialog.close() }), apply] });
   }
 
