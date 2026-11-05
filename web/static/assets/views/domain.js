@@ -47,6 +47,7 @@ export async function domainView(ctx) {
     base, panel, current, show,
     cache: { links: new Map() },
     async loadMailboxes() { if (!mailboxes) await loadMailboxes(); return mailboxes; },
+    dnsChecked(s) { guide.update({ dns: !s.missing && !s.different }); },
     goTab(tab) {
       if (active === tab) show();
       else tabBar.children[TABS.indexOf(tab)]?.click();
@@ -60,7 +61,7 @@ export async function domainView(ctx) {
   }
 
   // ---- Mailboxes -------------------------------------------------------
-  async function loadMailboxes() { mailboxes = await api('GET', `${base}/mailboxes`); }
+  async function loadMailboxes() { mailboxes = await api('GET', `${base}/mailboxes`); guide.update({ boxes: mailboxes.length > 0 }); }
   async function showMailboxes(mine) {
     if (!mailboxes) {
       mount(panel, spinner());
@@ -325,7 +326,8 @@ export async function domainView(ctx) {
 
   // ---- Setup guide -----------------------------------------------------
   // Shown until DNS checks out and the domain has a mailbox. Loaded once per
-  // visit: a fresh DNS check on every tab switch would hit the provider again.
+  // visit (a fresh DNS check on every tab switch would hit the provider again),
+  // then kept current by the DNS check and the mailbox list.
   function setupGuide() {
     const steps = h('ol', { class: 'setup-steps' });
     const node = card(h('div', { class: 'stack gap-2' },
@@ -336,27 +338,30 @@ export async function domainView(ctx) {
       h('span', { class: done ? 'ok' : 'warn' }, icon(done ? 'check' : 'alert')),
       h('div', { class: 'stack grow' }, h('strong', {}, title), h('span', { class: 'muted' }, text)),
       done ? badge(t('setup.done'), 'ok') : action);
+    const state = { dns: null, boxes: null };
+    function update(patch) {
+      Object.assign(state, patch);
+      node.hidden = state.dns == null || state.boxes == null || (state.dns && state.boxes);
+      if (node.hidden) return;
+      const hasProvider = domain.dns_provider_id != null;
+      // DNS first: an MX already pointing elsewhere is a conflict that is only
+      // replaced on request (dns.plan.replace.warning), so publishing early moves no mail.
+      mount(steps,
+        step(state.dns, t('setup.dns'), t(hasProvider ? 'setup.dns.provider' : 'setup.dns.manual'),
+          h('div', { class: 'row gap-1' },
+            hasProvider ? null : h('a', { class: 'btn btn-ghost', href: '#/integrations' }, t('setup.dns.connect')),
+            button({ label: t('setup.dns.go'), onClick: () => view.goTab('dns') }))),
+        step(state.boxes, t('setup.mailbox'), t('setup.mailbox.text'), button({ label: t('setup.mailbox.go'), onClick: () => view.goTab('mailboxes') })));
+    }
     Promise.all([
       api('GET', `${base}/dns/check`).then(r => r.summary).catch(() => null),
       view.loadMailboxes().catch(() => null),
-    ]).then(([dns, boxes]) => {
-      const dnsOK = dns != null && !dns.missing && !dns.different;
-      const hasBoxes = boxes?.length > 0;
-      if (dnsOK && hasBoxes) return;
-      const hasProvider = domain.dns_provider_id != null;
-      // Mailboxes first: moving MX before they exist bounces mail (see dns.plan.replace.warning).
-      mount(steps,
-        step(hasBoxes, t('setup.mailbox'), t('setup.mailbox.text'), button({ label: t('setup.mailbox.go'), onClick: () => view.goTab('mailboxes') })),
-        step(dnsOK, t('setup.dns'), t(hasProvider ? 'setup.dns.provider' : 'setup.dns.manual'),
-          h('div', { class: 'row gap-1' },
-            hasProvider ? null : h('a', { class: 'btn btn-ghost', href: '#/integrations' }, t('setup.dns.connect')),
-            button({ label: t('setup.dns.go'), onClick: () => view.goTab('dns') }))));
-      node.hidden = false;
-    });
-    return node;
+    ]).then(([dns, boxes]) => update({ dns: dns != null && !dns.missing && !dns.different, boxes: boxes?.length > 0 }));
+    return { node, update };
   }
 
-  const root = h('div', { class: 'stack gap-2' }, back, pageHeader(h('span', { class: 'mono' }, domain.name)), setupGuide(), tabBar, panel);
+  const guide = setupGuide();
+  const root = h('div', { class: 'stack gap-2' }, back, pageHeader(h('span', { class: 'mono' }, domain.name)), guide.node, tabBar, panel);
   show();
   return root;
 }
