@@ -61,8 +61,9 @@
 {$MAIL_HOST} {
 	import security_headers
 
-	# The Stalwart admin interface is never public.
-	@admin path /admin* /login*
+	# The Stalwart admin interface is never public. /login stays open: it is
+	# the OAuth sign-in page of the /account portal.
+	@admin path /admin*
 	handle @admin {
 		respond 404
 	}
