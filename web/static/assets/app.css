@@ -3,10 +3,10 @@
  * nav: kept (sidebar, menu under 768px) · signature: kept (domain table) · states: loading, empty, error, full
  * axes: light/grotesk-sans/warm · posture: Libredesk/Stalwart admin, warm stone panels, one terracotta signal · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V4 */
-/* Latin subsets of the Fontsource variable fonts, OFL 1.1: see fonts/LICENSE-*.txt. Other scripts fall back to system faces. */
-@font-face { font-family: "Inter Variable"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(fonts/inter.woff2) format("woff2"); }
-@font-face { font-family: "Plus Jakarta Sans Variable"; font-style: normal; font-display: swap; font-weight: 200 800; src: url(fonts/plus-jakarta-sans.woff2) format("woff2"); }
-@font-face { font-family: "JetBrains Mono Variable"; font-style: normal; font-display: swap; font-weight: 100 800; src: url(fonts/jetbrains-mono.woff2) format("woff2"); }
+/* Latin subsets of the Fontsource variable fonts, OFL 1.1: see vendor/fonts/LICENSE-*.txt. Other scripts fall back to system faces. */
+@font-face { font-family: "Inter Variable"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(vendor/fonts/inter.woff2) format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans Variable"; font-style: normal; font-display: swap; font-weight: 200 800; src: url(vendor/fonts/plus-jakarta-sans.woff2) format("woff2"); }
+@font-face { font-family: "JetBrains Mono Variable"; font-style: normal; font-display: swap; font-weight: 100 800; src: url(vendor/fonts/jetbrains-mono.woff2) format("woff2"); }
 /* Hallmark · tokens inline under the project's own names; base.css not imported, its page heads and block svg fight the app shell */
 /* Hallmark · answered F24 · the modal keeps its hairline: the dark theme drops shadows, the edge carries it there */
 :root {
