@@ -50,8 +50,11 @@ func Series(app string) ([]Patch, error) {
 				p.MissingEs = value
 			}
 		}
-		if p.Severity != "urgent" && p.Severity != "normal" || p.MissingEn == "" || p.MissingEs == "" {
-			return nil, fmt.Errorf("%s/%s: needs Kuraka-Severity (urgent or normal), Kuraka-Missing-En and Kuraka-Missing-Es", app, p.Name)
+		if p.Severity != "urgent" && p.Severity != "normal" && p.Severity != "required" || p.MissingEn == "" || p.MissingEs == "" {
+			return nil, fmt.Errorf("%s/%s: needs Kuraka-Severity (urgent, normal or required), Kuraka-Missing-En and Kuraka-Missing-Es", app, p.Name)
+		}
+		if p.Skipped && p.Severity == "required" {
+			return nil, fmt.Errorf("%s/%s: required patches cannot be skipped", app, p.Name)
 		}
 		out = append(out, p)
 	}
