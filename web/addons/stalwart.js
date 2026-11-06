@@ -13,8 +13,10 @@
   const loaded = document.readyState === 'complete' ? Promise.resolve()
     : new Promise(resolve => window.addEventListener('load', resolve, { once: true }));
   const admin = () => /^\/admin(?:\/|$)/.test(location.pathname);
-  let schema = null, schemaRequested = false, queued = false, showAll = false, brandedTitle = '';
-  try { showAll = localStorage.getItem('kuraka.showAll') === 'true'; } catch { /* Use the default. */ }
+  let schema = null, schemaToken = '', queued = false, showAll = false, brandedTitle = '';
+  // New key: the fork's kuraka.showAll could keep everything shown; hidden is the default.
+  const showAllKey = 'kuraka.addon.stalwart.showAll';
+  try { showAll = localStorage.getItem(showAllKey) === 'true'; } catch { /* Use the default. */ }
 
   fetch('/_kuraka/addon/stalwart.json').then(response => {
     if (!response.ok) throw new Error('Stalwart customization unavailable');
@@ -26,7 +28,7 @@
     toggle.type = 'button';
     toggle.addEventListener('click', () => {
       showAll = !showAll;
-      try { localStorage.setItem('kuraka.showAll', String(showAll)); } catch { /* Retain the in-memory choice. */ }
+      try { localStorage.setItem(showAllKey, String(showAll)); } catch { /* Retain the in-memory choice. */ }
       schedule();
     });
     function hiddenView(view) {
@@ -47,12 +49,13 @@
     // those with Enterprise links stays visible; the fork hid it.
     const allHidden = nodes => nodes.every(node => node.view ? hiddenView(node.view) : allHidden(node.children));
     function loadSchema() {
-      if (!admin() || schemaRequested || failed.has('view-schema')) return;
+      if (!admin() || schema) return;
       // Same endpoint and persisted bearer token as services/jmap/client.ts and authStore.ts.
       let token;
       try { token = JSON.parse(sessionStorage.getItem('stalwart-auth'))?.state?.accessToken; } catch { return; }
-      if (!token) return;
-      schemaRequested = true;
+      // Retry only with a new token, e.g. after the WebUI refreshes an expired one.
+      if (!token || token === schemaToken) return;
+      schemaToken = token;
       fetch('/api/schema', { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' })
         .then(response => { if (!response.ok) throw new Error('Schema unavailable'); return response.json(); })
         .then(value => { if (value?.objects && Array.isArray(value.layouts)) schema = value; schedule(); })
@@ -100,7 +103,7 @@
       document.querySelectorAll('[data-kuraka-logo]').forEach(image => {
         if (!image.previousElementSibling?.hasAttribute('data-kuraka-logo-original')) image.remove();
       });
-      const hide = admin() && !showAll && schema && !['sidebar', 'sidebar-toggle', 'nav-links', 'view-schema'].some(id => failed.has(id));
+      const hide = admin() && !showAll && !['sidebar', 'sidebar-toggle', 'nav-links'].some(id => failed.has(id));
       document.querySelectorAll('[data-kuraka-hidden]').forEach(node => setHidden(node, false));
       if (hide) {
         const links = '#app-sidebar nav a[href]' + (failed.has('user-menu') ? '' : ', [data-slot="dropdown-menu-content"] a[href]');
@@ -116,7 +119,7 @@
           setHidden(node, hiddenView(node.getAttribute('data-value').split('|')[2]));
         });
         // The fork hid groups and sections left without links, and the Try Enterprise menu item.
-        const layouts = schema.layouts.map(layout => ({ name: layout.name, children: (layout.items || []).map(navNode).filter(Boolean) }));
+        const layouts = (schema?.layouts || []).map(layout => ({ name: layout.name, children: (layout.items || []).map(navNode).filter(Boolean) }));
         const nav = document.querySelector('#app-sidebar nav[aria-label]');
         const section = layouts.find(layout => layout.name === nav?.getAttribute('aria-label'));
         if (section) {
@@ -146,8 +149,10 @@
       const menu = trigger && document.getElementById(trigger.getAttribute('aria-controls'));
       const target = admin() ? (!failed.has('user-menu') && menu) || (!failed.has('sidebar') && document.querySelector(probes.sidebar)) : null;
       if (target) {
-        const label = (document.documentElement.lang || navigator.language).toLowerCase().startsWith('es')
-          ? 'Mostrar opciones de Kuraka y Enterprise' : 'Show Kuraka and Enterprise items';
+        const es = (document.documentElement.lang || navigator.language).toLowerCase().startsWith('es');
+        const label = showAll
+          ? (es ? 'Ocultar opciones de Kuraka y Enterprise' : 'Hide Kuraka and Enterprise items')
+          : (es ? 'Mostrar opciones de Kuraka y Enterprise' : 'Show Kuraka and Enterprise items');
         if (toggle.textContent !== label) toggle.textContent = label;
         const classes = 'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted focus-visible:ring-2';
         if (toggle.className !== classes) toggle.className = classes;
@@ -169,7 +174,7 @@
     });
     window.addEventListener('popstate', schedule);
     window.addEventListener('storage', event => {
-      if (event.key === 'kuraka.showAll') { showAll = event.newValue === 'true'; schedule(); }
+      if (event.key === showAllKey) { showAll = event.newValue === 'true'; schedule(); }
     });
     apply();
     loaded.then(() => setTimeout(async () => {
