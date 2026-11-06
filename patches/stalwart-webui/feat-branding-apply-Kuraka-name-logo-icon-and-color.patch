@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Fri, 6 Nov 2026 00:42:19 -0500
+Subject: [PATCH] feat(branding): apply Kuraka name, logo, icon and color
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: The mail admin keeps Stalwart's own name, logo, icon and colors.
+Kuraka-Missing-Es: La administración de correo mantiene el nombre, logo, ícono y colores de Stalwart.
+---
+ src/hooks/useDocumentTitle.ts | 13 ++++++--
+ src/index.css                 | 29 ++++++++++++++++-
+ src/lib/kurakaBranding.ts     | 61 +++++++++++++++++++++++++++++++++++
+ src/lib/logoCache.ts          | 17 ++++++----
+ src/main.tsx                  |  1 +
+ 5 files changed, 112 insertions(+), 9 deletions(-)
+ create mode 100644 src/lib/kurakaBranding.ts
+
+diff --git a/src/hooks/useDocumentTitle.ts b/src/hooks/useDocumentTitle.ts
+index 3a8255b..f9b78d4 100644
+--- a/src/hooks/useDocumentTitle.ts
++++ b/src/hooks/useDocumentTitle.ts
+@@ -5,14 +5,23 @@
+  */
+ 
+ import { useEffect } from 'react';
++import { getKurakaBranding, kurakaBranding } from '@/lib/kurakaBranding';
+ 
+ const APP_NAME = 'Stalwart WebUI';
+ 
+ export function useDocumentTitle(title?: string | null) {
+   useEffect(() => {
+-    document.title = title ? `${title} · ${APP_NAME}` : APP_NAME;
++    let active = true;
++    const applyTitle = () => {
++      if (!active) return;
++      const name = getKurakaBranding()?.name || APP_NAME;
++      document.title = title ? `${title} · ${name}` : name;
++    };
++    applyTitle();
++    void kurakaBranding.then(applyTitle);
+     return () => {
+-      document.title = APP_NAME;
++      active = false;
++      document.title = getKurakaBranding()?.name || APP_NAME;
+     };
+   }, [title]);
+ }
+diff --git a/src/index.css b/src/index.css
+index 9f3f8c3..229ff29 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -160,6 +160,34 @@
+   --chart-5: #9e9ea4;
+ }
+ 
++:root[data-kuraka-color] {
++  --primary: var(--kuraka-color, #db2d54);
++  --primary-hover: color-mix(in srgb, var(--kuraka-color) 88%, #000);
++  --primary-foreground: var(--kuraka-color-foreground, #ffffff);
++  --brand-text: var(--kuraka-color, #bf1f45);
++  --ring: var(--kuraka-color, #bf1f45);
++  --highlight: color-mix(in srgb, var(--kuraka-color) 16%, #ffffff);
++  --highlight-foreground: var(--kuraka-color, #bf1f45);
++  --highlight-strong: color-mix(in srgb, var(--kuraka-color) 28%, #ffffff);
++  --shadow-primary: 0 8px 20px -12px color-mix(in srgb, var(--kuraka-color) 80%, transparent);
++}
++
++.dark[data-kuraka-color] {
++  --primary: var(--kuraka-color, #db2d54);
++  --primary-hover: color-mix(in srgb, var(--kuraka-color) 85%, #fff);
++  --primary-foreground: var(--kuraka-color-foreground, #ffffff);
++  --brand-text: var(--kuraka-color, #ff8199);
++  --ring: var(--kuraka-color, #ff8199);
++  --highlight: color-mix(in srgb, var(--kuraka-color) 18%, #121213);
++  --highlight-foreground: var(--kuraka-color, #ff8199);
++  --highlight-strong: color-mix(in srgb, var(--kuraka-color) 32%, #121213);
++  --shadow-primary: 0 8px 20px -12px color-mix(in srgb, var(--kuraka-color) 80%, transparent);
++}
++
++@theme {
++  --shadow-primary: 0 8px 20px -12px rgb(219 45 84 / 0.8);
++}
++
+ @theme inline {
+   --color-background: var(--background);
+   --color-foreground: var(--foreground);
+@@ -237,7 +265,6 @@
+   --shadow-lift: inset 0 1px 0 var(--hi), 0 2px 4px var(--shadow-c2), 0 22px 40px -22px var(--shadow-c);
+   --shadow-pop: inset 0 1px 0 var(--hi), 0 2px 6px var(--shadow-c2), 0 26px 50px -16px var(--shadow-c);
+   --shadow-ink: inset 0 0 0 1px var(--ink-edge), 0 2px 6px var(--shadow-c2), 0 26px 50px -16px var(--shadow-c);
+-  --shadow-primary: 0 8px 20px -12px rgb(219 45 84 / 0.8);
+ 
+   --font-sans:
+     'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+diff --git a/src/lib/kurakaBranding.ts b/src/lib/kurakaBranding.ts
+new file mode 100644
+index 0000000..965524c
+--- /dev/null
++++ b/src/lib/kurakaBranding.ts
+@@ -0,0 +1,61 @@
++type KurakaBranding = {
++  name?: string;
++  logo?: string;
++  icon?: string;
++  color?: string;
++  disabled?: boolean;
++};
++
++let config: KurakaBranding | null = null;
++
++export function getKurakaBranding(): KurakaBranding | null {
++  return config;
++}
++
++export const kurakaBranding = fetch('/_kuraka/addon/stalwart.json')
++  .then(async (response) => {
++    if (!response.ok) return null;
++    const value: unknown = await response.json();
++    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
++    const branding = value as KurakaBranding;
++    if (branding.disabled === true) return null;
++    if (
++      (['name', 'logo', 'icon', 'color'] as const).some((key) => {
++        const field = branding[key];
++        return field !== undefined && typeof field !== 'string';
++      })
++    )
++      return null;
++
++    const { color, icon: iconUrl } = branding;
++    if (color && /^#[\da-f]{6}$/i.test(color)) {
++      const channels = [1, 3, 5].map((offset) => {
++        const channel = parseInt(color.slice(offset, offset + 2), 16) / 255;
++        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
++      });
++      const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
++      const darkLuminance = ((17 / 255 + 0.055) / 1.055) ** 2.4;
++      const foreground =
++        1.05 / (luminance + 0.05) >= (luminance + 0.05) / (darkLuminance + 0.05) ? '#ffffff' : '#111111';
++      const root = document.documentElement;
++      root.style.setProperty('--kuraka-color', color);
++      root.style.setProperty('--kuraka-color-foreground', foreground);
++      root.dataset.kurakaColor = '';
++    }
++    if (iconUrl) {
++      const icons = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'));
++      if (!icons.length) {
++        const icon = document.createElement('link');
++        icon.rel = 'icon';
++        document.head.appendChild(icon);
++        icons.push(icon);
++      }
++      icons.forEach((icon) => {
++        icon.href = iconUrl;
++        icon.removeAttribute('type');
++      });
++    }
++    config = branding;
++    return config;
++  })
++  .catch(() => null);
+diff --git a/src/lib/logoCache.ts b/src/lib/logoCache.ts
+index 457706f..90af606 100644
+--- a/src/lib/logoCache.ts
++++ b/src/lib/logoCache.ts
+@@ -5,6 +5,7 @@
+  */
+ 
+ import { getApiBaseUrl } from '@/services/api';
++import { kurakaBranding } from './kurakaBranding';
+ 
+ export type LogoState = { status: 'loading' } | { status: 'custom'; url: string } | { status: 'default' };
+ 
+@@ -26,13 +27,17 @@ export function subscribeToLogo(listener: () => void): () => void {
+ export function loadLogoOnce(): void {
+   if (started) return;
+   started = true;
+-  fetch(`${getApiBaseUrl()}/logo`)
+-    .then(async (response) => {
+-      const contentType = response.headers.get('content-type') ?? '';
+-      if (!response.ok || !contentType.startsWith('image/')) return null;
+-      return URL.createObjectURL(await response.blob());
++  kurakaBranding
++    .then((branding) => {
++      if (branding?.logo) return branding.logo;
++      return fetch(`${getApiBaseUrl()}/logo`)
++        .then(async (response) => {
++          const contentType = response.headers.get('content-type') ?? '';
++          if (!response.ok || !contentType.startsWith('image/')) return null;
++          return URL.createObjectURL(await response.blob());
++        })
++        .catch(() => null);
+     })
+-    .catch(() => null)
+     .then((url) => {
+       state = url ? { status: 'custom', url } : { status: 'default' };
+       listeners.forEach((notify) => notify());
+diff --git a/src/main.tsx b/src/main.tsx
+index 901223b..06d15a0 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -9,6 +9,7 @@ import { createRoot } from 'react-dom/client';
+ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+ import './i18n';
+ import './index.css';
++import './lib/kurakaBranding';
+ import App from './App';
+ import LoginPage from './pages/LoginPage';
+ import OAuthCallback from './pages/OAuthCallback';
