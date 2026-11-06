@@ -41,7 +41,7 @@ clone() {
     exit 1
   fi
   # Blobless, not shallow: rebase needs upstream history between the two tags.
-  git clone -q --filter=blob:none --no-checkout "$REPO" "$dir"
+  git clone -q -c core.autocrlf=false --filter=blob:none --no-checkout "$REPO" "$dir"
   git -C "$dir" -c advice.detachedHead=false checkout -q --detach "refs/tags/$1"
 }
 
