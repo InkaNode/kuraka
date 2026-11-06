@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 23:19:02 -0500
+Subject: [PATCH] feat: hide Kuraka-managed and Enterprise views behind a menu
+ toggle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Stalwart's menu and search show the views Kuraka manages (accounts, tenants, domains, DKIM) and Enterprise-only views. Make those changes in Kuraka.
+Kuraka-Missing-Es: El menú y la búsqueda de Stalwart muestran las vistas que gestiona Kuraka (cuentas, tenants, dominios, DKIM) y las de Enterprise. Haz esos cambios en Kuraka.
+---
+ src/components/layout/TopBar.tsx | 10 +++++++++-
+ src/hooks/useGlobalSearch.ts     |  3 +++
+ src/lib/kuraka.ts                | 34 ++++++++++++++++++++++++++++++++
+ src/lib/layout.ts                |  2 ++
+ 4 files changed, 48 insertions(+), 1 deletion(-)
+ create mode 100644 src/lib/kuraka.ts
+
+diff --git a/src/components/layout/TopBar.tsx b/src/components/layout/TopBar.tsx
+index 5663756..ad79a0e 100644
+--- a/src/components/layout/TopBar.tsx
++++ b/src/components/layout/TopBar.tsx
+@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
+ import { CommandPalette } from '@/components/common/CommandPalette';
+ import {
+   DropdownMenu,
++  DropdownMenuCheckboxItem,
+   DropdownMenuContent,
+   DropdownMenuGroup,
+   DropdownMenuItem,
+@@ -29,6 +30,7 @@ import { useAuthStore } from '@/stores/authStore';
+ import { buildEndSessionUrl, getPostLogoutRedirectUri } from '@/services/auth/oauth';
+ import { useEffect, useState } from 'react';
+ import { useIsCommunity } from '@/hooks/usePermissions';
++import { setShowAllViews, showAllViews } from '@/lib/kuraka';
+ import { SIDEBAR_ID } from './sidebarContext';
+ import { useLayoutNavigation } from './useLayoutNavigation';
+ 
+@@ -50,6 +52,7 @@ export function TopBar() {
+   const { layouts: navigableLayouts, landingPath } = useLayoutNavigation();
+   const [upsellOpen, setUpsellOpen] = useState(false);
+   const [paletteOpen, setPaletteOpen] = useState(false);
++  const showAll = showAllViews();
+ 
+   useEffect(() => {
+     function handleGlobalKeyDown(e: KeyboardEvent) {
+@@ -170,7 +173,12 @@ export function TopBar() {
+               </>
+             )}
+ 
+-            {isCommunity && (
++            <DropdownMenuCheckboxItem checked={showAll} onCheckedChange={(on) => setShowAllViews(on === true)}>
++              {t('kuraka.showAll', 'Show Kuraka and Enterprise items')}
++            </DropdownMenuCheckboxItem>
++            <DropdownMenuSeparator />
++
++            {isCommunity && showAll && (
+               <>
+                 <DropdownMenuItem onClick={() => setUpsellOpen(true)}>
+                   <Sparkles aria-hidden="true" className="mr-2 h-4 w-4" />
+diff --git a/src/hooks/useGlobalSearch.ts b/src/hooks/useGlobalSearch.ts
+index e9b084e..fa8f687 100644
+--- a/src/hooks/useGlobalSearch.ts
++++ b/src/hooks/useGlobalSearch.ts
+@@ -10,6 +10,8 @@ import { List, Plus, Settings } from 'lucide-react';
+ import { useSchemaStore, type SearchIndexEntry } from '@/stores/schemaStore';
+ import { usePermissionCheckers } from '@/hooks/usePermissions';
+ import { isCreateOnly } from '@/lib/permissions';
++import { isHiddenView } from '@/lib/kuraka';
++import { isLinkEnterprise } from '@/lib/layout';
+ import { resolveObject } from '@/lib/schemaResolver';
+ import type { Schema } from '@/types/schema';
+ 
+@@ -83,6 +85,7 @@ export function useGlobalSearch(onAfterSelect?: () => void) {
+       }
+       const resolved = resolveObject(schema, entry.viewName);
+       if (!resolved) return false;
++      if (isHiddenView(entry.viewName, isLinkEnterprise(schema, entry.viewName))) return false;
+       return hasObjectPermission(
+         resolved.permissionPrefix,
+         isCreateOnly(schema, resolved.permissionPrefix) ? 'Create' : 'Get',
+diff --git a/src/lib/kuraka.ts b/src/lib/kuraka.ts
+new file mode 100644
+index 0000000..bef7dfe
+--- /dev/null
++++ b/src/lib/kuraka.ts
+@@ -0,0 +1,34 @@
++/*
++ * SPDX-FileCopyrightText: 2026 InkaNode
++ *
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++// Kuraka (https://github.com/InkaNode/kuraka) manages these views, so the
++// menu hides them, plus Enterprise-only views, until the user menu toggle is
++// on. Visual only: the server API and permissions are unchanged.
++// frugal: Enterprise views are hidden regardless of edition; a licensed
++// server shows them with the toggle.
++const KURAKA_VIEWS = new Set(['x:Account/User', 'x:Tenant', 'x:Domain', 'x:DkimSignature']);
++const STORAGE_KEY = 'kuraka.showAll';
++
++export function showAllViews(): boolean {
++  try {
++    return localStorage.getItem(STORAGE_KEY) === 'true';
++  } catch {
++    return false;
++  }
++}
++
++export function setShowAllViews(on: boolean): void {
++  try {
++    localStorage.setItem(STORAGE_KEY, String(on));
++  } catch {
++    return;
++  }
++  window.location.reload();
++}
++
++export function isHiddenView(viewName: string, enterprise: boolean): boolean {
++  return !showAllViews() && (enterprise || KURAKA_VIEWS.has(viewName));
++}
+diff --git a/src/lib/layout.ts b/src/lib/layout.ts
+index f1c6cd7..915a3e0 100644
+--- a/src/lib/layout.ts
++++ b/src/lib/layout.ts
+@@ -7,6 +7,7 @@
+ import type { Layout, LayoutSubItem, Schema } from '@/types/schema';
+ import { resolveObject } from '@/lib/schemaResolver';
+ import { isCommunityEdition, isCreateOnly } from '@/lib/permissions';
++import { isHiddenView } from '@/lib/kuraka';
+ 
+ export type CanGet = (permissionPrefix: string) => boolean;
+ export type HasPermission = (permission: string) => boolean;
+@@ -62,6 +63,7 @@ function checkSpecialLink(
+ }
+ 
+ export function isLinkVisible(schema: Schema, viewName: string, canGet: CanGet, hasPerm?: HasPermission): boolean {
++  if (isHiddenView(viewName, isLinkEnterprise(schema, viewName))) return false;
+   const special = checkSpecialLink(schema, viewName, hasPerm, canGet);
+   if (special !== null) return special.visible;
+   const resolved = resolveObject(schema, viewName);

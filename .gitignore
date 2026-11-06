@@ -9,3 +9,4 @@ deploy/.updates-tmp/
 deploy/backups/
 deploy/desks/
 deploy/maintenance/
+.work/

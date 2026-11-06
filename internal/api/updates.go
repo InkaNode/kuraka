@@ -18,6 +18,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
+	"github.com/InkaNode/kuraka/patches"
 )
 
 const (
@@ -241,6 +242,14 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	webuiSkipped, err := patches.Skipped("stalwart-webui")
+	if err != nil {
+		return nil, err
+	}
+	deskSkipped, err := patches.Skipped("libredesk")
+	if err != nil {
+		return nil, err
+	}
 	desks := make([]any, 0, len(rows))
 	for _, h := range rows {
 		container := deskContainer(h)
@@ -279,7 +288,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if status == "error" {
 		self["message"] = message
 	}
-	web := map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui)}
+	web := map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui), "patches": webuiSkipped}
 	addonCompatibility(web, "webui", webui)
 	out := map[string]any{
 		"checked_at":  nil,
@@ -287,7 +296,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		"stalwart":    server,
 		"kuraka":      self,
 		"webui":       web,
-		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks},
+		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks, "patches": deskSkipped},
 	}
 	if !checkedAt.IsZero() {
 		out["checked_at"] = checkedAt

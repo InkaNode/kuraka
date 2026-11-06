@@ -1,0 +1,68 @@
+name: Upstream
+
+# Daily: when Stalwart WebUI or Libredesk publish a release, open a pull
+# request that moves patches/<app> to it (scripts/patches.sh rebase). Patches
+# that no longer apply are marked skipped and explained in the pull request;
+# Kuraka builds without them and shows a notice on the Updates page. CI on
+# the branch merges the pull request when every check passes.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [stalwart-webui, libredesk]
+    env:
+      APP: ${{ matrix.app }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          source "patches/$APP/UPSTREAM"
+          LATEST=$(gh api "repos/${REPO#https://github.com/}/releases/latest" --jq .tag_name)
+          [[ $LATEST =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || { echo "unexpected tag '$LATEST'"; exit 1; }
+          if [[ $LATEST == "$REF" || $(printf '%s\n' "$REF" "$LATEST" | sort -V | tail -n 1) != "$LATEST" ]]; then
+            echo "$APP is on $REF; latest release is $LATEST"
+            exit 0
+          fi
+          BRANCH=patches/$APP-$LATEST
+          # A branch left open or closed by hand is not redone.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            echo "$BRANCH already exists"
+            exit 0
+          fi
+
+          bash scripts/patches.sh rebase "$APP" "$LATEST"
+          SKIPPED=$(grep -c '^-' "patches/$APP/series" || true)
+          TITLE="chore(patches): update $APP to $LATEST"
+          (( SKIPPED == 0 )) || TITLE="$TITLE ($SKIPPED patches skipped)"
+
+          git switch -q -c "$BRANCH"
+          git add "patches/$APP"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "chore(patches): update $APP to $LATEST"
+          git push -q origin "$BRANCH"
+          head -c 60000 ".work/$APP.report.md" > body.md
+          gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file body.md
+
+          gh pr list --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"patches/$APP-\")) | select(.headRefName != \"$BRANCH\") | .number" |
+            while read -r PR; do
+              gh pr close "$PR" --delete-branch --comment "Replaced by $BRANCH."
+            done
+          gh workflow run ci.yml --ref "$BRANCH"

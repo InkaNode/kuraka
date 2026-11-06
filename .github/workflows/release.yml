@@ -4,7 +4,8 @@ name: Release
 # internal/version/version.go (tag v<version>), so a release always holds every
 # commit since "chore: bump version to <version>". Images: <version>,
 # <major>.<minor> and latest (stable versions only), plus sha-<commit>, which
-# the panel's Kuraka update installs.
+# the panel's Kuraka update installs. patches.yml adds stalwart-webui.zip and
+# the Libredesk image built from patches/.
 
 on:
   workflow_run:
@@ -22,7 +23,8 @@ concurrency:
 
 jobs:
   version:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    # workflow_dispatch: CI on main after the upstream watcher's merge (ci.yml automerge).
+    if: github.event.workflow_run.conclusion == 'success' && contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event)
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -74,8 +76,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  patches:
+    needs: version
+    uses: ./.github/workflows/patches.yml
+    with:
+      ref: ${{ github.event.workflow_run.head_sha }}
+      publish: true
+      version: ${{ needs.version.outputs.version }}
+
   release:
-    needs: [version, image]
+    needs: [version, image, patches]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +136,9 @@ jobs:
               echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$BASE...$TAG"
             fi
           } > release-notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          name: stalwart-webui
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,4 +155,4 @@ jobs:
           fi
           FLAGS=(--latest)
           [[ $PRERELEASE == true ]] && FLAGS=(--prerelease --latest=false)
-          gh release create "$TAG" --title "$VERSION" --notes-file release-notes.md --target "$HEAD_SHA" "${FLAGS[@]}"
+          gh release create "$TAG" stalwart-webui.zip --title "$VERSION" --notes-file release-notes.md --target "$HEAD_SHA" "${FLAGS[@]}"
