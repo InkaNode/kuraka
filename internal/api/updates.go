@@ -22,15 +22,18 @@ import (
 )
 
 const (
-	libredeskRepo = "abhinavxd/libredesk"
-	webuiRepo     = "stalwartlabs/webui"
-	stalwartRepo  = "stalwartlabs/stalwart"
-	kurakaRepo    = "InkaNode/kuraka"
-	webuiSetting  = "webui_applied"
+	stalwartRepo = "stalwartlabs/stalwart"
+	kurakaRepo   = "InkaNode/kuraka"
+	webuiSetting = "webui_applied"
+	// Keep in sync with WEBUI_URL in deploy/setup.sh.
+	webuiURL = "https://github.com/InkaNode/kuraka/releases/latest/download/stalwart-webui.zip"
 )
 
 var deskHost = regexp.MustCompile(`^kuraka-[a-z0-9-]+-desk$`)
 var stableTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// deskTag is a patched Libredesk image tag, see provision.LibredeskTag.
+var deskTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 var kurakaTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 // updateState caches the latest release tags read from GitHub.
@@ -39,8 +42,6 @@ type updateState struct {
 	requestMu sync.Mutex // serializes update requests written to the host
 	mu        sync.Mutex // guards the fields below
 	checkedAt time.Time
-	libredesk string
-	webui     string
 	stalwart  string
 	kuraka    releases.Release
 	err       string
@@ -92,14 +93,12 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	if recent {
 		return
 	}
-	libredesk, libredeskErr := s.releases.Latest(ctx, libredeskRepo)
-	webui, webuiErr := s.releases.Latest(ctx, webuiRepo)
 	stalwart, stalwartErr := s.releases.Latest(ctx, stalwartRepo)
 	kuraka, kurakaErr := s.releases.LatestRelease(ctx, kurakaRepo)
 	if ctx.Err() != nil {
 		return
 	}
-	err := errors.Join(libredeskErr, webuiErr, stalwartErr, kurakaErr)
+	err := errors.Join(stalwartErr, kurakaErr)
 	if err != nil {
 		s.log.Warn("update check failed", "error", err)
 	}
@@ -109,24 +108,12 @@ func (s *Server) checkUpdates(ctx context.Context) {
 	if err != nil {
 		u.err = err.Error()
 	}
-	if libredeskErr == nil {
-		u.libredesk = libredesk
-	}
-	if webuiErr == nil {
-		u.webui = webui
-	}
 	if stalwartErr == nil {
 		u.stalwart = stalwart
 	}
 	if kurakaErr == nil {
 		u.kuraka = kuraka
 	}
-}
-
-func (s *Server) latestTags() (libredesk, webui, stalwart string) {
-	s.updates.mu.Lock()
-	defer s.updates.mu.Unlock()
-	return s.updates.libredesk, s.updates.webui, s.updates.stalwart
 }
 
 func versionState(current, latest string) string {
@@ -167,6 +154,14 @@ type updateResult struct {
 	Current string `json:"current"`
 }
 
+// latestTags returns the versions to offer. Libredesk and the web interface
+// are built by Kuraka releases with patches/<app>, so they follow Kuraka.
+func (s *Server) latestTags() (libredesk, webui, stalwart string) {
+	s.updates.mu.Lock()
+	defer s.updates.mu.Unlock()
+	return provision.LibredeskTag(), s.updates.kuraka.Tag, s.updates.stalwart
+}
+
 // requestVersion reads the pending request <name>.json or last result
 // <name>.result.json the host timer left in the updates directory. installed
 // is the version shown when there is no result.
@@ -180,12 +175,12 @@ func (s *Server) requestVersion(name, installed, latest string) (current, status
 	if f, err := os.Open(base + ".result.json"); err == nil {
 		err = json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&result)
 		f.Close()
-		if err != nil || !stableTag.MatchString(result.Tag) {
+		if err != nil || !stableTag.MatchString(result.Tag) && !deskTag.MatchString(result.Tag) {
 			result = updateResult{}
 		}
 	}
 	switch {
-	case stableTag.MatchString(result.Current):
+	case stableTag.MatchString(result.Current) || deskTag.MatchString(result.Current):
 		current = result.Current
 	case result.Status == "ok":
 		current = result.Tag
@@ -231,9 +226,9 @@ func (s *Server) kurakaState(latest releases.Release) (status, message string) {
 
 func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	s.updates.mu.Lock()
-	checkedAt, libredesk, webui, stalwart, checkErr := s.updates.checkedAt, s.updates.libredesk, s.updates.webui, s.updates.stalwart, s.updates.err
-	kuraka := s.updates.kuraka
+	checkedAt, checkErr, kuraka := s.updates.checkedAt, s.updates.err, s.updates.kuraka
 	s.updates.mu.Unlock()
+	libredesk, webui, stalwart := s.latestTags()
 	applied, err := s.st.GetSetting(ctx, webuiSetting)
 	if err != nil {
 		return nil, err
@@ -258,7 +253,6 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		}
 		current, status, message := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, libredesk)
 		row := map[string]any{"id": h.ID, "name": h.Name, "current": current, "state": status}
-		addonCompatibility(row, "libredesk", libredesk)
 		if message != "" {
 			row["message"] = message
 		}
@@ -289,7 +283,6 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		self["message"] = message
 	}
 	web := map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui), "patches": webuiSkipped}
-	addonCompatibility(web, "webui", webui)
 	out := map[string]any{
 		"checked_at":  nil,
 		"updates_dir": s.cfg.UpdatesDir != "",
@@ -316,16 +309,17 @@ func (s *Server) checkUpdatesNow(_ http.ResponseWriter, r *http.Request) (any, e
 	return s.updatesBody(r.Context())
 }
 
-// updateWebUI makes Stalwart download webui.zip again: its resource URL
-// always points to the latest official webui release.
+// updateWebUI points Stalwart's web interface to Kuraka's patched build,
+// which always serves the latest Kuraka release, and makes Stalwart download
+// it again.
 func (s *Server) updateWebUI(_ http.ResponseWriter, r *http.Request) (any, error) {
 	_, latest, _ := s.latestTags()
 	if latest == "" {
 		return nil, conflict("Latest release unknown; check for updates first")
 	}
 	state(r).detail = latest
-	if !addons.Allows("webui", latest) {
-		return nil, conflict("Waiting for a Kuraka update that supports " + latest)
+	if err := s.sw.SetWebUIURL(r.Context(), webuiURL); err != nil {
+		return nil, upstream(err)
 	}
 	if err := s.sw.UpdateApps(r.Context()); err != nil {
 		return nil, upstream(err)
@@ -368,10 +362,7 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 		return nil, conflict("No helpdesk update available")
 	}
 	state(r).detail = latest
-	if !addons.Allows("libredesk", latest) {
-		return nil, conflict("Waiting for a Kuraka update that supports " + latest)
-	}
-	if !stableTag.MatchString(latest) {
+	if !deskTag.MatchString(latest) {
 		return nil, invalid("release tag")
 	}
 	data, err := json.Marshal(map[string]string{"container": container, "tag": latest})

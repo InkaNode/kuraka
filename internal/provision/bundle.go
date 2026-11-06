@@ -9,11 +9,18 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/InkaNode/kuraka/internal/version"
 )
 
-// LibredeskVersion is the image tag new bundles install. Installed helpdesks
-// are upgraded from Integrations > Updates.
+// LibredeskVersion is the upstream Libredesk release patched by this Kuraka
+// release; keep it equal to REF in patches/libredesk/UPSTREAM.
 const LibredeskVersion = "v2.9.2"
+
+// LibredeskTag is the ghcr.io/inkanode/libredesk tag this release publishes
+// and new bundles install. Installed helpdesks are upgraded from
+// Integrations > Updates.
+func LibredeskTag() string { return LibredeskVersion + "-kuraka." + version.Version }
 
 type Options struct {
 	MailNetwork    string
@@ -87,7 +94,7 @@ func Bundle(tenantName, host string, opts Options) (Result, error) {
 services:
   app:
     # Update deliberately; --upgrade runs on every start.
-    image: libredesk/libredesk:%s
+    image: ghcr.io/inkanode/libredesk:%s
     container_name: kuraka-%s-desk
     restart: unless-stopped
     environment:
@@ -131,7 +138,7 @@ volumes:
     labels:
       kuraka.bundle: %s
   redis-data:
-`, name, LibredeskVersion, name, opts.MailNetwork, bundleID)
+`, name, LibredeskTag(), name, opts.MailNetwork, bundleID)
 	config := fmt.Sprintf(`[app]
 env = "prod"
 log_level = "info"

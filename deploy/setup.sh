@@ -22,7 +22,8 @@ KURAKA_UID=65532
 ISSUER_DIR=acme-v02.api.letsencrypt.org-directory
 # Overridden to "local" below when CADDY_EXTRA_GLOBAL=local_certs (local testing).
 USING='["urn:ietf:params:jmap:core","urn:stalwart:jmap"]'
-WEBUI_URL=https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip
+# Kuraka's patched build (patches/stalwart-webui); keep in sync with webuiURL in internal/api/updates.go.
+WEBUI_URL=https://github.com/InkaNode/kuraka/releases/latest/download/stalwart-webui.zip
 # Keep in sync with ServiceKeyDisabled in internal/stalwart/apppasswords.go.
 SERVICE_KEY_DISABLED=(
   sysDomainDestroy
@@ -315,7 +316,7 @@ main() {
       die "could not trust the internal network ($(jmap_error "${resp:-}" a a); $(jmap_error "${resp:-}" h singleton))"
   fi
 
-  # Official web interface; the Caddy-injected Kuraka addon hides the views Kuraka manages.
+  # Web interface built by Kuraka releases; the Caddy-injected Kuraka addon hides the views Kuraka manages.
   local webui_set=0 app
   if [[ -z $admin ]]; then
     log "STALWART_ADMIN is not set; skipping the web interface URL"
