@@ -1,7 +1,7 @@
 import '../i18n/system.js';
 import { h, mount } from '../core/h.js';
 import { api, errorMessage } from '../core/api.js';
-import { t, formatDate } from '../core/i18n.js';
+import { t, formatDate, getLang } from '../core/i18n.js';
 import { button, card, pageHeader, table, badge, checkbox, errorBox, confirmDialog, toast } from '../core/ui.js';
 
 const UPDATE_POLL_MS = 10000;
@@ -29,7 +29,7 @@ export async function systemView() {
       { key: 'kuraka', name: 'Kuraka', state: 'unknown', ...updates.kuraka },
       { key: 'stalwart', name: t('system.updates.stalwart'), ...updates.stalwart },
       { key: 'webui', name: t('system.updates.webui'), ...updates.webui },
-      ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, latest: updates.libredesk.latest })),
+      ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, latest: updates.libredesk.latest, patches: updates.libredesk.patches })),
     ];
     mount(updatesBody,
       h('p', { class: 'muted' }, updates.checked_at ? t('system.updates.checked', { date: formatDate(updates.checked_at) }) : t('system.updates.never')),
@@ -45,7 +45,12 @@ export async function systemView() {
           badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
             ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
           row.state === 'waiting' ? h('span', { class: 'muted' }, t('system.updates.waiting', { latest: row.latest, supported: row.supported }))
-            : row.message ? h('span', { class: 'muted' }, row.message) : null) },
+            : row.message ? h('span', { class: 'muted' }, row.message) : null,
+          // Patches Kuraka skipped because they no longer apply to this upstream version.
+          row.patches?.length ? h('span', { class: 'muted' }, t('system.patches.intro')) : null,
+          ...(row.patches || []).map(patch => h('div', { class: 'row gap-1' },
+            badge(t(`system.patches.${patch.severity}`), patch.severity === 'urgent' ? 'danger' : 'warn'),
+            h('span', {}, getLang() === 'en' ? patch.missing_en : patch.missing_es)))) },
         // Failed server updates can be retried.
         { label: t('system.updates.actions'), render: row => (row.state === 'available' || (row.key !== 'webui' && row.state === 'error'))
           && (row.key === 'kuraka' || row.key === 'webui' || updates.updates_dir)

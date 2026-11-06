@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The upstream watcher (upstream.yml) runs CI on its patches/* branches
+  # this way, because pushes made with GITHUB_TOKEN start no workflows.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -58,3 +61,40 @@ jobs:
           go-version-file: go.mod
       - run: bash scripts/ci/stalwart-up.sh ${{ matrix.stalwart }}
       - run: go test -tags integration -count=1 ./internal/integration/...
+
+  patches:
+    uses: ./.github/workflows/patches.yml
+
+  # Merges the watcher's pull request once every check passed on the commit
+  # it pushed, then runs CI on main to check the merge (release.yml skips it).
+  automerge:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'patches/')
+    needs: [go, image, web, integration, patches]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      - run: |
+          gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$GITHUB_SHA"
+          gh workflow run ci.yml --ref main
+
+  automerge-failed:
+    if: failure() && github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'patches/')
+    needs: [go, image, web, integration, patches]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BRANCH: ${{ github.ref_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - run: |
+          gh pr comment "$BRANCH" --body "CI failed, so this stays open: $RUN_URL"

@@ -34,6 +34,8 @@ registerMessages({
     'system.updates.started': 'Actualización pedida. El servidor la empieza en menos de un minuto.',
     'system.updates.webuiDone': 'Stalwart está descargando la nueva interfaz web.',
     'system.updates.together': 'Actualiza Stalwart y su interfaz web juntos.',
+    'system.patches.intro': 'Kuraka todavía no adapta esta versión. Hasta que lo haga:',
+    'system.patches.urgent': 'Urgente', 'system.patches.normal': 'Aviso',
     'system.updates.noDir': 'Las actualizaciones de Stalwart y Libredesk necesitan el temporizador del servidor: vuelve a ejecutar deploy/setup.sh.',
   },
   en: {
@@ -69,6 +71,8 @@ registerMessages({
     'system.updates.started': 'Update requested. The server starts it within a minute.',
     'system.updates.webuiDone': 'Stalwart is downloading the new web interface.',
     'system.updates.together': 'Update Stalwart and its web interface together.',
+    'system.patches.intro': 'Kuraka has not adapted this version yet. Until it does:',
+    'system.patches.urgent': 'Urgent', 'system.patches.normal': 'Notice',
     'system.updates.noDir': 'Stalwart and Libredesk updates need the server timer: run deploy/setup.sh again.',
   },
 });

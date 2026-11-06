@@ -1,0 +1,94 @@
+name: Patches
+
+# Builds Stalwart WebUI and Libredesk from upstream plus patches/<app>. CI
+# calls it to check every patch still applies and builds; the release also
+# publishes the results: stalwart-webui.zip (artifact, attached to the
+# release) and ghcr.io/inkanode/libredesk:<upstream>-kuraka.<version> and
+# :sha-<commit>.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      publish:
+        type: boolean
+        default: false
+      version:
+        type: string
+        default: ""
+
+jobs:
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash scripts/patches.sh checkout stalwart-webui
+      - name: Build
+        working-directory: .work/stalwart-webui
+        run: |
+          set -euo pipefail
+          npm ci
+          npx eslint src/
+          npm run build
+          cd dist
+          zip -qr ../../stalwart-webui.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stalwart-webui
+          path: .work/stalwart-webui.zip
+          if-no-files-found: error
+
+  libredesk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: bash scripts/patches.sh checkout libredesk
+      - id: meta
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          source patches/libredesk/UPSTREAM
+          IMAGE=ghcr.io/inkanode/libredesk
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          if [[ $PUBLISH == true ]]; then
+            [[ -n $VERSION ]] || { echo "publishing needs a version"; exit 1; }
+            echo "tags=$IMAGE:$REF-kuraka.$VERSION,$IMAGE:sha-$COMMIT" >> "$GITHUB_OUTPUT"
+            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=libredesk:ci" >> "$GITHUB_OUTPUT"
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+          fi
+      - if: inputs.publish
+        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .work/libredesk
+          file: patches/libredesk/Dockerfile
+          platforms: ${{ steps.meta.outputs.platforms }}
+          push: ${{ inputs.publish }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: LIBREDESK_VERSION=${{ steps.meta.outputs.ref }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/InkaNode/kuraka
+            org.opencontainers.image.version=${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=libredesk
+          cache-to: type=gha,mode=max,scope=libredesk
