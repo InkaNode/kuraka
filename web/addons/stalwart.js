@@ -12,7 +12,8 @@
   const failed = new Set();
   const loaded = document.readyState === 'complete' ? Promise.resolve()
     : new Promise(resolve => window.addEventListener('load', resolve, { once: true }));
-  const admin = () => /^\/admin(?:\/|$)/.test(location.pathname);
+  // Admins also reach the Management section from /account.
+  const admin = () => /^\/(?:admin|account)(?:\/|$)/.test(location.pathname);
   let schema = null, schemaToken = '', queued = false, showAll = false, brandedTitle = '';
   // New key: the fork's kuraka.showAll could keep everything shown; hidden is the default.
   const showAllKey = 'kuraka.addon.stalwart.showAll';
