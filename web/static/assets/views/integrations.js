@@ -130,7 +130,7 @@ export async function integrationsView(ctx) {
         rows[kind] = [...rows[kind], result]; render();
         if (!closed) { dialog.close(); toast(t('integrations.connected')); }
       } catch (err) {
-        if (!closed) formError(form, err.code === 'upstream_error'
+        if (!closed) formError(form, ['upstream_error', 'helpdesk_error', 'cloudflare_unavailable'].includes(err.code)
           ? new Error(t(isDNS ? 'integrations.dnsVerification' : 'integrations.helpdeskVerification')) : err);
       } finally {
         busy = false; submit.disabled = false; controls.forEach(input => { input.disabled = false; });

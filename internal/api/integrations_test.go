@@ -856,3 +856,18 @@ func TestConcurrentHelpdeskActivation(t *testing.T) {
 		t.Fatalf("API key regenerated %d times", len(hd.setupPasswords))
 	}
 }
+
+func TestCloudflareFailureNamesMissingPermission(t *testing.T) {
+	err := cloudflareFailure("Alias redirect failed", cfRedirectEdit, &cloudflare.APIError{Status: 403, Codes: []int{10000}, Messages: []string{"Authentication error"}})
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.status != 403 || ae.code != "cloudflare_permission" || ae.params["permission"] != cfRedirectEdit {
+		t.Fatalf("permission: %#v", ae)
+	}
+	err = cloudflareFailure("DNS record creation failed", cfDNSEdit, &cloudflare.APIError{Status: 400, Codes: []int{81057}, Messages: []string{"Record already exists."}})
+	if !errors.As(err, &ae) || ae.code != "cloudflare_error" || ae.params["detail"] != "Record already exists." {
+		t.Fatalf("rejected: %#v", ae)
+	}
+	if !errors.As(cloudflareFailure("DNS zone lookup failed", cfZoneRead, errors.New("dial tcp: timeout")), &ae) || ae.code != "cloudflare_unavailable" || ae.params != nil {
+		t.Fatalf("unreachable: %#v", ae)
+	}
+}

@@ -1,8 +1,8 @@
 import { t } from './i18n.js';
 export class ApiError extends Error {
-  constructor(status, code, message) {
-    super(message || t(`error.${code}`));
-    this.name = 'ApiError'; this.status = status; this.code = code;
+  constructor(status, code, message, params = {}) {
+    super(message || t(`error.${code}`, params));
+    this.name = 'ApiError'; this.status = status; this.code = code; this.params = params;
   }
 }
 // Requests in flight show the top loading bar (body.busy).
@@ -31,7 +31,7 @@ export async function api(method, path, body) {
   if (!response.ok) {
     const pathname = path.split('?')[0];
     if (response.status === 401 && !['/auth/login', '/auth/totp', '/setup', '/auth/me'].includes(pathname)) window.dispatchEvent(new Event('auth:lost'));
-    throw new ApiError(response.status, data?.error?.code || 'network', data?.error?.message);
+    throw new ApiError(response.status, data?.error?.code || 'network', data?.error?.message, data?.error?.params || {});
   }
   if (!parsed) throw new ApiError(response.status, 'network');
   return data;
@@ -39,7 +39,7 @@ export async function api(method, path, body) {
 export function errorMessage(err) {
   if (err?.code) {
     const key = `error.${err.code}`;
-    const message = t(key);
+    const message = t(key, err.params || {});
     if (message !== key) return message;
   }
   return err?.message || t('error.network');

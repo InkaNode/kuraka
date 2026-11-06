@@ -117,7 +117,7 @@ func (s *Server) createZone(_ http.ResponseWriter, r *http.Request) (any, error)
 	if _, err := client.FindZone(r.Context(), d.Name); err == nil {
 		return nil, conflict("Zone already exists in Cloudflare")
 	} else if !errors.Is(err, cloudflare.ErrZoneNotFound) {
-		return nil, integrationFailure("DNS zone lookup failed", err)
+		return nil, cloudflareFailure("DNS zone lookup failed", cfZoneRead, err)
 	}
 	zone, err := client.CreateZone(r.Context(), d.Name)
 	var ce *cloudflare.APIError
@@ -125,7 +125,7 @@ func (s *Server) createZone(_ http.ResponseWriter, r *http.Request) (any, error)
 		return nil, &apiError{status: 422, code: "zone_permission", message: "Cloudflare refused to create the zone; the token needs Zone:Edit on the account", cause: err}
 	}
 	if err != nil {
-		return nil, integrationFailure("DNS zone creation failed", err)
+		return nil, cloudflareFailure("DNS zone creation failed", cfZoneEdit, err)
 	}
 	if err := s.st.SetDomainDNSProvider(r.Context(), d.ID, &p.ID); err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func loadDNS(ctx context.Context, client DNSAPI, names []string) (dnsSnapshot, e
 	for _, name := range names {
 		zone, err := client.FindZone(ctx, name)
 		if err != nil {
-			return snap, integrationFailure("DNS zone lookup failed", err)
+			return snap, cloudflareFailure("DNS zone lookup failed", cfZoneRead, err)
 		}
 		snap.zones[dnsName(name)] = zone.ID
 		if seen[zone.ID] {
@@ -154,7 +154,7 @@ func loadDNS(ctx context.Context, client DNSAPI, names []string) (dnsSnapshot, e
 		seen[zone.ID] = true
 		records, err := client.ListRecords(ctx, zone.ID)
 		if err != nil {
-			return snap, integrationFailure("DNS records lookup failed", err)
+			return snap, cloudflareFailure("DNS records lookup failed", cfDNSRead, err)
 		}
 		for _, record := range records {
 			content, priority := record.Content, record.Priority
@@ -311,7 +311,7 @@ func (s *Server) changeDNS(r *http.Request, apply bool) (any, error) {
 		if c.Op == dnsplan.Update {
 			_, err = client.UpdateRecord(r.Context(), zone, c.Existing.ID, record)
 			if err != nil {
-				return nil, integrationFailure("DNS update failed", err)
+				return nil, cloudflareFailure("DNS update failed", cfDNSEdit, err)
 			}
 		}
 		for _, e := range c.Conflicts {
@@ -320,13 +320,13 @@ func (s *Server) changeDNS(r *http.Request, apply bool) (any, error) {
 				continue
 			}
 			if err := client.DeleteRecord(r.Context(), zone, e.ID); err != nil {
-				return nil, integrationFailure("DNS conflict removal failed", err)
+				return nil, cloudflareFailure("DNS conflict removal failed", cfDNSEdit, err)
 			}
 			deleted[key] = true
 		}
 		if c.Op != dnsplan.Update {
 			if _, err := client.CreateRecord(r.Context(), zone, record); err != nil {
-				return nil, integrationFailure("DNS record creation failed", err)
+				return nil, cloudflareFailure("DNS record creation failed", cfDNSEdit, err)
 			}
 		}
 		applied++
@@ -366,7 +366,7 @@ func (s *Server) aliasRedirect(_ http.ResponseWriter, r *http.Request) (any, err
 	for _, alias := range remote.Aliases {
 		zone, err := client.FindZone(r.Context(), alias)
 		if err != nil {
-			return nil, integrationFailure("Alias zone lookup failed", err)
+			return nil, cloudflareFailure("Alias zone lookup failed", cfZoneRead, err)
 		}
 		// SetRedirect affects an entire zone. Never redirect a parent zone for
 		// an alias that is only a subdomain within that zone.
@@ -375,7 +375,7 @@ func (s *Server) aliasRedirect(_ http.ResponseWriter, r *http.Request) (any, err
 		}
 		records, err := client.ListRecords(r.Context(), zone.ID)
 		if err != nil {
-			return nil, integrationFailure("Alias DNS lookup failed", err)
+			return nil, cloudflareFailure("Alias DNS lookup failed", cfDNSRead, err)
 		}
 		// The apex and the wildcard need proxied addresses so Cloudflare
 		// answers every host of the alias and the redirect rule can run.
@@ -400,11 +400,11 @@ func (s *Server) aliasRedirect(_ http.ResponseWriter, r *http.Request) (any, err
 	for _, plan := range plans {
 		for _, name := range plan.missing {
 			if _, err := client.CreateRecord(r.Context(), plan.zone.ID, cloudflare.Record{Type: "A", Name: name, Content: "192.0.2.1", TTL: 1, Proxied: true, Comment: managedComment}); err != nil {
-				return nil, integrationFailure("Alias address creation failed", err)
+				return nil, cloudflareFailure("Alias address creation failed", cfDNSEdit, err)
 			}
 		}
 		if err := client.SetRedirect(r.Context(), plan.zone.ID, dnsName(plan.zone.Name), in.Target); err != nil {
-			return nil, integrationFailure("Alias redirect failed", err)
+			return nil, cloudflareFailure("Alias redirect failed", cfRedirectEdit, err)
 		}
 	}
 	return map[string]any{"redirected": len(plans)}, nil

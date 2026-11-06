@@ -313,7 +313,8 @@ func clientIP(r *http.Request) string {
 type apiError struct {
 	status        int
 	code, message string
-	cause         error // logged, never sent to the client
+	params        map[string]string // safe values the UI puts in its message
+	cause         error             // logged, never sent to the client
 }
 
 func (e *apiError) Error() string {
@@ -389,6 +390,11 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	status, code, message := classify(err)
 	if status >= 500 {
 		s.log.Error("request failed", "error", err)
+	}
+	var ae *apiError
+	if errors.As(err, &ae) && len(ae.params) > 0 {
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "params": ae.params}})
+		return
 	}
 	writeError(w, status, code, message)
 }

@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/InkaNode/kuraka/internal/authz"
@@ -160,6 +162,41 @@ func integrationFailure(message string, cause error) error {
 	return &apiError{status: 502, code: "upstream_error", message: message, cause: cause}
 }
 
+// Cloudflare token permissions, as the token editor names them.
+const (
+	cfZoneRead     = "Zone → Zone → Read"
+	cfZoneEdit     = "Zone → Zone → Edit"
+	cfDNSRead      = "Zone → DNS → Read"
+	cfDNSEdit      = "Zone → DNS → Edit"
+	cfRedirectEdit = "Zone → Single Redirect → Edit"
+)
+
+// cloudflareFailure tells the user what Cloudflare refused: a missing token
+// permission they can add, or Cloudflare's own reason for a rejected change.
+func cloudflareFailure(message, permission string, cause error) error {
+	var ce *cloudflare.APIError
+	if !errors.As(cause, &ce) {
+		return &apiError{status: 502, code: "cloudflare_unavailable", message: message, cause: cause}
+	}
+	// 10000 and 9109 are Cloudflare's authentication and unauthorized-token codes.
+	if ce.Status == 401 || ce.Status == 403 || slices.Contains(ce.Codes, 10000) || slices.Contains(ce.Codes, 9109) {
+		return &apiError{status: 403, code: "cloudflare_permission", message: message + ": token lacks " + permission,
+			params: map[string]string{"permission": permission}, cause: cause}
+	}
+	detail := strings.Join(ce.Messages, "; ")
+	if len(detail) > 200 {
+		detail = detail[:200]
+	}
+	if detail == "" {
+		detail = fmt.Sprintf("HTTP %d", ce.Status)
+	}
+	return &apiError{status: 502, code: "cloudflare_error", message: message, params: map[string]string{"detail": detail}, cause: cause}
+}
+
+func helpdeskFailure(message string, cause error) error {
+	return &apiError{status: 502, code: "helpdesk_error", message: message, cause: cause}
+}
+
 func (s *Server) deleteDNSProvider(_ http.ResponseWriter, r *http.Request) (any, error) {
 	id, err := pathID(r)
 	if err != nil {
@@ -240,7 +277,7 @@ func (s *Server) createHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 	}
 	state(r).tenant = &in.TenantID
 	if err := s.newHelpdesk(in.URL, in.APIKey, in.APISecret).Ping(r.Context()); err != nil {
-		return nil, integrationFailure("Helpdesk verification failed", err)
+		return nil, helpdeskFailure("Helpdesk verification failed", err)
 	}
 	enc, err := s.box.Seal([]byte(in.APISecret))
 	if err != nil {
@@ -506,10 +543,10 @@ func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (an
 		return nil, conflict("Agent already exists in this helpdesk")
 	}
 	if err != nil {
-		return nil, integrationFailure("Helpdesk agent creation failed", err)
+		return nil, helpdeskFailure("Helpdesk agent creation failed", err)
 	}
 	if err := client.SetAgentPassword(r.Context(), agentID, a, password); err != nil {
-		return nil, integrationFailure("Helpdesk agent creation failed", err)
+		return nil, helpdeskFailure("Helpdesk agent creation failed", err)
 	}
 	// The account exists either way; a lost link only disables the sync.
 	if in.Mode == "self" && (in.Sync == nil || *in.Sync) {

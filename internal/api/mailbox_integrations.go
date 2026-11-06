@@ -115,7 +115,7 @@ func (s *Server) connectHelpdesk(_ http.ResponseWriter, r *http.Request) (any, e
 	smtp.Port = 465
 	inboxID, err := client.CreateEmailInbox(r.Context(), libredesk.NewEmailInbox{Name: in.InboxName, From: display + " <" + email + ">", IMAP: mail, SMTP: smtp})
 	if err != nil {
-		return nil, integrationFailure("Helpdesk inbox creation failed", err)
+		return nil, helpdeskFailure("Helpdesk inbox creation failed", err)
 	}
 	link, err := s.st.CreateHelpdeskLink(r.Context(), store.HelpdeskLink{DomainID: d.ID, AccountID: a.ID, HelpdeskID: h.ID, InboxID: inboxID, AppPasswordID: id})
 	if err != nil {
