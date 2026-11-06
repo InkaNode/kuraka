@@ -1,0 +1,1468 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Fri, 6 Nov 2026 00:54:53 -0500
+Subject: [PATCH] feat(statuses): display names and icons
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Statuses show their original names without icons, and default statuses cannot be edited.
+Kuraka-Missing-Es: Los estados muestran su nombre original sin íconos y los estados por defecto no se pueden editar.
+---
+ cmd/main.go                                   |   5 +
+ cmd/media.go                                  |  12 +-
+ cmd/statuses.go                               |   4 +-
+ .../components/combobox/SelectCombobox.vue    |   3 +
+ .../editor/ConversationReferenceList.vue      |   8 +-
+ .../src/features/admin/status/StatusForm.vue  | 152 +++++++++++++++++-
+ .../features/admin/status/dataTableColumns.js |  34 ++--
+ .../admin/status/dataTableDropdown.vue        |  10 +-
+ .../src/features/admin/status/formSchema.js   |  12 ++
+ .../features/admin/status/formSchema.test.js  |  18 +++
+ .../command/providers/useBulkCommands.js      |   4 +-
+ .../providers/useConversationCommands.js      |   8 +-
+ .../command/providers/useEntitySearch.js      |   4 +-
+ .../command/providers/useListCommands.js      |   6 +-
+ .../features/conversation/Conversation.vue    |   7 +-
+ .../features/conversation/ReplyBoxMenuBar.vue |   4 +-
+ .../list/ConversationBulkActionToolbar.vue    |   4 +-
+ .../conversation/list/ConversationList.vue    |   7 +-
+ .../src/features/search/SearchResultItem.vue  |   8 +-
+ frontend/apps/main/src/stores/conversation.js |  26 ++-
+ .../apps/main/src/stores/conversation.test.js |  21 +++
+ .../src/views/admin/status/StatusView.vue     |  13 +-
+ frontend/cypress/e2e/api/statuses.cy.js       |  74 ++++++---
+ frontend/cypress/e2e/ui/statusForm.cy.js      |  18 ++-
+ frontend/shared-ui/components/StatusIcon.vue  |  19 +++
+ i18n/en-US.json                               |  14 +-
+ i18n/es-ES.json                               |  14 +-
+ internal/conversation/models/models.go        |  10 +-
+ internal/conversation/status/models/models.go |  10 +-
+ internal/conversation/status/queries.sql      |  12 +-
+ internal/conversation/status/status.go        |  25 ++-
+ internal/kuraka/migrate.go                    |  28 ++++
+ internal/kuraka/status.go                     |  36 +++++
+ internal/kuraka/status_test.go                |  35 ++++
+ internal/media/models/models.go               |   4 +-
+ 35 files changed, 566 insertions(+), 103 deletions(-)
+ create mode 100644 frontend/shared-ui/components/StatusIcon.vue
+ create mode 100644 internal/kuraka/migrate.go
+ create mode 100644 internal/kuraka/status.go
+ create mode 100644 internal/kuraka/status_test.go
+
+diff --git a/cmd/main.go b/cmd/main.go
+index 3b187f6a..197c865c 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -27,6 +27,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/csat"
+ 	customAttribute "github.com/abhinavxd/libredesk/internal/custom_attribute"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat/proactive"
++	"github.com/abhinavxd/libredesk/internal/kuraka"
+ 	"github.com/abhinavxd/libredesk/internal/macro"
+ 	notifier "github.com/abhinavxd/libredesk/internal/notification"
+ 	"github.com/abhinavxd/libredesk/internal/report"
+@@ -215,6 +216,10 @@ func main() {
+ 		os.Exit(0)
+ 	}
+ 
++	if err := kuraka.Migrate(db); err != nil {
++		log.Fatalf("error running kuraka migrations: %v", err)
++	}
++
+ 	checkPendingUpgrade(db)
+ 
+ 	// Load app settings from DB into the Koanf instance.
+diff --git a/cmd/media.go b/cmd/media.go
+index ceb851fb..a1787258 100644
+--- a/cmd/media.go
++++ b/cmd/media.go
+@@ -17,6 +17,7 @@ import (
+ 	amodels "github.com/abhinavxd/libredesk/internal/auth/models"
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
+ 	"github.com/abhinavxd/libredesk/internal/image"
++	mediautil "github.com/abhinavxd/libredesk/internal/media"
+ 	mmodels "github.com/abhinavxd/libredesk/internal/media/models"
+ 	"github.com/abhinavxd/libredesk/internal/stringutil"
+ 	"github.com/google/uuid"
+@@ -75,14 +76,18 @@ func handleMediaUpload(r *fastglue.Request) error {
+ 		linkedModel = model[0]
+ 	}
+ 
+-	// Only agents who manage the help center may upload publicly served media.
++	// Public media uploads require permission to manage the linked model.
+ 	if mmodels.IsPublicModel(linkedModel) {
+ 		auser := r.RequestCtx.UserValue("user").(amodels.User)
+ 		agent, err := app.user.GetAgentCachedOrLoad(auser.ID)
+ 		if err != nil {
+ 			return sendErrorEnvelope(r, err)
+ 		}
+-		allowed, err := app.authz.Enforce(agent, "help_center", "manage")
++		obj := "help_center"
++		if linkedModel == mmodels.ModelConversationStatuses {
++			obj = "status"
++		}
++		allowed, err := app.authz.Enforce(agent, obj, "manage")
+ 		if err != nil {
+ 			return sendErrorEnvelope(r, err)
+ 		}
+@@ -169,6 +174,9 @@ func handleMediaUpload(r *fastglue.Request) error {
+ 		app.lo.Error("error inserting metadata into database", "error", err)
+ 		return sendErrorEnvelope(r, err)
+ 	}
++	if linkedModel == mmodels.ModelConversationStatuses {
++		media.URL = mediautil.PublicURI + "/" + media.UUID
++	}
+ 	return r.SendEnvelope(media)
+ }
+ 
+diff --git a/cmd/statuses.go b/cmd/statuses.go
+index 33f5aa37..a0742ef8 100644
+--- a/cmd/statuses.go
++++ b/cmd/statuses.go
+@@ -33,7 +33,7 @@ func handleCreateStatus(r *fastglue.Request) error {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.Ts("globals.messages.empty", "name", "`name`"), nil, envelope.InputError)
+ 	}
+ 
+-	createdStatus, err := app.status.Create(status.Name, status.Category)
++	createdStatus, err := app.status.Create(status.Name, status.Category, status.DisplayName, status.Icon)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -74,7 +74,7 @@ func handleUpdateStatus(r *fastglue.Request) error {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.Ts("globals.messages.empty", "name", "`name`"), nil, envelope.InputError)
+ 	}
+ 
+-	updatedStatus, err := app.status.Update(id, status.Name, status.Category)
++	updatedStatus, err := app.status.Update(id, status.Name, status.Category, status.DisplayName, status.Icon)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/frontend/apps/main/src/components/combobox/SelectCombobox.vue b/frontend/apps/main/src/components/combobox/SelectCombobox.vue
+index 40109a58..33e931b7 100644
+--- a/frontend/apps/main/src/components/combobox/SelectCombobox.vue
++++ b/frontend/apps/main/src/components/combobox/SelectCombobox.vue
+@@ -32,6 +32,7 @@
+ 
+         <!-- Others -->
+         <PriorityMarker v-else-if="type === 'priority'" :priority="item.label" :tooltip="false" />
++        <StatusIcon v-else-if="item.icon" :icon="item.icon" />
+         <span v-else-if="item.emoji">{{ item.emoji }}</span>
+         <span>{{ item.label }}</span>
+         <span v-if="isCurrentUser(item)" class="text-muted-foreground text-xs"
+@@ -64,6 +65,7 @@
+             :priority="selected.label"
+             :tooltip="false"
+           />
++          <StatusIcon v-else-if="selected.icon" :icon="selected.icon" class="shrink-0" />
+           <span v-else-if="selected.emoji" class="shrink-0">{{ selected.emoji }}</span>
+           <span class="truncate">{{ selected.label }}</span>
+           <span v-if="isCurrentUser(selected)" class="text-muted-foreground text-xs shrink-0"
+@@ -80,6 +82,7 @@
+ import { computed } from 'vue'
+ import { Avatar, AvatarImage, AvatarFallback } from '@shared-ui/components/ui/avatar'
+ import ComboBox from '@shared-ui/components/ui/combobox/ComboBox.vue'
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ import StatusDot from '@shared-ui/components/StatusDot.vue'
+ import PriorityMarker from '@main/features/conversation/PriorityMarker.vue'
+ import { useUserStore } from '@/stores/user'
+diff --git a/frontend/apps/main/src/components/editor/ConversationReferenceList.vue b/frontend/apps/main/src/components/editor/ConversationReferenceList.vue
+index dc4ed428..c199d358 100644
+--- a/frontend/apps/main/src/components/editor/ConversationReferenceList.vue
++++ b/frontend/apps/main/src/components/editor/ConversationReferenceList.vue
+@@ -12,7 +12,10 @@
+     >
+       <div class="flex items-center gap-2">
+         <span class="font-medium">#{{ item.label }}</span>
+-        <span class="text-xs text-muted-foreground">{{ item.status }}</span>
++        <span class="inline-flex items-center gap-1 text-xs text-muted-foreground">
++          <StatusIcon :icon="conversationStore.getStatusIcon(item.status)" />
++          {{ conversationStore.getStatusLabel(item.status) }}
++        </span>
+       </div>
+       <div v-if="item.subject" class="text-sm text-muted-foreground truncate">
+         {{ item.subject }}
+@@ -34,6 +37,8 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
++import { useConversationStore } from '@main/stores/conversation'
+ import { ref, watch, nextTick } from 'vue'
+ import { MIN_REFERENCE_QUERY_LENGTH } from './conversationReference'
+ 
+@@ -42,6 +47,7 @@ const props = defineProps({
+   command: { type: Function, required: true },
+   query: { type: String, default: '' }
+ })
++const conversationStore = useConversationStore()
+ const selectedIndex = ref(0)
+ const selectItem = (index) => props.items[index] && props.command(props.items[index])
+ watch(
+diff --git a/frontend/apps/main/src/features/admin/status/StatusForm.vue b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+index 158dcdc6..5f324983 100644
+--- a/frontend/apps/main/src/features/admin/status/StatusForm.vue
++++ b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+@@ -4,8 +4,20 @@
+       <FormItem>
+         <FormLabel>{{ $t('globals.terms.name') }}</FormLabel>
+         <FormControl>
+-          <Input type="text" placeholder="Spam" v-bind="componentField" />
++          <Input type="text" placeholder="Spam" v-bind="componentField" :disabled="isEditing" />
+         </FormControl>
++        <FormDescription v-if="!isEditing">{{ $t('status.fixedNameHint') }}</FormDescription>
++        <FormMessage />
++      </FormItem>
++    </FormField>
++
++    <FormField v-slot="{ componentField }" name="display_name">
++      <FormItem class="mt-4">
++        <FormLabel>{{ $t('status.displayName') }}</FormLabel>
++        <FormControl>
++          <Input type="text" v-bind="componentField" />
++        </FormControl>
++        <FormDescription>{{ $t('status.displayNameHint') }}</FormDescription>
+         <FormMessage />
+       </FormItem>
+     </FormField>
+@@ -14,7 +26,7 @@
+       <FormItem class="mt-4">
+         <FormLabel>{{ $t('globals.terms.category') }}</FormLabel>
+         <FormControl>
+-          <Select v-bind="componentField">
++          <Select v-bind="componentField" :disabled="isDefault">
+             <SelectTrigger class="w-full">
+               <SelectValue />
+             </SelectTrigger>
+@@ -31,19 +43,98 @@
+       </FormItem>
+     </FormField>
+ 
+-    <slot name="footer"></slot>
++    <FormField v-slot="{ componentField, value, handleChange }" name="icon">
++      <FormItem class="mt-4">
++        <FormLabel>{{ $t('status.icon') }}</FormLabel>
++        <div ref="emojiPickerContainer" class="relative flex flex-wrap items-center gap-2">
++          <Button
++            type="button"
++            variant="outline"
++            size="icon"
++            class="shrink-0 font-normal"
++            :aria-label="$t('status.icon')"
++            @click="isEmojiPickerVisible = !isEmojiPickerVisible"
++          >
++            <StatusIcon v-if="value" :icon="value" />
++            <SmilePlus v-else class="h-4 w-4" />
++          </Button>
++          <FormControl>
++            <Input
++              type="text"
++              class="min-w-0 flex-1"
++              maxlength="2048"
++              :placeholder="$t('status.iconPlaceholder')"
++              v-bind="componentField"
++            />
++          </FormControl>
++          <Button
++            type="button"
++            variant="outline"
++            class="shrink-0 gap-2"
++            :aria-label="$t('status.uploadImage')"
++            :title="$t('status.uploadImage')"
++            :disabled="isUploading"
++            @click="fileInput?.click()"
++          >
++            <Loader2 v-if="isUploading" class="h-4 w-4 animate-spin" />
++            <ImageUp v-else class="h-4 w-4" />
++            {{ $t('status.uploadImage') }}
++          </Button>
++          <Button
++            v-if="value"
++            type="button"
++            variant="ghost"
++            size="icon"
++            class="shrink-0"
++            :aria-label="$t('status.clearIcon')"
++            :title="$t('status.clearIcon')"
++            @click="handleChange('')"
++          >
++            <X class="h-4 w-4" />
++          </Button>
++          <input
++            ref="fileInput"
++            type="file"
++            accept="image/*"
++            class="hidden"
++            @change="(event) => onFileSelected(event, handleChange)"
++          />
++          <div v-if="isEmojiPickerVisible" class="absolute left-0 top-full z-10 mt-2">
++            <EmojiPicker
++              :native="true"
++              class="w-[300px]"
++              @select="(emoji) => onSelectEmoji(emoji, handleChange)"
++            />
++          </div>
++        </div>
++        <FormMessage />
++      </FormItem>
++    </FormField>
++
++    <slot name="footer" :is-uploading="isUploading"></slot>
+   </form>
+ </template>
+ 
+ <script setup>
++import { ref, defineAsyncComponent } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { onClickOutside } from '@vueuse/core'
++import { ImageUp, Loader2, SmilePlus, X } from 'lucide-vue-next'
+ import {
+   FormControl,
++  FormDescription,
+   FormField,
+   FormItem,
+   FormLabel,
+   FormMessage
+ } from '@shared-ui/components/ui/form'
+ import { Input } from '@shared-ui/components/ui/input'
++import { Button } from '@shared-ui/components/ui/button'
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
++import { useEmitter } from '@main/composables/useEmitter.js'
++import { EMITTER_EVENTS } from '@main/constants/emitterEvents.js'
++import { handleHTTPError } from '@shared-ui/utils/http.js'
++import api from '@main/api/index.js'
+ import {
+   Select,
+   SelectContent,
+@@ -52,4 +143,59 @@ import {
+   SelectTrigger,
+   SelectValue
+ } from '@shared-ui/components/ui/select'
++
++const EmojiPicker = defineAsyncComponent(async () => {
++  const [mod] = await Promise.all([import('vue3-emoji-picker'), import('vue3-emoji-picker/css')])
++  return mod.default
++})
++
++defineProps({
++  isDefault: { type: Boolean, default: false },
++  isEditing: { type: Boolean, default: false }
++})
++
++const { t } = useI18n()
++const emitter = useEmitter()
++const isEmojiPickerVisible = ref(false)
++const emojiPickerContainer = ref(null)
++const fileInput = ref(null)
++const isUploading = ref(false)
++
++onClickOutside(emojiPickerContainer, () => {
++  isEmojiPickerVisible.value = false
++})
++
++const onSelectEmoji = (emoji, setIcon) => {
++  setIcon(emoji.i || emoji)
++  isEmojiPickerVisible.value = false
++}
++
++const onFileSelected = async (event, setIcon) => {
++  const file = event.target.files?.[0]
++  event.target.value = ''
++  if (!file) return
++  if (!file.type.startsWith('image/')) {
++    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++      variant: 'destructive',
++      description: t('status.imageOnly')
++    })
++    return
++  }
++  isUploading.value = true
++  try {
++    const resp = await api.uploadMedia({
++      files: file,
++      inline: false,
++      linked_model: 'conversation_statuses'
++    })
++    setIcon(resp.data.data.url)
++  } catch (error) {
++    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++      variant: 'destructive',
++      description: handleHTTPError(error).message
++    })
++  } finally {
++    isUploading.value = false
++  }
++}
+ </script>
+diff --git a/frontend/apps/main/src/features/admin/status/dataTableColumns.js b/frontend/apps/main/src/features/admin/status/dataTableColumns.js
+index 96264bf2..50b9b10d 100644
+--- a/frontend/apps/main/src/features/admin/status/dataTableColumns.js
++++ b/frontend/apps/main/src/features/admin/status/dataTableColumns.js
+@@ -1,16 +1,21 @@
+ import { h } from 'vue'
+ import dropdown from './dataTableDropdown.vue'
+ import TableDate from '@main/components/table/TableDate.vue'
+-import { CONVERSATION_DEFAULT_STATUSES_LIST } from '@/constants/conversation.js'
+-
+-const DEFAULT_STATUS_KEY = {
+-  Open: 'globals.terms.open',
+-  Snoozed: 'globals.terms.snoozed',
+-  Resolved: 'globals.terms.resolved',
+-  Closed: 'globals.terms.closed'
+-}
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ 
+ export const createColumns = (t, { onEdit } = {}) => [
++  {
++    accessorKey: 'icon',
++    meta: { compact: true },
++    enableSorting: false,
++    enableGlobalFilter: false,
++    header: function () {
++      return h('div', null, t('status.icon'))
++    },
++    cell: function ({ row }) {
++      return h('div', null, h(StatusIcon, { icon: row.getValue('icon') || '' }))
++    }
++  },
+   {
+     accessorKey: 'name',
+     header: function () {
+@@ -18,18 +23,21 @@ export const createColumns = (t, { onEdit } = {}) => [
+     },
+     cell: function ({ row }) {
+       const name = row.getValue('name')
+-      const isDefault = CONVERSATION_DEFAULT_STATUSES_LIST.includes(name)
+-      const label = isDefault ? t(DEFAULT_STATUS_KEY[name]) : name
+       return h('div', null,
+-        onEdit && !isDefault
++        onEdit
+           ? h('span', {
+               class: 'text-foreground font-medium hover:underline cursor-pointer',
+               onClick: () => onEdit(row.original)
+-            }, label)
+-          : label
++            }, name)
++          : name
+       )
+     }
+   },
++  {
++    accessorKey: 'display_name',
++    header: () => h('div', null, t('status.displayName')),
++    cell: ({ row }) => h('div', null, row.getValue('display_name'))
++  },
+   {
+     accessorKey: 'category',
+     meta: { compact: true },
+diff --git a/frontend/apps/main/src/features/admin/status/dataTableDropdown.vue b/frontend/apps/main/src/features/admin/status/dataTableDropdown.vue
+index f04255e9..09d60262 100644
+--- a/frontend/apps/main/src/features/admin/status/dataTableDropdown.vue
++++ b/frontend/apps/main/src/features/admin/status/dataTableDropdown.vue
+@@ -1,16 +1,14 @@
+ <template>
+   <DropdownMenu>
+-    <DataTableActionTrigger
+-      v-if="!CONVERSATION_DEFAULT_STATUSES_LIST.includes(props.status.name)"
+-    />
+-    <div v-else class="size-8 invisible"></div>
++    <DataTableActionTrigger />
+     <DropdownMenuContent>
+       <DropdownMenuItem @click="editStatus">
+         <Pencil class="mr-2 h-4 w-4" />
+         {{ $t('globals.messages.edit') }}
+       </DropdownMenuItem>
+-      <DropdownMenuSeparator />
++      <DropdownMenuSeparator v-if="!CONVERSATION_DEFAULT_STATUSES_LIST.includes(status.name)" />
+       <DropdownMenuItem
++        v-if="!CONVERSATION_DEFAULT_STATUSES_LIST.includes(status.name)"
+         @click="() => (alertOpen = true)"
+         class="text-destructive focus:text-destructive"
+       >
+@@ -39,6 +37,7 @@
+ </template>
+ 
+ <script setup>
++import { CONVERSATION_DEFAULT_STATUSES_LIST } from '@main/constants/conversation'
+ import DataTableActionTrigger from '@main/components/datatable/DataTableActionTrigger.vue'
+ import { ref } from 'vue'
+ import { Pencil, Trash } from 'lucide-vue-next'
+@@ -58,7 +57,6 @@ import {
+   AlertDialogHeader,
+   AlertDialogTitle
+ } from '@shared-ui/components/ui/alert-dialog/index.js'
+-import { CONVERSATION_DEFAULT_STATUSES_LIST } from '@/constants/conversation.js'
+ import { useEmitter } from '@/composables/useEmitter.js'
+ import { handleHTTPError } from '@shared-ui/utils/http.js'
+ import { EMITTER_EVENTS } from '@/constants/emitterEvents.js'
+diff --git a/frontend/apps/main/src/features/admin/status/formSchema.js b/frontend/apps/main/src/features/admin/status/formSchema.js
+index ee9e8a1f..e443729d 100644
+--- a/frontend/apps/main/src/features/admin/status/formSchema.js
++++ b/frontend/apps/main/src/features/admin/status/formSchema.js
+@@ -16,6 +16,18 @@ export const createFormSchema = (t) => z.object({
+         max: 25,
+       })
+     }),
++  display_name: z.string().refine(value => !/\p{Cc}/u.test(value), {
++    message: t('status.invalidDisplayName')
++  }).transform(value => value.trim()).refine(value => [...value].length <= 50, {
++    message: t('status.invalidDisplayName')
++  }).optional(),
++  icon: z.string().refine(value => {
++    if (/\p{Cc}/u.test(value)) return false
++    if (value.startsWith('https://') || value.startsWith('/uploads/')) {
++      return [...value].length <= 2048 && !/[\s"']/u.test(value)
++    }
++    return [...value].length <= 16
++  }, { message: t('status.invalidIcon') }).optional(),
+   category: z.enum(['open', 'waiting', 'resolved'], {
+     required_error: t('globals.messages.required'),
+   })
+diff --git a/frontend/apps/main/src/features/admin/status/formSchema.test.js b/frontend/apps/main/src/features/admin/status/formSchema.test.js
+index 30546801..ecfa13d3 100644
+--- a/frontend/apps/main/src/features/admin/status/formSchema.test.js
++++ b/frontend/apps/main/src/features/admin/status/formSchema.test.js
+@@ -58,3 +58,21 @@ describe('Status Form Schema', () => {
+         expect(() => schema.parse({})).toThrow()
+     })
+ })
++
++describe('status display fields', () => {
++    test('trims names and counts Unicode characters', () => {
++        const form = schema.parse({ ...validForm, display_name: `  ${'\u754c'.repeat(50)}  `, icon: '\u2705'.repeat(16) })
++        expect(form.display_name).toBe('\u754c'.repeat(50))
++        expect(() => schema.parse({ ...validForm, display_name: '\u754c'.repeat(51) })).toThrow()
++        expect(() => schema.parse({ ...validForm, icon: '\u2705'.repeat(17) })).toThrow()
++    })
++
++    test.each(['https://example.com/a b', '/uploads/"icon', 'bad\nicon'])('rejects invalid icons: %s', icon => {
++        expect(() => schema.parse({ ...validForm, icon })).toThrow()
++    })
++
++    test('allows clearing labels and icons', () => {
++        expect(schema.parse({ ...validForm, display_name: '', icon: '' })).toMatchObject({ display_name: '', icon: '' })
++        expect(() => schema.parse({ ...validForm, display_name: '\tname' })).toThrow()
++    })
++})
+diff --git a/frontend/apps/main/src/features/command/providers/useBulkCommands.js b/frontend/apps/main/src/features/command/providers/useBulkCommands.js
+index 6d0f9540..6e0a366c 100644
+--- a/frontend/apps/main/src/features/command/providers/useBulkCommands.js
++++ b/frontend/apps/main/src/features/command/providers/useBulkCommands.js
+@@ -33,10 +33,10 @@ export function useBulkCommands() {
+       },
+       ...conversationStore.statusOptionsNoSnooze.map((status) => ({
+         id: `bulk.status.${status.value}`,
+-        label: status.label,
++        label: [status.emoji, status.label].filter(Boolean).join(' '),
+         parent: 'bulk.status',
+         icon: CircleDot,
+-        run: () => bulkUpdateStatus(status.label)
++        run: () => bulkUpdateStatus(status.name)
+       })),
+       {
+         id: 'bulk.assign-agent',
+diff --git a/frontend/apps/main/src/features/command/providers/useConversationCommands.js b/frontend/apps/main/src/features/command/providers/useConversationCommands.js
+index b60c45ab..e80b2278 100644
+--- a/frontend/apps/main/src/features/command/providers/useConversationCommands.js
++++ b/frontend/apps/main/src/features/command/providers/useConversationCommands.js
+@@ -136,15 +136,15 @@ export function useConversationCommands({ openSnoozeDatePicker }) {
+       group: true
+     })
+     for (const status of conversationStore.statusOptions) {
+-      if (status.label === current) continue
+-      const isSnooze = status.label === CONVERSATION_DEFAULT_STATUSES.SNOOZED
++      if (status.name === current) continue
++      const isSnooze = status.name === CONVERSATION_DEFAULT_STATUSES.SNOOZED
+       commands.push({
+         id: `conv.status.${status.value}`,
+-        label: status.label,
++        label: [status.emoji, status.label].filter(Boolean).join(' '),
+         parent: 'conv.status',
+         icon: isSnooze ? CalendarClock : CircleDot,
+         navigateTo: isSnooze ? SNOOZE_COMMAND : undefined,
+-        run: isSnooze ? undefined : () => conversationStore.updateStatus(conv.uuid, status.label)
++        run: isSnooze ? undefined : () => conversationStore.updateStatus(conv.uuid, status.name)
+       })
+     }
+     return commands
+diff --git a/frontend/apps/main/src/features/command/providers/useEntitySearch.js b/frontend/apps/main/src/features/command/providers/useEntitySearch.js
+index 129f2afc..a2c5896f 100644
+--- a/frontend/apps/main/src/features/command/providers/useEntitySearch.js
++++ b/frontend/apps/main/src/features/command/providers/useEntitySearch.js
+@@ -1,5 +1,6 @@
+ import { useRouter } from 'vue-router'
+ import { Contact, MessageSquare } from 'lucide-vue-next'
++import { useConversationStore } from '@main/stores/conversation'
+ import { useUserStore } from '@main/stores/user'
+ import { permissions as perms } from '@main/constants/permissions'
+ import api from '@main/api'
+@@ -16,6 +17,7 @@ const contactLabel = (contact) =>
+ export function useEntitySearch() {
+   const router = useRouter()
+   const userStore = useUserStore()
++  const conversationStore = useConversationStore()
+ 
+   const searchContacts = async (term) => {
+     if (!userStore.can(perms.CONTACTS_READ_ALL)) return []
+@@ -35,7 +37,7 @@ export function useEntitySearch() {
+     return (response.data.data?.results || []).map((conversation) => ({
+       id: `search.conversation.${conversation.uuid}`,
+       label: conversation.subject || `#${conversation.reference_number}`,
+-      hint: `#${conversation.reference_number} · ${conversation.status}`,
++      hint: `#${conversation.reference_number} · ${[conversationStore.statusOptions.find((s) => s.name === conversation.status)?.emoji, conversationStore.getStatusLabel(conversation.status)].filter(Boolean).join(' ')}`,
+       section: SECTIONS.CONVERSATION_RESULTS,
+       icon: MessageSquare,
+       run: () =>
+diff --git a/frontend/apps/main/src/features/command/providers/useListCommands.js b/frontend/apps/main/src/features/command/providers/useListCommands.js
+index 8f3529df..9f8df83d 100644
+--- a/frontend/apps/main/src/features/command/providers/useListCommands.js
++++ b/frontend/apps/main/src/features/command/providers/useListCommands.js
+@@ -43,13 +43,13 @@ export function useListCommands() {
+           group: true
+         },
+         ...conversationStore.statusOptions
+-          .filter((status) => status.label !== conversationStore.getListStatus)
++          .filter((status) => status.name !== conversationStore.getListStatus)
+           .map((status) => ({
+             id: `list.status.${status.value}`,
+-            label: status.label,
++            label: [status.emoji, status.label].filter(Boolean).join(' '),
+             parent: 'list.status',
+             icon: CircleDot,
+-            run: () => conversationStore.setListStatus(status.label)
++            run: () => conversationStore.setListStatus(status.name)
+           }))
+       )
+     }
+diff --git a/frontend/apps/main/src/features/conversation/Conversation.vue b/frontend/apps/main/src/features/conversation/Conversation.vue
+index 4c0c3997..8399e949 100644
+--- a/frontend/apps/main/src/features/conversation/Conversation.vue
++++ b/frontend/apps/main/src/features/conversation/Conversation.vue
+@@ -48,7 +48,8 @@
+               <span
+                 class="rounded-md bg-primary px-2.5 py-1 text-xs lg:text-sm font-medium text-primary-foreground"
+               >
+-                {{ conversationStore.current?.status }}
++                <StatusIcon :icon="conversationStore.getStatusIcon(conversationStore.current?.status)" />
++                {{ conversationStore.getStatusLabel(conversationStore.current?.status) }}
+               </span>
+             </div>
+           </DropdownMenuTrigger>
+@@ -56,8 +57,9 @@
+             <DropdownMenuItem
+               v-for="status in conversationStore.statusOptions"
+               :key="status.value"
+-              @click="handleUpdateStatus(status.label)"
++              @click="handleUpdateStatus(status.name)"
+             >
++              <StatusIcon :icon="status.icon" />
+               {{ status.label }}
+             </DropdownMenuItem>
+           </DropdownMenuContent>
+@@ -98,6 +100,7 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ const MOBILE_ICON_BUTTON_CLASS = 'w-11 h-11 lg:w-8 lg:h-8 p-0'
+ 
+ import { computed, ref, onMounted, onUnmounted } from 'vue'
+diff --git a/frontend/apps/main/src/features/conversation/ReplyBoxMenuBar.vue b/frontend/apps/main/src/features/conversation/ReplyBoxMenuBar.vue
+index 39f53461..0da5be45 100644
+--- a/frontend/apps/main/src/features/conversation/ReplyBoxMenuBar.vue
++++ b/frontend/apps/main/src/features/conversation/ReplyBoxMenuBar.vue
+@@ -136,8 +136,9 @@
+           <DropdownMenuItem
+             v-for="status in conversationStore.statusOptionsNoSnooze"
+             :key="status.value"
+-            @click="handleSendAndSetStatus(status.label)"
++            @click="handleSendAndSetStatus(status.name)"
+           >
++            <StatusIcon :icon="status.icon" />
+             {{ status.label }}
+           </DropdownMenuItem>
+         </DropdownMenuContent>
+@@ -147,6 +148,7 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ const ICON_BUTTON_CLASS =
+   'border-border/70 bg-background px-2 py-2 text-muted-foreground shadow-none max-md:min-h-11 max-md:min-w-11'
+ 
+diff --git a/frontend/apps/main/src/features/conversation/list/ConversationBulkActionToolbar.vue b/frontend/apps/main/src/features/conversation/list/ConversationBulkActionToolbar.vue
+index 94e373ee..04fa9507 100644
+--- a/frontend/apps/main/src/features/conversation/list/ConversationBulkActionToolbar.vue
++++ b/frontend/apps/main/src/features/conversation/list/ConversationBulkActionToolbar.vue
+@@ -93,8 +93,9 @@
+         <DropdownMenuItem
+           v-for="status in conversationStore.statusOptionsNoSnooze"
+           :key="status.value"
+-          @click="bulkUpdateStatus(status.label)"
++          @click="bulkUpdateStatus(status.name)"
+         >
++          <StatusIcon :icon="status.icon" />
+           {{ status.label }}
+         </DropdownMenuItem>
+       </DropdownMenuContent>
+@@ -115,6 +116,7 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ import { useI18n } from 'vue-i18n'
+ import { UserPlus, Users, Tag, CircleDot, Loader2, X } from 'lucide-vue-next'
+ import { Button } from '@shared-ui/components/ui/button'
+diff --git a/frontend/apps/main/src/features/conversation/list/ConversationList.vue b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+index 22ce3912..c3fa7bf9 100644
+--- a/frontend/apps/main/src/features/conversation/list/ConversationList.vue
++++ b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+@@ -17,7 +17,8 @@
+           <Button type="button" variant="ghost" size="sm" :class="FILTER_TRIGGER_CLASS">
+             <div class="min-w-0 truncate">
+               <span class="mr-1 tabular-nums">{{ conversationStore.conversations.total }}</span>
+-              <span>{{ conversationStore.getListStatus }}</span>
++              <StatusIcon :icon="conversationStore.getStatusIcon(conversationStore.getListStatus)" />
++              <span>{{ conversationStore.getStatusLabel(conversationStore.getListStatus) }}</span>
+             </div>
+             <ChevronDown class="size-3.5 shrink-0 opacity-50" aria-hidden="true" />
+           </Button>
+@@ -28,6 +29,7 @@
+             :key="status.value"
+             @click="handleStatusChange(status)"
+           >
++            <StatusIcon :icon="status.icon" />
+             {{ status.label }}
+           </DropdownMenuItem>
+         </DropdownMenuContent>
+@@ -151,6 +153,7 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ const FILTER_TRIGGER_CLASS = 'min-w-0 justify-start gap-1.5 px-2 text-xs'
+ 
+ import { computed, watch } from 'vue'
+@@ -200,7 +203,7 @@ const title = computed(() => {
+ })
+ 
+ const handleStatusChange = (status) => {
+-  conversationStore.setListStatus(status.label)
++  conversationStore.setListStatus(status.name)
+ }
+ 
+ const handleSortChange = (order) => {
+diff --git a/frontend/apps/main/src/features/search/SearchResultItem.vue b/frontend/apps/main/src/features/search/SearchResultItem.vue
+index 321fc07d..68a7b37e 100644
+--- a/frontend/apps/main/src/features/search/SearchResultItem.vue
++++ b/frontend/apps/main/src/features/search/SearchResultItem.vue
+@@ -46,7 +46,10 @@
+       <div
+         class="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground"
+       >
+-        <Badge v-if="status" variant="outline" class="font-normal">{{ status }}</Badge>
++        <Badge v-if="status" variant="outline" class="font-normal gap-1">
++          <StatusIcon :icon="conversationStore.getStatusIcon(status)" />
++          {{ conversationStore.getStatusLabel(status) }}
++        </Badge>
+         <span v-if="item.priority" class="inline-flex items-center gap-1">
+           <PriorityMarker :priority="item.priority" />
+           {{ item.priority }}
+@@ -84,6 +87,8 @@
+ </template>
+ 
+ <script setup>
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
++import { useConversationStore } from '@main/stores/conversation'
+ import { computed } from 'vue'
+ import { format } from 'date-fns'
+ import { Mail, Tag, UserRound, UsersRound } from 'lucide-vue-next'
+@@ -104,6 +109,7 @@ const props = defineProps({
+ })
+ 
+ const { t } = useI18n()
++const conversationStore = useConversationStore()
+ 
+ const fullName = (person) => [person?.first_name, person?.last_name].filter(Boolean).join(' ')
+ const initials = (name) => (name || '?').substring(0, 2).toUpperCase()
+diff --git a/frontend/apps/main/src/stores/conversation.js b/frontend/apps/main/src/stores/conversation.js
+index e5a7e639..4479d178 100644
+--- a/frontend/apps/main/src/stores/conversation.js
++++ b/frontend/apps/main/src/stores/conversation.js
+@@ -112,14 +112,26 @@ export const useConversationStore = defineStore('conversation', () => {
+   const priorityOptions = computed(() => {
+     return priorities.value.map(p => ({ label: p.name, value: p.id }))
+   })
+-  const statusOptions = computed(() => {
+-    return statuses.value.map(s => ({ label: s.name, value: s.id }))
++  function getStatusLabel (name) {
++    const status = statuses.value.find(s => s.name === name)
++    if (status?.display_name) return status.display_name
++    return Object.values(CONVERSATION_DEFAULT_STATUSES).includes(name)
++      ? (getI18n()?.global?.t(`globals.terms.${name.toLowerCase()}`) || name)
++      : name
++  }
++  function getStatusIcon (name) {
++    return statuses.value.find(s => s.name === name)?.icon || ''
++  }
++  const toStatusOption = (s) => ({
++    label: getStatusLabel(s.name),
++    name: s.name,
++    value: s.id,
++    icon: s.icon || '',
++    emoji: s.icon && !s.icon.startsWith('https://') && !s.icon.startsWith('/uploads/') ? s.icon : undefined
+   })
++  const statusOptions = computed(() => statuses.value.map(toStatusOption))
+   const statusOptionsNoSnooze = computed(() =>
+-    statuses.value.filter(s => s.name !== CONVERSATION_DEFAULT_STATUSES.SNOOZED).map(s => ({
+-      label: s.name,
+-      value: s.id
+-    }))
++    statuses.value.filter(s => s.name !== CONVERSATION_DEFAULT_STATUSES.SNOOZED).map(toStatusOption)
+   )
+ 
+   let lastClickedUUID = null
+@@ -1368,6 +1380,8 @@ export const useConversationStore = defineStore('conversation', () => {
+     priorityOptions,
+     statusOptionsNoSnooze,
+     statusOptions,
++    getStatusLabel,
++    getStatusIcon,
+     updateTypingStatus,
+     typingByUUID,
+     sendTyping,
+diff --git a/frontend/apps/main/src/stores/conversation.test.js b/frontend/apps/main/src/stores/conversation.test.js
+index e9097399..d3cbf674 100644
+--- a/frontend/apps/main/src/stores/conversation.test.js
++++ b/frontend/apps/main/src/stores/conversation.test.js
+@@ -407,3 +407,24 @@ describe('conversation read state', () => {
+     expect(store.conversationMessages.map(message => message.uuid)).toEqual([oldMessage.uuid, reply.uuid])
+   })
+ })
++
++describe('status display names', () => {
++  it('keeps system names and filter IDs while displaying custom labels and icons', async () => {
++    const store = setup()
++    store.statuses = [
++      { id: '1', name: 'Open', display_name: 'Pendiente', icon: '\u2705' },
++      { id: '2', name: 'Snoozed', display_name: 'Luego', icon: '/uploads/icon' },
++      { id: '3', name: 'Custom', display_name: '', icon: '' }
++    ]
++    expect(store.statusOptions[0]).toMatchObject({ label: 'Pendiente', name: 'Open', value: '1', emoji: '\u2705' })
++    expect(store.statusOptions[1].emoji).toBeUndefined()
++    expect(store.statusOptionsNoSnooze.map(s => s.name)).toEqual(['Open', 'Custom'])
++    expect(store.getStatusLabel('Custom')).toBe('Custom')
++    expect(store.getStatusLabel('Unknown')).toBe('Unknown')
++    expect(store.getStatusIcon('Snoozed')).toBe('/uploads/icon')
++    await store.updateStatus('conversation-a', store.statusOptions[0].name)
++    expect(api.updateConversationStatus).toHaveBeenCalledExactlyOnceWith('conversation-a', { status: 'Open' })
++    store.statuses[0].display_name = ''
++    expect(store.getStatusLabel('Open')).toBe('globals.terms.open')
++  })
++})
+diff --git a/frontend/apps/main/src/views/admin/status/StatusView.vue b/frontend/apps/main/src/views/admin/status/StatusView.vue
+index 28ceab88..b2a72d40 100644
+--- a/frontend/apps/main/src/views/admin/status/StatusView.vue
++++ b/frontend/apps/main/src/views/admin/status/StatusView.vue
+@@ -20,10 +20,10 @@
+                       {{ $t('admin.conversationStatus.name.description') }}
+                     </DialogDescription>
+                   </DialogHeader>
+-                  <StatusForm @submit.prevent="onSubmit">
+-                    <template #footer>
++                  <StatusForm :is-default="isDefault" :is-editing="isEditing" @submit.prevent="onSubmit">
++                    <template #footer="{ isUploading }">
+                       <DialogFooter class="mt-10">
+-                        <Button type="submit" :isLoading="isLoading" :disabled="isLoading">
++                        <Button type="submit" :isLoading="isLoading" :disabled="isLoading || isUploading">
+                           {{
+                             isEditing ? $t('globals.messages.save') : $t('globals.messages.create')
+                           }}
+@@ -55,6 +55,8 @@
+ </template>
+ 
+ <script setup>
++import { CONVERSATION_DEFAULT_STATUSES_LIST } from '@main/constants/conversation'
++import { useConversationStore } from '@main/stores/conversation'
+ import AdminToolbar from '@main/layouts/admin/AdminToolbar.vue'
+ 
+ import { ref, onMounted, onUnmounted } from 'vue'
+@@ -82,6 +84,8 @@ import { handleHTTPError } from '@shared-ui/utils/http.js'
+ import { useI18n } from 'vue-i18n'
+ import api from '@/api'
+ 
++const conversationStore = useConversationStore()
++const isDefault = ref(false)
+ const searchTerm = ref('')
+ const { t } = useI18n()
+ const isLoading = ref(false)
+@@ -116,6 +120,7 @@ const form = useForm({
+ })
+ 
+ const editStatus = (item) => {
++  isDefault.value = CONVERSATION_DEFAULT_STATUSES_LIST.includes(item.name)
+   editingId.value = item.id
+   form.setValues(item, false)
+   form.setErrors({})
+@@ -124,6 +129,7 @@ const editStatus = (item) => {
+ }
+ 
+ const newStatus = () => {
++  isDefault.value = false
+   form.resetForm()
+   form.setErrors({})
+   isEditing.value = false
+@@ -134,6 +140,7 @@ const getStatuses = async () => {
+     isLoading.value = true
+     const resp = await api.getStatuses()
+     statuses.value = resp.data.data
++    conversationStore.statuses = statuses.value.map(status => ({ ...status, id: String(status.id) }))
+   } finally {
+     isLoading.value = false
+   }
+diff --git a/frontend/cypress/e2e/api/statuses.cy.js b/frontend/cypress/e2e/api/statuses.cy.js
+index e0624b7e..d1d1c076 100644
+--- a/frontend/cypress/e2e/api/statuses.cy.js
++++ b/frontend/cypress/e2e/api/statuses.cy.js
+@@ -3,7 +3,6 @@
+ describe('API: statuses', () => {
+   const stamp = `${Date.now()}`.slice(-8)
+   const name = `st-${stamp}`
+-  const renamed = `st-${stamp}-r`
+   let statusId
+ 
+   const listStatuses = () => cy.api('GET', '/api/v1/statuses').then(({ body }) => body.data.results || body.data)
+@@ -45,13 +44,15 @@ describe('API: statuses', () => {
+   })
+ 
+   it('creates a status and persists every field', () => {
+-    cy.api('POST', '/api/v1/statuses', { name, category: 'open' }).then(({ status, body }) => {
++    cy.api('POST', '/api/v1/statuses', { name, category: 'open', display_name: 'Custom', icon: '\u2705' }).then(({ status, body }) => {
+       expect(status).to.eq(200)
+       expect(body.status).to.eq('success')
+       statusId = body.data.id
+       expect(statusId).to.be.a('number')
+       expect(body.data.name).to.eq(name)
+       expect(body.data.category).to.eq('open')
++      expect(body.data.display_name).to.eq('Custom')
++      expect(body.data.icon).to.eq('\u2705')
+     })
+   })
+ 
+@@ -61,20 +62,35 @@ describe('API: statuses', () => {
+       expect(found, 'created status in list').to.exist
+       expect(found.name).to.eq(name)
+       expect(found.category).to.eq('open')
++      expect(found.display_name).to.eq('Custom')
++      expect(found.icon).to.eq('\u2705')
+     })
+   })
+ 
+-  it('updates the status and the change persists', () => {
+-    cy.api('PUT', `/api/v1/statuses/${statusId}`, { name: renamed, category: 'resolved' }).then(({ status, body }) => {
++  it('rejects renaming a custom status without changing its fields', () => {
++    cy.api('PUT', `/api/v1/statuses/${statusId}`, { name: `${name}-r`, category: 'resolved', display_name: 'Changed' }, { failOnStatusCode: false }).then(({ status, body }) => {
++      expect(status).to.eq(400)
++      expect(body.error_type).to.eq('InputException')
++      expect(body.message).to.match(/name.*cannot be changed/i)
++    })
++    listStatuses().then((rows) => {
++      expect(rows.find((s) => s.id === statusId)).to.include({ name, category: 'open', display_name: 'Custom', icon: '\u2705' })
++    })
++  })
++
++  it('updates the category, display name and icon and the change persists', () => {
++    cy.api('PUT', `/api/v1/statuses/${statusId}`, { name, category: 'resolved', display_name: 'Renamed label', icon: '/uploads/example' }).then(({ status, body }) => {
+       expect(status).to.eq(200)
+-      expect(body.data.name).to.eq(renamed)
++      expect(body.data.name).to.eq(name)
+       expect(body.data.category).to.eq('resolved')
+     })
+ 
+     listStatuses().then((rows) => {
+       const found = rows.find((s) => s.id === statusId)
+-      expect(found.name).to.eq(renamed)
++      expect(found.name).to.eq(name)
+       expect(found.category).to.eq('resolved')
++      expect(found.display_name).to.eq('Renamed label')
++      expect(found.icon).to.eq('/uploads/example')
+     })
+   })
+ 
+@@ -88,7 +104,7 @@ describe('API: statuses', () => {
+   })
+ 
+   it('rejects an update with an unknown category', () => {
+-    cy.api('PUT', `/api/v1/statuses/${statusId}`, { name: renamed, category: 'nonsense' }, {
++    cy.api('PUT', `/api/v1/statuses/${statusId}`, { name, category: 'nonsense' }, {
+       failOnStatusCode: false
+     }).then(({ status, body }) => {
+       expect(status).to.eq(400)
+@@ -96,25 +112,41 @@ describe('API: statuses', () => {
+     })
+   })
+ 
+-  it('refuses to update a default status', () => {
+-    cy.api('PUT', '/api/v1/statuses/1', { name: `OpenRenamed-${stamp}`, category: 'open' }, {
+-      failOnStatusCode: false
+-    }).then(({ status, body }) => {
+-      expect(status).to.eq(400)
+-      expect(body.error_type).to.eq('InputException')
+-    })
+-  })
+-
+-  it('refuses to delete a default status', () => {
+-    cy.api('DELETE', '/api/v1/statuses/1', null, { failOnStatusCode: false }).then(({ status, body }) => {
+-      expect(status).to.eq(400)
+-      expect(body.error_type).to.eq('InputException')
++  it('allows default display names and icons but not deletion, renaming or category changes', () => {
++    listStatuses().then((rows) => {
++      const defaults = rows.filter(s => ['Open', 'Snoozed', 'Resolved', 'Closed'].includes(s.name))
++      expect(defaults).to.have.length(4)
++      defaults.forEach(original => {
++        const url = `/api/v1/statuses/${original.id}`
++        const updated = { ...original, display_name: '  Custom label  ', icon: '\u2705' }
++        cy.api('PUT', url, updated).then(({ status, body }) => {
++          expect(status).to.eq(200)
++          expect(body.data).to.include({ name: original.name, category: original.category, display_name: 'Custom label', icon: '\u2705' })
++        })
++        listStatuses().then((statuses) => {
++          expect(statuses.find(s => s.id === original.id)).to.include({ display_name: 'Custom label', icon: '\u2705' })
++        })
++        for (const changes of [{ name: `Renamed-${original.name}` }, { category: original.category === 'open' ? 'resolved' : 'open' }]) {
++          cy.api('PUT', url, { ...updated, ...changes }, { failOnStatusCode: false }).then(({ status, body }) => {
++            expect(status).to.eq(400)
++            expect(body.error_type).to.eq('InputException')
++          })
++        }
++        cy.api('DELETE', url, null, { failOnStatusCode: false }).then(({ status, body }) => {
++          expect(status).to.eq(400)
++          expect(body.error_type).to.eq('InputException')
++        })
++        cy.api('PUT', url, { ...original, display_name: '', icon: '' }).then(({ body }) => {
++          expect(body.data).to.include({ display_name: '', icon: '' })
++        })
++        cy.api('PUT', url, original)
++      })
+     })
+   })
+ 
+   // A duplicate status name returns 500 GeneralException.
+   it.skip('rejects a duplicate name', () => {
+-    cy.api('POST', '/api/v1/statuses', { name: renamed, category: 'open' }, {
++    cy.api('POST', '/api/v1/statuses', { name, category: 'open' }, {
+       failOnStatusCode: false
+     }).then(({ status, body }) => {
+       expect(status).to.eq(409)
+diff --git a/frontend/cypress/e2e/ui/statusForm.cy.js b/frontend/cypress/e2e/ui/statusForm.cy.js
+index 5a2d684b..81c800a6 100644
+--- a/frontend/cypress/e2e/ui/statusForm.cy.js
++++ b/frontend/cypress/e2e/ui/statusForm.cy.js
+@@ -5,7 +5,6 @@
+ const stamp = Math.random().toString(36).slice(2, 8)
+ // The name is capped at 25 characters, so keep the stamp short.
+ const statusName = `CyStatus ${stamp}`
+-const renamedStatus = `CyStatus ${stamp} v2`
+ const listPath = '/admin/conversations/statuses'
+ 
+ const filterList = (text) => cy.get('input[placeholder="Search"]').clear().type(text)
+@@ -53,20 +52,23 @@ describe('Status form', () => {
+     cy.get('select[name="category"]').should('have.value', 'waiting')
+   })
+ 
+-  it('persists a changed name and category', () => {
++  it('keeps the name disabled and persists a changed display name and category', () => {
+     cy.intercept('PUT', '**/api/v1/statuses/*').as('updateStatus')
+ 
+     cy.visit(listPath)
+     openEditDialog(statusName)
+-    cy.get('input[name="name"]').clear().type(renamedStatus)
++    cy.get('input[name="name"]').should('be.disabled').and('have.value', statusName)
++    cy.get('input[name="display_name"]').type('Custom label')
+     pickCategory('Resolved')
+ 
+     cy.get('button[type="submit"]').click()
+     cy.wait('@updateStatus').its('response.statusCode').should('eq', 200)
+ 
+     cy.visit(listPath)
+-    openEditDialog(renamedStatus)
+-    cy.get('input[name="name"]').should('have.value', renamedStatus)
++    openEditDialog(statusName)
++    cy.get('input[name="name"]').should('have.value', statusName)
++    cy.get('input[name="name"]').should('be.disabled')
++    cy.get('input[name="display_name"]').should('have.value', 'Custom label')
+     cy.get('select[name="category"]').should('have.value', 'resolved')
+   })
+ 
+@@ -86,12 +88,12 @@ describe('Status form', () => {
+     cy.intercept('DELETE', '**/api/v1/statuses/*').as('deleteStatus')
+ 
+     cy.visit(listPath)
+-    filterList(renamedStatus)
+-    cy.contains('tr', renamedStatus).find('button[aria-haspopup="menu"]').click()
++    filterList(statusName)
++    cy.contains('tr', statusName).find('button[aria-haspopup="menu"]').click()
+     cy.get('[role="menuitem"]').contains('Delete').click()
+     cy.get('[role="alertdialog"]').contains('button', 'Delete').click()
+ 
+     cy.wait('@deleteStatus').its('response.statusCode').should('eq', 200)
+-    cy.contains(renamedStatus).should('not.exist')
++    cy.contains(statusName).should('not.exist')
+   })
+ })
+diff --git a/frontend/shared-ui/components/StatusIcon.vue b/frontend/shared-ui/components/StatusIcon.vue
+new file mode 100644
+index 00000000..65399500
+--- /dev/null
++++ b/frontend/shared-ui/components/StatusIcon.vue
+@@ -0,0 +1,19 @@
++<template>
++  <img
++    v-if="isURL"
++    :src="icon"
++    alt=""
++    class="inline-block h-[1em] w-[1em] rounded object-contain"
++  />
++  <span v-else-if="icon" aria-hidden="true">{{ icon }}</span>
++</template>
++
++<script setup>
++import { computed } from 'vue'
++
++const props = defineProps({
++  icon: { type: String, default: '' }
++})
++
++const isURL = computed(() => props.icon.startsWith('https://') || props.icon.startsWith('/uploads/'))
++</script>
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 9baf08a0..e4d62e45 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1832,5 +1832,17 @@
+   "widget.replyTeam": "Route replies to team",
+   "widget.searchArticles": "Search for help",
+   "widget.showHelpTab": "Show Help tab",
+-  "widget.urlPatternsHint": "One URL or path per line. Use * to match any characters. Empty includes match every page."
++  "widget.urlPatternsHint": "One URL or path per line. Use * to match any characters. Empty includes match every page.",
++  "conversationStatus.fixedName": "The status name cannot be changed after creation.",
++  "conversationStatus.fixedDefaultFields": "The name and category of a default status cannot be changed.",
++  "status.displayName": "Display name",
++  "status.displayNameHint": "Optional. Leave empty to use the original label.",
++  "status.fixedNameHint": "The name cannot be changed after the status is created; you can change the display name anytime.",
++  "status.icon": "Icon",
++  "status.iconPlaceholder": "Emoji or https:// image URL",
++  "status.uploadImage": "Upload image",
++  "status.clearIcon": "Clear icon",
++  "status.imageOnly": "Choose an image file.",
++  "status.invalidDisplayName": "Use at most 50 characters with no control characters.",
++  "status.invalidIcon": "Use up to 16 characters or an https:// or /uploads/ URL with no spaces or quotes."
+ }
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 68a830f6..475e8cef 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -998,5 +998,17 @@
+   "webhook.sentSuccessfully": "Webhook enviado correctamente",
+   "widget.conversationClosed": "Esta conversación ha sido cerrada",
+   "widget.ipBlocked": "Acceso denegado",
+-  "widget.prechatForm.startChat": "Iniciar chat"
++  "widget.prechatForm.startChat": "Iniciar chat",
++  "conversationStatus.fixedName": "El nombre del estado no se puede cambiar después de crearlo.",
++  "conversationStatus.fixedDefaultFields": "No se pueden cambiar el nombre ni la categoría de un estado por defecto.",
++  "status.displayName": "Nombre visible",
++  "status.displayNameHint": "Opcional. Déjalo vacío para usar el nombre original.",
++  "status.fixedNameHint": "El nombre no se puede cambiar después de crear el estado; el nombre visible se puede cambiar cuando quieras.",
++  "status.icon": "Ícono",
++  "status.iconPlaceholder": "Emoji o URL https:// de una imagen",
++  "status.uploadImage": "Subir imagen",
++  "status.clearIcon": "Quitar ícono",
++  "status.imageOnly": "Elige un archivo de imagen.",
++  "status.invalidDisplayName": "Usa hasta 50 caracteres sin caracteres de control.",
++  "status.invalidIcon": "Usa hasta 16 caracteres o una URL https:// o /uploads/ sin espacios ni comillas."
+ }
+diff --git a/internal/conversation/models/models.go b/internal/conversation/models/models.go
+index d0792b49..2f7192b6 100644
+--- a/internal/conversation/models/models.go
++++ b/internal/conversation/models/models.go
+@@ -591,10 +591,12 @@ func (in *IncomingMessage) ToMessage(senderID, conversationID int, conversationU
+ }
+ 
+ type Status struct {
+-	ID        int       `db:"id" json:"id"`
+-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+-	Name      string    `db:"name" json:"name"`
+-	Category  string    `db:"category" json:"category"`
++	ID          int       `db:"id" json:"id"`
++	CreatedAt   time.Time `db:"created_at" json:"created_at"`
++	Name        string    `db:"name" json:"name"`
++	Category    string    `db:"category" json:"category"`
++	DisplayName string    `db:"display_name" json:"display_name"`
++	Icon        string    `db:"icon" json:"icon"`
+ }
+ 
+ type Priority struct {
+diff --git a/internal/conversation/status/models/models.go b/internal/conversation/status/models/models.go
+index 286bb06a..97bc4901 100644
+--- a/internal/conversation/status/models/models.go
++++ b/internal/conversation/status/models/models.go
+@@ -22,8 +22,10 @@ var ValidCategories = []string{
+ }
+ 
+ type Status struct {
+-	ID        int       `db:"id" json:"id"`
+-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+-	Name      string    `db:"name" json:"name"`
+-	Category  string    `db:"category" json:"category"`
++	ID          int       `db:"id" json:"id"`
++	CreatedAt   time.Time `db:"created_at" json:"created_at"`
++	Name        string    `db:"name" json:"name"`
++	Category    string    `db:"category" json:"category"`
++	DisplayName string    `db:"display_name" json:"display_name"`
++	Icon        string    `db:"icon" json:"icon"`
+ }
+diff --git a/internal/conversation/status/queries.sql b/internal/conversation/status/queries.sql
+index 83a09955..4bce7833 100644
+--- a/internal/conversation/status/queries.sql
++++ b/internal/conversation/status/queries.sql
+@@ -2,7 +2,9 @@
+ select id,
+     created_at,
+     name,
+-    category
++    category,
++    display_name,
++    icon
+ from conversation_statuses
+ where id = $1;
+ 
+@@ -10,14 +12,16 @@ where id = $1;
+ select id,
+     created_at,
+     name,
+-    category
++    category,
++    display_name,
++    icon
+ from conversation_statuses;
+ 
+ -- name: insert-status
+-INSERT into conversation_statuses(name, category) values ($1, $2) RETURNING *;
++INSERT into conversation_statuses(name, category, display_name, icon) values ($1, $2, $3, $4) RETURNING id, created_at, name, category, display_name, icon;
+ 
+ -- name: delete-status
+ DELETE from conversation_statuses where id = $1;
+ 
+ -- name: update-status
+-UPDATE conversation_statuses set name = $2, category = $3 where id = $1 RETURNING *;
++UPDATE conversation_statuses set name = $2, category = $3, display_name = $4, icon = $5 where id = $1 RETURNING id, created_at, name, category, display_name, icon;
+diff --git a/internal/conversation/status/status.go b/internal/conversation/status/status.go
+index 5aaa9a30..898e18a2 100644
+--- a/internal/conversation/status/status.go
++++ b/internal/conversation/status/status.go
+@@ -11,6 +11,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/conversation/status/models"
+ 	"github.com/abhinavxd/libredesk/internal/dbutil"
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
++	"github.com/abhinavxd/libredesk/internal/kuraka"
+ 	"github.com/jmoiron/sqlx"
+ 	"github.com/knadh/go-i18n"
+ 	"github.com/zerodha/logf"
+@@ -72,15 +73,19 @@ func (m *Manager) GetAll() ([]models.Status, error) {
+ }
+ 
+ // Create creates a new status.
+-func (m *Manager) Create(name, category string) (models.Status, error) {
++func (m *Manager) Create(name, category, displayName, icon string) (models.Status, error) {
+ 	var status models.Status
+ 	if err := m.validateStatusName(name); err != nil {
+ 		return status, err
+ 	}
++	displayName, field := kuraka.ValidateStatus(displayName, icon)
++	if field != "" {
++		return status, envelope.NewError(envelope.InputError, m.i18n.Ts("validation.invalidFields", "name", "`"+field+"`"), nil)
++	}
+ 	if err := m.validateCategory(category); err != nil {
+ 		return status, err
+ 	}
+-	if err := m.q.InsertStatus.Get(&status, name, category); err != nil {
++	if err := m.q.InsertStatus.Get(&status, name, category, displayName, icon); err != nil {
+ 		m.lo.Error("error inserting status", "error", err)
+ 		return status, envelope.NewError(envelope.GeneralError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+@@ -110,11 +115,15 @@ func (m *Manager) Delete(id int) error {
+ }
+ 
+ // Update updates a status by id.
+-func (m *Manager) Update(id int, name, category string) (models.Status, error) {
++func (m *Manager) Update(id int, name, category, displayName, icon string) (models.Status, error) {
+ 	var updatedStatus models.Status
+ 	if err := m.validateStatusName(name); err != nil {
+ 		return updatedStatus, err
+ 	}
++	displayName, field := kuraka.ValidateStatus(displayName, icon)
++	if field != "" {
++		return updatedStatus, envelope.NewError(envelope.InputError, m.i18n.Ts("validation.invalidFields", "name", "`"+field+"`"), nil)
++	}
+ 	if err := m.validateCategory(category); err != nil {
+ 		return updatedStatus, err
+ 	}
+@@ -123,11 +132,15 @@ func (m *Manager) Update(id int, name, category string) (models.Status, error) {
+ 		return updatedStatus, envelope.NewError(envelope.GeneralError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+ 
+-	if slices.Contains(models.DefaultStatuses, status.Name) {
+-		return updatedStatus, envelope.NewError(envelope.InputError, m.i18n.T("conversationStatus.cannotUpdateDefault"), nil)
++	if name != status.Name {
++		return updatedStatus, envelope.NewError(envelope.InputError, m.i18n.T("conversationStatus.fixedName"), nil)
++	}
++
++	if slices.Contains(models.DefaultStatuses, status.Name) && category != status.Category {
++		return updatedStatus, envelope.NewError(envelope.InputError, m.i18n.T("conversationStatus.fixedDefaultFields"), nil)
+ 	}
+ 
+-	if err := m.q.UpdateStatus.Get(&updatedStatus, id, name, category); err != nil {
++	if err := m.q.UpdateStatus.Get(&updatedStatus, id, name, category, displayName, icon); err != nil {
+ 		m.lo.Error("error updating status", "error", err)
+ 		return updatedStatus, envelope.NewError(envelope.GeneralError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+new file mode 100644
+index 00000000..2ad954dc
+--- /dev/null
++++ b/internal/kuraka/migrate.go
+@@ -0,0 +1,28 @@
++// Package kuraka holds Kuraka's additions to Libredesk.
++package kuraka
++
++import "github.com/jmoiron/sqlx"
++
++// Migrate applies Kuraka's schema changes outside upstream's versioned migrations.
++func Migrate(db *sqlx.DB) error {
++	tx, err := db.Beginx()
++	if err != nil {
++		return err
++	}
++	defer tx.Rollback()
++	_, err = tx.Exec(`DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
++   WHERE table_schema = current_schema() AND table_name = 'conversation_statuses' AND column_name = 'icon') THEN
++   ALTER TABLE conversation_statuses
++    ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 50),
++    ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048);
++   UPDATE conversation_statuses SET icon = CASE name
++    WHEN 'Open' THEN '🟢' WHEN 'Snoozed' THEN '💤' WHEN 'Resolved' THEN '✅' WHEN 'Closed' THEN '🔒' END
++   WHERE name IN ('Open', 'Snoozed', 'Resolved', 'Closed');
++  END IF;
++ END $$`)
++	if err != nil {
++		return err
++	}
++	return tx.Commit()
++}
+diff --git a/internal/kuraka/status.go b/internal/kuraka/status.go
+new file mode 100644
+index 00000000..04759aee
+--- /dev/null
++++ b/internal/kuraka/status.go
+@@ -0,0 +1,36 @@
++package kuraka
++
++import (
++	"errors"
++	"strings"
++	"unicode"
++	"unicode/utf8"
++)
++
++// ValidateStatus trims and validates the display name and validates the icon.
++// The returned field identifies invalid input for the caller's localized error.
++func ValidateStatus(displayName, icon string) (name, field string) {
++	name = strings.TrimSpace(displayName)
++	if !utf8.ValidString(displayName) || utf8.RuneCountInString(name) > 50 || strings.ContainsFunc(displayName, unicode.IsControl) {
++		return name, "display_name"
++	}
++	if ValidateIcon(icon) != nil {
++		return name, "icon"
++	}
++	return name, ""
++}
++
++// ValidateIcon accepts empty, short text, or an HTTPS or upload URL.
++func ValidateIcon(icon string) error {
++	if !utf8.ValidString(icon) || strings.ContainsFunc(icon, unicode.IsControl) {
++		return errors.New("invalid icon")
++	}
++	if strings.HasPrefix(icon, "https://") || strings.HasPrefix(icon, "/uploads/") {
++		if utf8.RuneCountInString(icon) > 2048 || strings.ContainsFunc(icon, unicode.IsSpace) || strings.ContainsAny(icon, "\"'") {
++			return errors.New("invalid icon")
++		}
++	} else if utf8.RuneCountInString(icon) > 16 {
++		return errors.New("invalid icon")
++	}
++	return nil
++}
+diff --git a/internal/kuraka/status_test.go b/internal/kuraka/status_test.go
+new file mode 100644
+index 00000000..327caf49
+--- /dev/null
++++ b/internal/kuraka/status_test.go
+@@ -0,0 +1,35 @@
++package kuraka
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestValidateStatus(t *testing.T) {
++	for _, tc := range []struct{ name, icon, want, field string }{
++		{"", "", "", ""},
++		{"  Pendiente  ", "🟢", "Pendiente", ""},
++		{strings.Repeat("界", 50), "", strings.Repeat("界", 50), ""},
++		{strings.Repeat("界", 51), "", strings.Repeat("界", 51), "display_name"},
++		{"bad\nname", "", "bad\nname", "display_name"},
++		{"\tname", "", "name", "display_name"},
++		{"\xff", "", "\xff", "display_name"},
++		{"Name", strings.Repeat("🟢", 16), "Name", ""},
++		{"Name", strings.Repeat("🟢", 17), "Name", "icon"},
++		{"Name", "https://example.com/icon.png", "Name", ""},
++		{"Name", "/uploads/uuid", "Name", ""},
++		{"Name", "https://" + strings.Repeat("a", 2040), "Name", ""},
++		{"Name", "https://" + strings.Repeat("a", 2041), "Name", "icon"},
++		{"Name", "https://example.com/a b", "Name", "icon"},
++		{"Name", "https://example.com/a\u00a0b", "Name", "icon"},
++		{"Name", "/uploads/\"uuid", "Name", "icon"},
++		{"Name", "/uploads/'uuid", "Name", "icon"},
++		{"Name", "bad\nicon", "Name", "icon"},
++		{"Name", "\xff", "Name", "icon"},
++	} {
++		got, field := ValidateStatus(tc.name, tc.icon)
++		if got != tc.want || field != tc.field {
++			t.Errorf("ValidateStatus(%q, %q) = (%q, %q), want (%q, %q)", tc.name, tc.icon, got, field, tc.want, tc.field)
++		}
++	}
++}
+diff --git a/internal/media/models/models.go b/internal/media/models/models.go
+index 9d2310e4..e950b8ba 100644
+--- a/internal/media/models/models.go
++++ b/internal/media/models/models.go
+@@ -15,6 +15,8 @@ const (
+ 	ModelMessages     = "messages"
+ 	ModelUser         = "users"
+ 	ModelHelpArticles = "help_articles"
++	// Kuraka: status icons.
++	ModelConversationStatuses = "conversation_statuses"
+ 
+ 	DispositionInline     = "inline"
+ 	DispositionAttachment = "attachment"
+@@ -25,7 +27,7 @@ const (
+ 
+ // IsPublicModel reports whether media linked to the model type is served without authentication.
+ func IsPublicModel(modelType string) bool {
+-	return modelType == ModelHelpArticles
++	return modelType == ModelHelpArticles || modelType == ModelConversationStatuses
+ }
+ 
+ // Media represents an uploaded object in DB and storage backend.
