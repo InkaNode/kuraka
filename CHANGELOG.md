@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Patched upstream builds**: `patches/stalwart-webui` and `patches/libredesk` hold Kuraka's changes as patches on an upstream tag (`scripts/patches.sh checkout|export|rebase`). CI applies and builds them; the release attaches `stalwart-webui.zip` and publishes `ghcr.io/inkanode/libredesk:<upstream>-kuraka.<version>` and `:sha-<commit>`. A daily workflow opens a pull request for each new upstream release; patches that no longer apply are skipped with the conflict explained, and CI merges it when every check passes. System → Updates lists what does not work while a patch is skipped, marked urgent or notice.
+- **Patched upstream builds**: `patches/stalwart-webui` and `patches/libredesk` hold Kuraka's changes as patches on an upstream tag (`scripts/patches.sh checkout|export|rebase`). CI applies and builds them; the release attaches `stalwart-webui.zip` and publishes `ghcr.io/inkanode/libredesk:<upstream>-kuraka.<version>` and `:sha-<commit>`. A daily workflow opens a pull request for each new upstream release; patches that no longer apply are skipped with the conflict explained, and CI merges it when every check passes; the release still waits for a normal push to main. System → Updates lists what does not work while a patch is skipped, marked urgent or notice.
 
 ## [0.2.0] - 2026-11-05
 

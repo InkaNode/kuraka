@@ -66,7 +66,7 @@ jobs:
     uses: ./.github/workflows/patches.yml
 
   # Merges the watcher's pull request once every check passed on the commit
-  # it pushed, then runs CI on main so the release workflow picks it up.
+  # it pushed, then runs CI on main to check the merge (release.yml skips it).
   automerge:
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'patches/')
     needs: [go, image, web, integration, patches]
