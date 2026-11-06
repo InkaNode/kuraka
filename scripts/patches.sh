@@ -3,8 +3,10 @@
 #   UPSTREAM  REPO and REF (the upstream tag) as shell variables.
 #   series    patch files in apply order; "-name.patch" is skipped (it no longer
 #             applies; the panel shows its Kuraka-Missing-* text until fixed).
-# Each patch's commit message carries the trailers Kuraka-Severity (urgent or
-# normal), Kuraka-Missing-En and Kuraka-Missing-Es: what users lose without it.
+# Each patch's commit message carries the trailers Kuraka-Severity (urgent,
+# normal or required), Kuraka-Missing-En and Kuraka-Missing-Es: what users lose
+# without it. A skipped "required" patch (one that changes the database) fails
+# checkout, so CI fails and nothing merges or releases until it is fixed.
 #
 #   checkout <app> [dir]       clone upstream at REF and apply the series.
 #   export <app> [dir]         write the commits after REF back to patches/<app>.
@@ -39,7 +41,7 @@ clone() {
     exit 1
   fi
   # Blobless, not shallow: rebase needs upstream history between the two tags.
-  git clone -q --filter=blob:none --no-checkout "$REPO" "$dir"
+  git clone -q -c core.autocrlf=false --filter=blob:none --no-checkout "$REPO" "$dir"
   git -C "$dir" -c advice.detachedHead=false checkout -q --detach "refs/tags/$1"
 }
 
@@ -85,7 +87,11 @@ export_patches() {
 report_skip() {
   local file=$pdir/$1 files
   printf '### `%s` (%s)\n\n' "$1" "$(trailer Kuraka-Severity "$file")"
-  printf 'Until this is fixed, Kuraka shows: %s\n\n' "$(trailer Kuraka-Missing-En "$file")"
+  if [[ $(trailer Kuraka-Severity "$file") == required ]]; then
+    printf 'Required: CI fails and this pull request cannot merge until it is fixed.\n\n'
+  else
+    printf 'Until this is fixed, Kuraka shows: %s\n\n' "$(trailer Kuraka-Missing-En "$file")"
+  fi
   printf '<details><summary>git am output</summary>\n\n```\n%s\n```\n</details>\n\n' "$(head -n 40 <<< "$2")"
   files=$(git -C "$dir" diff --name-only --diff-filter=U)
   if [[ -n $files ]]; then
@@ -107,7 +113,13 @@ case $cmd in
     clone "$REF"
     mapfile -t entries < <(series)
     for entry in "${entries[@]}"; do
-      [[ $entry == -* ]] || git_ am -q --3way "$pdir/$entry"
+      if [[ $entry != -* ]]; then
+        git_ am -q --3way "$pdir/$entry"
+      elif [[ $(trailer Kuraka-Severity "$pdir/${entry#-}") == required ]]; then
+        printf '%s is required but skipped; fix it before building
+' "${entry#-}" >&2
+        exit 1
+      fi
     done
     ;;
   export)
