@@ -25,7 +25,9 @@ trap 'rm -f -- "$0"' EXIT
 DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}
 REPO=$(dirname "$DEPLOY")
 DIR=$DEPLOY/updates
-IMAGE_RE='s#(image: libredesk/libredesk:)v[0-9.]+#\1'
+# Matches the upstream image of older bundles and Kuraka's patched build.
+IMAGE_RE='s#(image: )(libredesk/libredesk|ghcr\.io/inkanode/libredesk):v[0-9][0-9A-Za-z.-]*#\1'
+DESK_IMAGE=ghcr.io/inkanode/libredesk
 ENV_FILE=$DEPLOY/.env
 COMPOSE=(docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml" --env-file "$ENV_FILE")
 # The STALWART_VERSION default in docker-compose.yml.
@@ -68,7 +70,8 @@ update() {
     { ERROR="container not found"; return 1; }
   compose_file=$desk_dir/docker-compose.yml
   [[ $desk_dir == /* && -f $compose_file ]] || { ERROR="docker-compose.yml not found"; return 1; }
-  old=$(sed -n -E 's#^[[:space:]]*image: libredesk/libredesk:(v[0-9.]+)[[:space:]]*$#\1#p' "$compose_file" | head -n 1)
+  old_image=$(sed -n -E 's#^[[:space:]]*image: ((libredesk/libredesk|ghcr\.io/inkanode/libredesk):v[0-9][0-9A-Za-z.-]*)[[:space:]]*$#\1#p' "$compose_file" | head -n 1)
+  old=${old_image##*:}
   [[ -n $old ]] || { ERROR="libredesk image not found in docker-compose.yml"; return 1; }
 
   backup=$desk_dir/backup-$(date -u +%Y%m%dT%H%M%SZ).sql
@@ -81,7 +84,7 @@ update() {
   log "$container: database saved to $backup"
 
   changed=1
-  sed -i -E "$IMAGE_RE$tag#" "$compose_file" || { ERROR="could not edit docker-compose.yml"; return 1; }
+  sed -i -E "$IMAGE_RE$DESK_IMAGE:$tag#" "$compose_file" || { ERROR="could not edit docker-compose.yml"; return 1; }
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   (cd "$desk_dir" && docker compose pull app) >&2 || { ERROR="could not pull libredesk:$tag"; return 1; }
   # From here the new version may have migrated the database.
@@ -101,7 +104,7 @@ update() {
 # restored first; the old version may not run on a migrated schema.
 rollback() {
   (( changed )) || return 0
-  sed -i -E "$IMAGE_RE$old#" "$compose_file" || { log "could not restore $old in $compose_file"; return 0; }
+  sed -i -E "$IMAGE_RE$old_image#" "$compose_file" || { log "could not restore $old_image in $compose_file"; return 0; }
   if (( started )); then
     if ! (cd "$desk_dir" && docker compose stop app &&
       docker compose exec -T db psql -v ON_ERROR_STOP=1 -U libredesk -d postgres         -c 'DROP DATABASE libredesk WITH (FORCE)' -c 'CREATE DATABASE libredesk OWNER libredesk' &&
@@ -282,12 +285,12 @@ done
 
 for request in "$DIR"/libredesk-*.json; do
   [[ $request == *.result.json ]] && continue
-  container= tag= desk_dir= compose_file= old= backup= changed=0 started=0 ERROR=
+  container= tag= desk_dir= compose_file= old= old_image= backup= changed=0 started=0 ERROR=
   if [[ -f $request && ! -L $request ]]; then
     container=$(jq -r '.container // empty' "$request" 2>/dev/null) || container=
     tag=$(jq -r '.tag // empty' "$request" 2>/dev/null) || tag=
   fi
-  if [[ ! $container =~ ^kuraka-[a-z0-9-]+-desk$ || ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ||
+  if [[ ! $container =~ ^kuraka-[a-z0-9-]+-desk$ || ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ||
     $request != "$DIR/libredesk-$container.json" ]]; then
     log "rejected $request"
     rm -f "$request"

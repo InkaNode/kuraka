@@ -34,7 +34,7 @@ bash deploy/setup.sh
 
 1. Generates `KURAKA_SECRET_KEY` and `STALWART_RECOVERY_ADMIN` in `deploy/.env` (mode 600).
 2. Builds the custom Caddy image locally from `deploy/caddy/Dockerfile`, starts Caddy and Stalwart and waits up to 5 minutes for the `MAIL_HOST` certificate.
-3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions). It also points Stalwart's web interface to the [official web interface](https://github.com/stalwartlabs/webui). Kuraka's addon hides the views Kuraka manages; Caddy injects `/_kuraka/addon/<app>.css` and `/_kuraka/addon/<app>.js` (`stalwart` or `desk`) into HTML and proxies the addon paths to Kuraka.
+3. Bootstraps Stalwart through JMAP (hostname, default domain, DKIM keys), stores the returned admin as `STALWART_ADMIN`, registers Caddy's certificate for SMTP/IMAP and creates the Kuraka API key (limited to the `kuraka_mail` subnet, without domain-destroy, listener and role permissions). It also points Stalwart's web interface to Kuraka's build of the [official web interface](https://github.com/stalwartlabs/webui) (`stalwart-webui.zip` in each Kuraka release, with `patches/stalwart-webui`). Kuraka's addon hides the views Kuraka manages; Caddy injects `/_kuraka/addon/<app>.css` and `/_kuraka/addon/<app>.js` (`stalwart` or `desk`) into HTML and proxies the addon paths to Kuraka.
 4. Creates `deploy/updates` (owned by the Kuraka container uid 65532), installs and enables `kuraka-updates.timer`, which runs `deploy/apply-updates.sh` as root every minute to apply the Stalwart and Libredesk updates requested in **Integrations > Updates** (see [integrations.md](integrations.md#updates)), then starts Kuraka and prints the one-time setup token. A Stalwart update sets `STALWART_VERSION` in `deploy/.env`; never pin the version in `deploy/docker-compose.yml`, which deploys reset. Without `systemctl` it only warns; Stalwart and Libredesk updates then stay disabled until the script runs some other way.
 
 Then:
@@ -45,9 +45,9 @@ Then:
 4. Rotate `STALWART_ADMIN`, remove `STALWART_RECOVERY_ADMIN` from `deploy/.env` and run `docker compose -f deploy/docker-compose.yml up -d stalwart`.
 
 Re-run `bash deploy/setup.sh` from the repository root to switch an existing
-install to the official web interface and rebuild Caddy. Setup updates and logs
+install to Kuraka's web interface build and rebuild Caddy. Setup updates and logs
 the application's `resourceUrl` whenever it differs from
-`https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip`.
+`https://github.com/InkaNode/kuraka/releases/latest/download/stalwart-webui.zip`.
 
 Caddy's `kuraka_addon_proxy <app> <upstream>` snippet uses the
 `github.com/caddyserver/replace-response` module in `kuraka-caddy:local`, built

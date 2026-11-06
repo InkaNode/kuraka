@@ -9,7 +9,7 @@ bash deploy/setup.sh
 
 Full guide: [docs/install.md](../docs/install.md).
 
-Stalwart uses the [official web interface](https://github.com/stalwartlabs/webui).
+Stalwart uses the web interface built by Kuraka releases from the [official one](https://github.com/stalwartlabs/webui) plus `patches/stalwart-webui`.
 Kuraka's addon hides the views Kuraka manages. Caddy injects
 `/_kuraka/addon/<app>.css` and `/_kuraka/addon/<app>.js` into HTML responses
 (`stalwart` for mail, `desk` for Libredesk), and proxies those asset paths to

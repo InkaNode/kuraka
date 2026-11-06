@@ -34,9 +34,20 @@ type fakeStalwart struct {
 	appsUpdated       int
 	blocked           []stalwart.BlockedIP
 	unblocked         []string
+	webuiURL          string
 }
 
 var _ Stalwart = (*fakeStalwart)(nil)
+
+func (f *fakeStalwart) SetWebUIURL(_ context.Context, url string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.webuiURL = url
+	return nil
+}
 
 func (f *fakeStalwart) UpdateApps(context.Context) error {
 	f.mu.Lock()

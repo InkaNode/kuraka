@@ -52,6 +52,7 @@ type Stalwart interface {
 	ListBlockedIPs(context.Context) ([]stalwart.BlockedIP, error)
 	UnblockIP(context.Context, string, string) error
 	UpdateApps(context.Context) error
+	SetWebUIURL(context.Context, string) error
 }
 
 var _ Stalwart = (*stalwart.Client)(nil)

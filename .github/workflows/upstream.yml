@@ -53,8 +53,12 @@ jobs:
           TITLE="chore(patches): update $APP to $LATEST"
           (( SKIPPED == 0 )) || TITLE="$TITLE ($SKIPPED patches skipped)"
 
+          if [[ $APP == libredesk ]]; then
+            sed -i -E "s/^const LibredeskVersion = \".*\"$/const LibredeskVersion = \"$LATEST\"/" internal/provision/bundle.go
+          fi
+
           git switch -q -c "$BRANCH"
-          git add "patches/$APP"
+          git add "patches/$APP" internal/provision/bundle.go
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "chore(patches): update $APP to $LATEST"
           git push -q origin "$BRANCH"
           head -c 60000 ".work/$APP.report.md" > body.md

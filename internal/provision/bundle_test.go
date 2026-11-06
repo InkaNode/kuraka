@@ -5,9 +5,22 @@ import (
 	"bytes"
 	"encoding/hex"
 	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/InkaNode/kuraka/internal/version"
 )
+
+func TestLibredeskVersionMatchesUpstream(t *testing.T) {
+	data, err := os.ReadFile("../../patches/libredesk/UPSTREAM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\nREF="+LibredeskVersion+"\n") {
+		t.Fatalf("patches/libredesk/UPSTREAM does not pin REF=%s", LibredeskVersion)
+	}
+}
 
 func unzip(t *testing.T, b []byte) map[string]string {
 	t.Helper()
@@ -53,7 +66,7 @@ func TestBundle(t *testing.T) {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	for _, want := range []string{"name: kuraka-team-one", "libredesk/libredesk:v2.9.2", "postgres:17-alpine", "redis:7-alpine", "container_name: kuraka-team-one-desk", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
+	for _, want := range []string{"name: kuraka-team-one", "ghcr.io/inkanode/libredesk:v2.9.2-kuraka." + version.Version, "postgres:17-alpine", "redis:7-alpine", "container_name: kuraka-team-one-desk", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
 		if !strings.Contains(files["docker-compose.yml"], want) {
 			t.Errorf("missing %s", want)
 		}
