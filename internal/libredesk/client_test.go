@@ -173,6 +173,39 @@ func TestDeleteInbox(t *testing.T) {
 	}
 }
 
+func TestRenameEmailInbox(t *testing.T) {
+	var put map[string]any
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/inboxes/5":
+			io.WriteString(w, `{"status":"success","data":{"id":5,"name":"Old","channel":"email","from":"Old <a@x.test>","enabled":true,"csat_enabled":true,"from_name_template":"t","config":{"auth_type":"password","imap":[{"host":"mail","password":"masked"}],"smtp":[{"host":"mail","password":"masked"}],"oauth":{"access_token":"masked"}}}}`)
+		case "PUT /api/v1/inboxes/5":
+			if err := json.NewDecoder(r.Body).Decode(&put); err != nil {
+				t.Error(err)
+			}
+			io.WriteString(w, `{"status":"success","data":{}}`)
+		case "GET /api/v1/inboxes/6":
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"status":"error","message":"Inbox not found"}`)
+		default:
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+	})
+	if err := c.RenameEmailInbox(context.Background(), 5, "New", "New <a@x.test>"); err != nil {
+		t.Fatal(err)
+	}
+	config := put["config"].(map[string]any)
+	imap, smtp := config["imap"].([]any)[0].(map[string]any), config["smtp"].([]any)[0].(map[string]any)
+	if put["name"] != "New" || put["from"] != "New <a@x.test>" || put["csat_enabled"] != true || put["from_name_template"] != "t" ||
+		imap["password"] != "" || imap["host"] != "mail" || smtp["password"] != "" || config["oauth"].(map[string]any)["access_token"] != "" {
+		t.Fatalf("put = %v", put)
+	}
+	if err := c.RenameEmailInbox(context.Background(), 6, "New", "New <a@x.test>"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing inbox = %v", err)
+	}
+}
+
 func TestCreateAgentAndSetPassword(t *testing.T) {
 	calls := 0
 	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {

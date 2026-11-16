@@ -109,6 +109,7 @@ type fakeHelpdesk struct {
 	mu                            sync.Mutex
 	created                       []libredesk.NewEmailInbox
 	deleted                       []int64
+	renamed                       []string
 	pingErr, createErr, deleteErr error
 	setupErr                      error
 	setupPasswords                []string
@@ -169,6 +170,12 @@ func (f *fakeHelpdesk) CreateEmailInbox(_ context.Context, in libredesk.NewEmail
 	defer f.mu.Unlock()
 	f.created = append(f.created, in)
 	return int64(len(f.created)), f.createErr
+}
+func (f *fakeHelpdesk) RenameEmailInbox(_ context.Context, id int64, name, from string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renamed = append(f.renamed, fmt.Sprintf("%d %s %s", id, name, from))
+	return nil
 }
 func (f *fakeHelpdesk) DeleteInbox(_ context.Context, id int64) error {
 	f.mu.Lock()
@@ -561,6 +568,10 @@ func TestHelpdeskVerificationAndDeleteRevokesLinks(t *testing.T) {
 	hd.pingErr = nil
 	id := helpdesk(t, h.root, tenant)
 	h.root.do("POST", path+"/helpdesk", map[string]any{"helpdesk_id": id}, 201)
+	h.root.do("PATCH", path, map[string]any{"display_name": "Help Desk"}, 200)
+	if len(hd.renamed) != 1 || hd.renamed[0] != "1 Help Desk Help Desk <support@a.test>" {
+		t.Fatalf("renamed = %v", hd.renamed)
+	}
 	hd.deleteErr = errors.New("unavailable")
 	h.root.do("DELETE", fmt.Sprintf("/helpdesks/%d", id), nil, 204)
 	if h.sw.appDeleted != 1 || len(hd.deleted) != 1 || len(h.sw.appPasswords) != 0 || len(array(t, h.root.do("GET", path+"/helpdesk", nil, 200))) != 0 {

@@ -87,7 +87,7 @@ Errors: `{"error": {"code": "not_found", "message": "..."}}` with a matching HTT
 | `PUT /domains/{id}/aliases` | session | replace alias domains `{aliases[]}` |
 | `GET /domains/{id}/mailboxes` | session | list users and groups of the domain |
 | `POST /domains/{id}/mailboxes` | session | `{name, display_name, password?, quota_mb?, aliases[{name, domain_id}], shared?}`; a generated password is returned once |
-| `PATCH /domains/{id}/mailboxes/{mid}` | session | display name, password, quota, aliases (full list) |
+| `PATCH /domains/{id}/mailboxes/{mid}` | session | display name, password, quota, aliases (full list); a new display name also renames its Libredesk inboxes (name and sender name) |
 | `DELETE /domains/{id}/mailboxes/{mid}` | session | destroy |
 | `GET /audit` | session | superadmin: all; tenant_admin: own tenant |
 

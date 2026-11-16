@@ -339,6 +339,40 @@ func (c *Client) CreateEmailInbox(ctx context.Context, in NewEmailInbox) (int64,
 	return out.ID, nil
 }
 
+// RenameEmailInbox sets an email inbox's name and From, keeping its other
+// settings. Libredesk masks secrets on read and keeps the stored ones when an
+// update sends them empty. A missing inbox yields ErrNotFound.
+func (c *Client) RenameEmailInbox(ctx context.Context, id int64, name, from string) error {
+	path := "/api/v1/inboxes/" + strconv.FormatInt(id, 10)
+	var inbox map[string]any
+	err := c.do(ctx, http.MethodGet, path, nil, &inbox)
+	if ae, ok := errors.AsType[*APIError](err); ok && ae.Status == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	config, ok := inbox["config"].(map[string]any)
+	if inbox["channel"] != "email" || !ok {
+		return errors.New("libredesk: not an email inbox")
+	}
+	for _, key := range []string{"imap", "smtp"} {
+		servers, _ := config[key].([]any)
+		for _, server := range servers {
+			if server, ok := server.(map[string]any); ok {
+				server["password"] = ""
+			}
+		}
+	}
+	if oauth, ok := config["oauth"].(map[string]any); ok {
+		for key := range oauth {
+			oauth[key] = ""
+		}
+	}
+	inbox["name"], inbox["from"] = name, from
+	return c.do(ctx, http.MethodPut, path, inbox, nil)
+}
+
 // DeleteInbox deletes an inbox. A missing inbox yields ErrNotFound.
 func (c *Client) DeleteInbox(ctx context.Context, id int64) error {
 	err := c.do(ctx, http.MethodDelete, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), nil, nil)

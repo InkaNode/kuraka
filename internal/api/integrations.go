@@ -36,6 +36,7 @@ type HelpdeskAPI interface {
 	Ping(context.Context) error
 	ListInboxes(context.Context) ([]libredesk.Inbox, error)
 	CreateEmailInbox(context.Context, libredesk.NewEmailInbox) (int64, error)
+	RenameEmailInbox(context.Context, int64, string, string) error
 	DeleteInbox(context.Context, int64) error
 	CreateAgent(context.Context, libredesk.NewAgent) (int64, error)
 	SetAgentPassword(context.Context, int64, libredesk.NewAgent, string) error

@@ -239,6 +239,9 @@ func (s *Server) updateMailbox(_ http.ResponseWriter, r *http.Request) (any, err
 	if err := s.sw.UpdateAccount(r.Context(), a.ID, p); err != nil {
 		return nil, upstream(err)
 	}
+	if in.DisplayName != nil {
+		s.renameHelpdeskInboxes(r.Context(), d, a)
+	}
 	out, err := s.mailboxJSON(r, d, a)
 	if err != nil {
 		return nil, err

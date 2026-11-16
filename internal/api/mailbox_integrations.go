@@ -99,21 +99,14 @@ func (s *Server) connectHelpdesk(_ http.ResponseWriter, r *http.Request) (any, e
 			s.log.Error("helpdesk rollback: app password revocation failed", "account_id", a.ID, "app_password_id", id)
 		}
 	}()
-	email := a.Email
-	if email == "" {
-		email = a.Name + "@" + d.Name
-	}
-	display := a.Description
-	if display == "" {
-		display = a.Name
-	}
+	email, display, from := inboxSender(d, a)
 	if in.InboxName == "" {
 		in.InboxName = display
 	}
 	mail := libredesk.MailServer{Host: s.cfg.MailHost, Port: 993, TLS: "tls", SkipVerify: s.cfg.MailTLSSkipVerify, Username: email, Password: secret}
 	smtp := mail
 	smtp.Port = 465
-	inboxID, err := client.CreateEmailInbox(r.Context(), libredesk.NewEmailInbox{Name: in.InboxName, From: display + " <" + email + ">", IMAP: mail, SMTP: smtp})
+	inboxID, err := client.CreateEmailInbox(r.Context(), libredesk.NewEmailInbox{Name: in.InboxName, From: from, IMAP: mail, SMTP: smtp})
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk inbox creation failed", err)
 	}
@@ -126,6 +119,46 @@ func (s *Server) connectHelpdesk(_ http.ResponseWriter, r *http.Request) (any, e
 	}
 	committed = true
 	return reply{201, linkJSON(link)}, nil
+}
+
+// inboxSender returns the mailbox address, its display name (the account name
+// when it has none) and the From of its Libredesk inboxes.
+func inboxSender(d store.Domain, a stalwart.Account) (email, display, from string) {
+	email = a.Email
+	if email == "" {
+		email = a.Name + "@" + d.Name
+	}
+	display = a.Description
+	if display == "" {
+		display = a.Name
+	}
+	return email, display, display + " <" + email + ">"
+}
+
+// renameHelpdeskInboxes gives the mailbox's Libredesk inboxes its display name,
+// as inbox name and as sender name. The mailbox is already saved, so failures
+// are only logged; saving the display name again retries.
+func (s *Server) renameHelpdeskInboxes(ctx context.Context, d store.Domain, a stalwart.Account) {
+	links, err := s.st.ListHelpdeskLinks(ctx, d.ID, a.ID)
+	if err != nil {
+		s.log.Warn("helpdesk inbox rename failed", "account_id", a.ID)
+		return
+	}
+	_, display, from := inboxSender(d, a)
+	for _, link := range links {
+		h, err := s.st.GetHelpdesk(ctx, link.HelpdeskID)
+		if err != nil || h.TenantID != d.TenantID {
+			s.log.Warn("helpdesk inbox rename failed", "link_id", link.ID)
+			continue
+		}
+		client, err := s.helpdeskClient(h)
+		if err == nil {
+			err = client.RenameEmailInbox(ctx, link.InboxID, display, from)
+		}
+		if err != nil && !errors.Is(err, libredesk.ErrNotFound) {
+			s.log.Warn("helpdesk inbox rename failed", "link_id", link.ID)
+		}
+	}
 }
 
 func (s *Server) revokeHelpdeskLink(ctx context.Context, client HelpdeskAPI, link store.HelpdeskLink) error {
