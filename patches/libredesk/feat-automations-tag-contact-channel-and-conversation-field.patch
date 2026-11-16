@@ -1,0 +1,815 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Sun, 15 Nov 2026 20:32:02 -0500
+Subject: [PATCH] feat(automations): tag, contact, channel and conversation
+ field conditions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Automations cannot check tags, tag changes, contact name or phone, channel or conversation custom fields.
+Kuraka-Missing-Es: Las automatizaciones no pueden revisar etiquetas, cambios de etiquetas, nombre o teléfono del contacto, canal ni campos personalizados de la conversación.
+---
+ .../src/composables/useConversationFilters.js |  44 +++++-
+ .../src/features/admin/automation/RuleBox.vue |  66 ++++++--
+ .../admin/automations/CreateOrEditRule.vue    |   3 +-
+ i18n/en-US.json                               |   6 +
+ i18n/es-ES.json                               |   6 +
+ internal/automation/automation.go             |   6 +
+ internal/automation/evaluator.go              |  13 +-
+ internal/automation/kuraka.go                 | 149 ++++++++++++++++++
+ internal/automation/kuraka_test.go            | 146 +++++++++++++++++
+ internal/automation/models/kuraka.go          |  12 ++
+ internal/conversation/conversation.go         |   2 +
+ internal/conversation/kuraka.go               |  38 +++++
+ internal/conversation/kuraka_test.go          |  16 ++
+ 13 files changed, 488 insertions(+), 19 deletions(-)
+ create mode 100644 internal/automation/kuraka.go
+ create mode 100644 internal/automation/kuraka_test.go
+ create mode 100644 internal/automation/models/kuraka.go
+ create mode 100644 internal/conversation/kuraka.go
+ create mode 100644 internal/conversation/kuraka_test.go
+
+diff --git a/frontend/apps/main/src/composables/useConversationFilters.js b/frontend/apps/main/src/composables/useConversationFilters.js
+index 7c71fbfc..00c066fa 100644
+--- a/frontend/apps/main/src/composables/useConversationFilters.js
++++ b/frontend/apps/main/src/composables/useConversationFilters.js
+@@ -137,9 +137,8 @@ export function useConversationFilters () {
+         }
+     }))
+ 
+-    const contactCustomAttributes = computed(() => {
+-        return customAttributeStore.contactAttributeOptions
+-            .filter(attribute => attribute.applies_to === 'contact')
++    const attributeFilters = (attributes) => {
++        return attributes
+             .reduce((acc, attribute) => {
+                 acc[attribute.key] = {
+                     label: attribute.label,
+@@ -153,9 +152,44 @@ export function useConversationFilters () {
+                 }
+                 return acc
+             }, {})
++    }
++
++    const contactCustomAttributes = computed(() => attributeFilters(customAttributeStore.contactAttributeOptions))
++    const conversationCustomAttributes = computed(() => attributeFilters(customAttributeStore.conversationAttributeOptions))
++
++    const tagFilter = (label) => ({
++        label,
++        type: FIELD_TYPE.MULTI_SELECT,
++        operators: ['contains', 'not contains', 'equals', 'set', 'not set']
+     })
++    const commonAutomationFilters = computed(() => ({
++        tags: tagFilter(t('globals.terms.tag', 2)),
++        contact_name: {
++            label: t('admin.automation.contactName'),
++            type: FIELD_TYPE.TEXT,
++            operators: FIELD_OPERATORS.TEXT_AUTOMATION,
++            allowCaseSensitive: true
++        },
++        contact_phone: {
++            label: t('admin.automation.contactPhone'),
++            type: FIELD_TYPE.TEXT,
++            operators: FIELD_OPERATORS.TEXT_AUTOMATION,
++            allowCaseSensitive: true
++        },
++        channel: {
++            label: t('globals.terms.channel'),
++            type: FIELD_TYPE.SELECT,
++            operators: ['equals', 'not equals'],
++            options: [
++                { label: t('globals.terms.email'), value: 'email' },
++                { label: t('globals.terms.liveChat'), value: 'livechat' },
++                { label: t('globals.terms.whatsapp'), value: 'whatsapp' }
++            ]
++        }
++    }))
+ 
+     const newConversationFilters = computed(() => ({
++        ...commonAutomationFilters.value,
+         contact_email: {
+             label: t('globals.terms.email'),
+             type: FIELD_TYPE.TEXT,
+@@ -211,6 +245,9 @@ export function useConversationFilters () {
+     }))
+ 
+     const conversationFilters = computed(() => ({
++        ...commonAutomationFilters.value,
++        tags_added: tagFilter(t('admin.automation.tagsAdded')),
++        tags_removed: tagFilter(t('admin.automation.tagsRemoved')),
+         status: {
+             label: t('globals.terms.status'),
+             type: FIELD_TYPE.SELECT,
+@@ -398,5 +435,6 @@ export function useConversationFilters () {
+         conversationActions,
+         macroActions,
+         contactCustomAttributes,
++        conversationCustomAttributes,
+     }
+ }
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleBox.vue b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+index be469c1b..b78db229 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+@@ -40,7 +40,7 @@
+           <div class="flex items-start gap-3" data-cy="automation-condition">
+             <div class="condition-fields grid min-w-0 flex-1 gap-3">
+               <Select
+-                v-model="rule.field"
++                :modelValue="selectedField(rule)"
+                 @update:modelValue="(value) => handleFieldChange(value, index)"
+               >
+                 <SelectTrigger :class="FIELD_CLASS">
+@@ -60,10 +60,22 @@
+                     <SelectItem
+                       v-for="(field, key) in contactCustomAttributes"
+                       :key="key"
+-                      :value="key"
++                      :value="`contact_custom_attribute:${key}`"
+                     >
+                       {{ field.label }}
+                     </SelectItem>
++                    <SelectLabel v-if="!contactsOnly && Object.keys(conversationCustomAttributes).length">{{
++                      $t('admin.automation.conversationCustomAttributes')
++                    }}</SelectLabel>
++                    <template v-if="!contactsOnly">
++                      <SelectItem
++                        v-for="(field, key) in conversationCustomAttributes"
++                        :key="`conversation_custom_attribute:${key}`"
++                        :value="`conversation_custom_attribute:${key}`"
++                      >
++                        {{ field.label }}
++                      </SelectItem>
++                    </template>
+                   </SelectGroup>
+                 </SelectContent>
+               </Select>
+@@ -126,6 +138,13 @@
+                   />
+                 </div>
+ 
++                <SelectTagCombobox
++                  v-if="inputType(index) === 'multi-select'"
++                  multiple
++                  :modelValue="fieldValueAsArray(rule.value)"
++                  @update:modelValue="(value) => handleValueChange(value, index)"
++                />
++
+                 <div v-if="inputType(index) === 'tag'">
+                   <TagsInput
+                     :defaultValue="fieldValueAsArray(rule.value)"
+@@ -229,6 +248,7 @@ import { useI18n } from 'vue-i18n'
+ import { useConversationFilters } from '@/composables/useConversationFilters'
+ import SelectComboBox from '@main/components/combobox/SelectCombobox.vue'
+ import SelectAgentCombobox from '@main/components/combobox/SelectAgentCombobox.vue'
++import SelectTagCombobox from '@main/components/combobox/SelectTagCombobox.vue'
+ import SelectTeamCombobox from '@main/components/combobox/SelectTeamCombobox.vue'
+ import { operatorLabel } from '@/constants/filterConfig'
+ 
+@@ -250,9 +270,10 @@ const props = defineProps({
+ 
+ const fieldTypeConstants = {
+   conversation: 'conversation',
+-  contact_custom_attribute: 'contact_custom_attribute'
++  contact_custom_attribute: 'contact_custom_attribute',
++  conversation_custom_attribute: 'conversation_custom_attribute'
+ }
+-const { conversationFilters, newConversationFilters, contactCustomAttributes } =
++const { conversationFilters, newConversationFilters, contactCustomAttributes, conversationCustomAttributes } =
+   useConversationFilters()
+ const hasContactCustomAttributes = computed(
+   () => Object.keys(contactCustomAttributes.value).length > 0
+@@ -269,7 +290,7 @@ const currentFilters = computed(() => {
+   // previous_* values only exist on conversation update events.
+   const filters = { ...conversationFilters.value }
+   for (const key of Object.keys(filters)) {
+-    if (key.startsWith('previous_')) delete filters[key]
++    if (key.startsWith('previous_') || ['tags_added', 'tags_removed'].includes(key)) delete filters[key]
+   }
+   return filters
+ })
+@@ -291,11 +312,19 @@ const handleGroupOperator = (value) => {
+   emitUpdate()
+ }
+ 
++const selectedField = (rule) =>
++  rule.field_type && rule.field_type !== fieldTypeConstants.conversation
++    ? `${rule.field_type}:${rule.field}`
++    : rule.field
++
+ const handleFieldChange = (value, ruleIndex) => {
+-  // Set the field type based on the selected field value.
+   let fieldType = fieldTypeConstants.conversation
+-  if (contactCustomAttributes.value[value]) {
+-    fieldType = fieldTypeConstants.contact_custom_attribute
++  for (const type of [fieldTypeConstants.contact_custom_attribute, fieldTypeConstants.conversation_custom_attribute]) {
++    if (value.startsWith(`${type}:`)) {
++      fieldType = type
++      value = value.slice(type.length + 1)
++      break
++    }
+   }
+ 
+   ruleGroup.value.rules[ruleIndex].operator = ''
+@@ -321,11 +350,7 @@ const handleValueChange = (value, ruleIndex) => {
+   const rule = ruleGroup.value.rules[ruleIndex]
+ 
+   // Array values are stored as comma separated string.
+-  rule.value = ['contains', 'not contains'].includes(rule.operator)
+-    ? Array.isArray(val)
+-      ? val.join(',')
+-      : val
+-    : String(val)
++  rule.value = Array.isArray(val) ? val.join(',') : String(val)
+ 
+   emitUpdate()
+ }
+@@ -359,6 +384,9 @@ const getFieldOperators = (field, fieldType) => {
+   if (fieldType === fieldTypeConstants.contact_custom_attribute) {
+     return contactCustomAttributes.value[field]?.operators || []
+   }
++  if (fieldType === fieldTypeConstants.conversation_custom_attribute) {
++    return conversationCustomAttributes.value[field]?.operators || []
++  }
+   if (fieldType === fieldTypeConstants.conversation) {
+     return currentFilters.value[field]?.operators || []
+   }
+@@ -378,6 +406,9 @@ const getFieldOptions = (field, fieldType) => {
+   if (fieldType === fieldTypeConstants.contact_custom_attribute) {
+     return contactCustomAttributes.value[field]?.options || []
+   }
++  if (fieldType === fieldTypeConstants.conversation_custom_attribute) {
++    return conversationCustomAttributes.value[field]?.options || []
++  }
+   if (fieldType === fieldTypeConstants.conversation) {
+     return currentFilters.value[field]?.options || []
+   }
+@@ -388,6 +419,8 @@ const inputType = (index) => {
+   const field = ruleGroup.value.rules[index]?.field
+   const operator = ruleGroup.value.rules[index]?.operator
+   let fieldType = ruleGroup.value.rules[index]?.field_type
++  if ((!fieldType || fieldType === fieldTypeConstants.conversation) && currentFilters.value[field]?.type === 'multi-select') return 'multi-select'
++  if ((!fieldType || fieldType === fieldTypeConstants.conversation) && ['contact_name', 'contact_phone'].includes(field)) return 'text'
+   if (['contains', 'not contains'].includes(operator)) return 'tag'
+ 
+   // Set default field type if not set for backwards compatibility as this field was added later.
+@@ -398,6 +431,9 @@ const inputType = (index) => {
+     if (fieldType === fieldTypeConstants.contact_custom_attribute) {
+       return contactCustomAttributes.value[field]?.type || ''
+     }
++    if (fieldType === fieldTypeConstants.conversation_custom_attribute) {
++      return conversationCustomAttributes.value[field]?.type || ''
++    }
+     if (fieldType === fieldTypeConstants.conversation) {
+       return currentFilters.value[field]?.type || ''
+     }
+@@ -415,7 +451,9 @@ const showCaseSensitive = (index) => {
+   const field =
+     rule?.field_type === fieldTypeConstants.contact_custom_attribute
+       ? contactCustomAttributes.value[rule.field]
+-      : currentFilters.value[rule?.field]
++      : rule?.field_type === fieldTypeConstants.conversation_custom_attribute
++        ? conversationCustomAttributes.value[rule.field]
++        : currentFilters.value[rule?.field]
+   return field?.allowCaseSensitive === true
+ }
+ </script>
+diff --git a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+index 8eef681d..0d2cc1d9 100644
+--- a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
++++ b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+@@ -235,7 +235,8 @@ const conversationEventOptions = [
+   { label: t('admin.automation.event.priority.change'), value: 'conversation.priority.change' },
+   { label: t('admin.automation.event.status.change'), value: 'conversation.status.change' },
+   { label: t('admin.automation.event.message.outgoing'), value: 'conversation.message.outgoing' },
+-  { label: t('admin.automation.event.message.incoming'), value: 'conversation.message.incoming' }
++  { label: t('admin.automation.event.message.incoming'), value: 'conversation.message.incoming' },
++  { label: t('admin.automation.event.tags.change'), value: 'conversation.tags.change' }
+ ]
+ 
+ const props = defineProps({
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 976032f4..ddc6961c 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -203,6 +203,9 @@
+   "admin.automation.all": "ALL",
+   "admin.automation.and": "AND",
+   "admin.automation.any": "ANY",
++  "admin.automation.contactName": "Contact name",
++  "admin.automation.contactPhone": "Contact phone",
++  "admin.automation.conversationCustomAttributes": "Conversation custom attributes",
+   "admin.automation.conversationUpdate": "Conversation update",
+   "admin.automation.conversationUpdate.description": "Rules that run when a conversation is updated.",
+   "admin.automation.evaluateRuleOnTheseEvents": "Evaluate rule on these events.",
+@@ -210,6 +213,7 @@
+   "admin.automation.event.message.outgoing": "Outgoing message",
+   "admin.automation.event.priority.change": "Priority change",
+   "admin.automation.event.status.change": "Status change",
++  "admin.automation.event.tags.change": "Tags changed",
+   "admin.automation.executeAllMatchingRules": "Execute all matching rules",
+   "admin.automation.executeFirstMatchingRule": "Execute first matching rule",
+   "admin.automation.help": "Automate actions when conversations are created, updated, or on an hourly schedule.",
+@@ -224,6 +228,8 @@
+   "admin.automation.previousAssignedUser": "Previous assigned user",
+   "admin.automation.previousPriority": "Previous priority",
+   "admin.automation.previousStatus": "Previous status",
++  "admin.automation.tagsAdded": "Tags added",
++  "admin.automation.tagsRemoved": "Tags removed",
+   "admin.automation.timeTriggers": "Time triggers",
+   "admin.automation.timeTriggers.description": "Rules that run once an hour.",
+   "admin.automation.validation.addAction": "Please add at least one action.",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index a6dd78b0..d77c998b 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -59,6 +59,9 @@
+   "admin.automation.all": "TODOS",
+   "admin.automation.and": "Y",
+   "admin.automation.any": "CUALQUIERA",
++  "admin.automation.contactName": "Nombre del contacto",
++  "admin.automation.contactPhone": "Teléfono del contacto",
++  "admin.automation.conversationCustomAttributes": "Campos personalizados de la conversación",
+   "admin.automation.conversationUpdate": "Actualización de conversación",
+   "admin.automation.conversationUpdate.description": "Reglas que se ejecutan cuando se actualiza una conversación.",
+   "admin.automation.evaluateRuleOnTheseEvents": "Evaluar regla en estos eventos.",
+@@ -66,6 +69,7 @@
+   "admin.automation.event.message.outgoing": "Mensaje saliente",
+   "admin.automation.event.priority.change": "Cambio de prioridad",
+   "admin.automation.event.status.change": "Cambio de estado",
++  "admin.automation.event.tags.change": "Cambio de etiquetas",
+   "admin.automation.executeAllMatchingRules": "Ejecutar todas las reglas coincidentes",
+   "admin.automation.executeFirstMatchingRule": "Ejecutar primera regla coincidente",
+   "admin.automation.help": "Automatiza acciones cuando las conversaciones se crean, se actualizan o en un horario periódico.",
+@@ -75,6 +79,8 @@
+   "admin.automation.noRulesFound": "No se encontraron reglas",
+   "admin.automation.or": "O",
+   "admin.automation.performTheseActions": "Realizar estas acciones",
++  "admin.automation.tagsAdded": "Etiquetas agregadas",
++  "admin.automation.tagsRemoved": "Etiquetas quitadas",
+   "admin.automation.timeTriggers": "Disparadores de tiempo",
+   "admin.automation.timeTriggers.description": "Reglas que se ejecutan una vez por hora.",
+   "admin.automation.validation.addAction": "Por favor, añada al menos una acción.",
+diff --git a/internal/automation/automation.go b/internal/automation/automation.go
+index 4dd91f22..8c94bd97 100644
+--- a/internal/automation/automation.go
++++ b/internal/automation/automation.go
+@@ -225,6 +225,9 @@ func (e *Engine) ToggleRule(id int) (models.RuleRecord, error) {
+ 
+ // UpdateRule updates an existing rule.
+ func (e *Engine) UpdateRule(id int, rule models.RuleRecord) (models.RuleRecord, error) {
++	if err := validateRuleFields(rule); err != nil {
++		return models.RuleRecord{}, err
++	}
+ 	if rule.Events == nil {
+ 		rule.Events = pq.StringArray{}
+ 	}
+@@ -240,6 +243,9 @@ func (e *Engine) UpdateRule(id int, rule models.RuleRecord) (models.RuleRecord,
+ 
+ // CreateRule creates a new rule.
+ func (e *Engine) CreateRule(rule models.RuleRecord) (models.RuleRecord, error) {
++	if err := validateRuleFields(rule); err != nil {
++		return models.RuleRecord{}, err
++	}
+ 	if rule.Events == nil {
+ 		rule.Events = pq.StringArray{}
+ 	}
+diff --git a/internal/automation/evaluator.go b/internal/automation/evaluator.go
+index 5a643a94..1e847882 100644
+--- a/internal/automation/evaluator.go
++++ b/internal/automation/evaluator.go
+@@ -119,6 +119,14 @@ func (e *Engine) evaluateRule(rule models.RuleDetail, conversation cmodels.Conve
+ 
+ 	if rule.FieldType == models.FieldTypeConversationField {
+ 		switch rule.Field {
++		case models.ConversationTags, models.ConversationTagsAdded, models.ConversationTagsRemoved:
++			return e.evaluateTagCondition(conversation, rule, previousValues)
++		case models.ContactName:
++			valueToCompare = conversation.Contact.FullName()
++		case models.ContactPhone:
++			valueToCompare = conversation.Contact.PhoneNumber.String
++		case models.ConversationChannel:
++			valueToCompare = conversation.InboxChannel
+ 		case models.ContactEmail:
+ 			valueToCompare = conversation.Contact.Email.String
+ 			// Email addresses are case-insensitive, older rules may still carry the flag.
+@@ -176,9 +184,12 @@ func (e *Engine) evaluateRule(rule models.RuleDetail, conversation cmodels.Conve
+ 			e.lo.Error("error unrecognized conversation field", "field", rule.Field, "field_type", rule.FieldType, "conversation_uuid", conversation.UUID)
+ 			return false
+ 		}
+-	} else if rule.FieldType == models.FieldTypeContactCustomAttribute {
++	} else if rule.FieldType == models.FieldTypeContactCustomAttribute || rule.FieldType == models.FieldTypeConversationCustomAttribute {
+ 		// If the field type is custom attribute, need to extract the value from the custom attributes
+ 		var attributes json.RawMessage = conversation.Contact.CustomAttributes
++		if rule.FieldType == models.FieldTypeConversationCustomAttribute {
++			attributes = conversation.CustomAttributes
++		}
+ 		if len(attributes) == 0 {
+ 			attributes = json.RawMessage(`{}`)
+ 		}
+diff --git a/internal/automation/kuraka.go b/internal/automation/kuraka.go
+new file mode 100644
+index 00000000..c67cde92
+--- /dev/null
++++ b/internal/automation/kuraka.go
+@@ -0,0 +1,149 @@
++package automation
++
++import (
++	"encoding/json"
++	"fmt"
++	"slices"
++	"strings"
++
++	"github.com/abhinavxd/libredesk/internal/automation/models"
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/envelope"
++)
++
++// evaluateTagRule compares whole tag names, ignoring case. equals means exactly
++// the requested tags, no more and no fewer.
++func evaluateTagRule(tags []string, rule models.RuleDetail) bool {
++	if rule.Operator == models.RuleOperatorSet {
++		return len(tags) > 0
++	}
++	if rule.Operator == models.RuleOperatorNotSet {
++		return len(tags) == 0
++	}
++	var requested []string
++	for _, tag := range strings.Split(rule.Value, ",") {
++		if tag = strings.TrimSpace(tag); tag != "" {
++			requested = append(requested, tag)
++		}
++	}
++	if len(requested) == 0 {
++		return false
++	}
++	in := func(list []string) func(string) bool {
++		return func(tag string) bool {
++			return slices.ContainsFunc(list, func(name string) bool { return strings.EqualFold(name, tag) })
++		}
++	}
++	switch rule.Operator {
++	case models.RuleOperatorContains:
++		return slices.ContainsFunc(requested, in(tags))
++	case models.RuleOperatorNotContains:
++		return !slices.ContainsFunc(requested, in(tags))
++	case models.RuleOperatorEquals:
++		for _, tag := range requested {
++			if !in(tags)(tag) {
++				return false
++			}
++		}
++		for _, tag := range tags {
++			if !in(requested)(tag) {
++				return false
++			}
++		}
++		return true
++	}
++	return false
++}
++
++func (e *Engine) evaluateTagCondition(conversation cmodels.Conversation, rule models.RuleDetail, previousValues map[string]string) bool {
++	var tags []string
++	if rule.Field == models.ConversationTags {
++		if conversation.Tags.Valid {
++			if err := json.Unmarshal(conversation.Tags.JSON, &tags); err != nil {
++				e.lo.Error("error unmarshalling conversation tags", "error", err)
++				return false
++			}
++		}
++	} else {
++		value, ok := previousValues[rule.Field]
++		if !ok {
++			return false
++		}
++		if value != "" {
++			tags = strings.Split(value, ",")
++		}
++	}
++	return evaluateTagRule(tags, rule)
++}
++
++// validateRuleFields is shared by both save paths. Custom attribute keys are
++// user-defined, as with the existing contact custom attributes.
++func validateRuleFields(record models.RuleRecord) error {
++	invalid := func(message string) error {
++		return envelope.NewError(envelope.InputError, message, nil)
++	}
++	if !slices.Contains([]string{models.RuleTypeNewConversation, models.RuleTypeConversationUpdate, models.RuleTypeTimeTrigger}, record.Type) {
++		return invalid("invalid automation rule type")
++	}
++	for _, event := range record.Events {
++		if !slices.Contains([]string{models.EventConversationUserAssigned, models.EventConversationTeamAssigned,
++			models.EventConversationStatusChange, models.EventConversationPriorityChange,
++			models.EventConversationMessageOutgoing, models.EventConversationMessageIncoming,
++			models.EventConversationTagsChange}, event) {
++			return invalid(fmt.Sprintf("invalid automation event %q", event))
++		}
++	}
++	var rules []models.Rule
++	if err := json.Unmarshal(record.Rules, &rules); err != nil {
++		return invalid("invalid automation rules JSON")
++	}
++	for _, rule := range rules {
++		for _, group := range rule.Groups {
++			for _, condition := range group.Rules {
++				switch condition.FieldType {
++				case "", models.FieldTypeConversationField:
++					if !slices.Contains([]string{models.ConversationSubject, models.ConversationContent,
++						models.ConversationStatus, models.ConversationPriority, models.ConversationAssignedUser,
++						models.ConversationAssignedTeam, models.ConversationInbox, models.ConversationIncomingTo,
++						models.ContactEmail, models.ContactName, models.ContactPhone, models.ConversationChannel,
++						models.ConversationTags, models.ConversationTagsAdded, models.ConversationTagsRemoved,
++						models.ConversationPreviousStatus, models.ConversationPreviousPriority,
++						models.ConversationPreviousAssignedUser, models.ConversationPreviousAssignedTeam,
++						models.ConversationHoursSinceCreated, models.ConversationHoursSinceFirstReply,
++						models.ConversationHoursSinceLastReply, models.ConversationHoursSinceResolved,
++						models.ConversationHoursSinceLastResolved}, condition.Field) {
++						return invalid(fmt.Sprintf("invalid automation field %q", condition.Field))
++					}
++					if condition.Field == models.ConversationTagsAdded || condition.Field == models.ConversationTagsRemoved {
++						if record.Type != models.RuleTypeConversationUpdate {
++							return invalid("tag changes require a conversation_update rule")
++						}
++					}
++					if condition.Field == models.ConversationTags || condition.Field == models.ConversationTagsAdded || condition.Field == models.ConversationTagsRemoved {
++						if !slices.Contains([]string{models.RuleOperatorContains, models.RuleOperatorNotContains, models.RuleOperatorEquals, models.RuleOperatorSet, models.RuleOperatorNotSet}, condition.Operator) {
++							return invalid("invalid tag operator")
++						}
++					}
++					if condition.Field == models.ConversationChannel {
++						if condition.Operator != models.RuleOperatorEquals && condition.Operator != models.RuleOperatorNotEqual {
++							return invalid("invalid channel operator")
++						}
++					}
++				case models.FieldTypeContactCustomAttribute, models.FieldTypeConversationCustomAttribute:
++					if strings.TrimSpace(condition.Field) == "" {
++						return invalid("empty custom attribute key")
++					}
++				default:
++					return invalid(fmt.Sprintf("invalid automation field type %q", condition.FieldType))
++				}
++				if !slices.Contains([]string{models.RuleOperatorContains, models.RuleOperatorNotContains,
++					models.RuleOperatorEquals, models.RuleOperatorNotEqual, models.RuleOperatorSet,
++					models.RuleOperatorNotSet, models.RuleOperatorGreaterThan, models.RuleOperatorLessThan,
++					models.RuleOperatorStartsWith}, condition.Operator) {
++					return invalid(fmt.Sprintf("invalid automation operator %q", condition.Operator))
++				}
++			}
++		}
++	}
++	return nil
++}
+diff --git a/internal/automation/kuraka_test.go b/internal/automation/kuraka_test.go
+new file mode 100644
+index 00000000..9636e367
+--- /dev/null
++++ b/internal/automation/kuraka_test.go
+@@ -0,0 +1,146 @@
++package automation
++
++import (
++	"encoding/json"
++	"testing"
++
++	"github.com/abhinavxd/libredesk/internal/automation/models"
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/mock"
++	"github.com/volatiletech/null/v9"
++)
++
++func TestTagConditions(t *testing.T) {
++	engine := createTestEngine(new(mockConversationStore))
++	for _, tc := range []struct {
++		name, operator, value string
++		tags                  []string
++		want                  bool
++	}{
++		{"any", "contains", "missing, vip", []string{"VIP", "Billing"}, true},
++		{"any missing", "contains", "missing, other", []string{"VIP"}, false},
++		{"none", "not contains", "missing, other", []string{"VIP"}, true},
++		{"none excludes any", "not contains", "missing, vip", []string{"VIP"}, false},
++		{"exact", "equals", "vip, BILLING", []string{"Billing", "VIP"}, true},
++		{"exact rejects extra", "equals", "vip, BILLING", []string{"VIP", "Billing", "Extra"}, false},
++		{"exact rejects empty", "equals", "vip", nil, false},
++		{"all requires every name", "equals", "vip, missing", []string{"VIP"}, false},
++		{"whole name", "contains", "vip", []string{"VIP customer"}, false},
++		{"whole name none", "not contains", "vip", []string{"VIP customer"}, true},
++		{"whole name all", "equals", "vip", []string{"VIP customer"}, false},
++		{"spaces in name", "equals", " vip customer ", []string{"VIP Customer"}, true},
++		{"set", "set", "", []string{"VIP"}, true},
++		{"set empty", "set", "", nil, false},
++		{"not set", "not set", "", nil, true},
++		{"not set populated", "not set", "", []string{"VIP"}, false},
++		{"empty contains", "contains", " , ", []string{"VIP"}, false},
++		{"empty none", "not contains", "", []string{"VIP"}, false},
++		{"empty all", "equals", "", []string{"VIP"}, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			data, err := json.Marshal(tc.tags)
++			assert.NoError(t, err)
++			conv := cmodels.Conversation{Tags: null.JSONFrom(data)}
++			for _, field := range []string{models.ConversationTags, models.ConversationTagsAdded, models.ConversationTagsRemoved} {
++				values := map[string]string{field: ""}
++				for i, tag := range tc.tags {
++					if i > 0 {
++						values[field] += ","
++					}
++					values[field] += tag
++				}
++				rule := models.RuleDetail{Field: field, Operator: tc.operator, Value: tc.value, CaseSensitiveMatch: true}
++				assert.Equal(t, tc.want, engine.evaluateRule(rule, conv, values), field)
++			}
++		})
++	}
++}
++
++func TestTagEventAbsentKeys(t *testing.T) {
++	engine := createTestEngine(new(mockConversationStore))
++	for _, field := range []string{models.ConversationTagsAdded, models.ConversationTagsRemoved} {
++		for _, op := range []string{"contains", "not contains", "equals", "set", "not set"} {
++			rule := models.RuleDetail{Field: field, Operator: op, Value: "VIP"}
++			assert.False(t, engine.evaluateRule(rule, cmodels.Conversation{}, nil), "%s %s", field, op)
++			assert.False(t, engine.evaluateRule(rule, cmodels.Conversation{}, map[string]string{"previous_status": "1"}), "%s %s", field, op)
++		}
++		assert.True(t, engine.evaluateRule(models.RuleDetail{Field: field, Operator: "not set"}, cmodels.Conversation{}, map[string]string{field: ""}))
++	}
++}
++
++func TestAdditionalConditions(t *testing.T) {
++	engine := createTestEngine(new(mockConversationStore))
++	conv := cmodels.Conversation{
++		InboxChannel:     "whatsapp",
++		CustomAttributes: json.RawMessage(`{"plan":"Pro","seats":5,"active":true}`),
++		Contact:          cmodels.ConversationContact{FirstName: "Ana", LastName: "Ruiz", PhoneNumber: null.StringFrom("+51999123456"), CustomAttributes: json.RawMessage(`{"plan":"Free"}`)},
++	}
++	for _, rule := range []models.RuleDetail{
++		{Field: models.ContactName, Operator: "equals", Value: "ana ruiz"},
++		{Field: models.ContactPhone, Operator: "starts with", Value: "+51"},
++		{Field: models.ConversationChannel, Operator: "equals", Value: "whatsapp"},
++		{Field: models.ConversationChannel, Operator: "not equals", Value: "email"},
++		{FieldType: models.FieldTypeConversationCustomAttribute, Field: "plan", Operator: "equals", Value: "pro"},
++		{FieldType: models.FieldTypeConversationCustomAttribute, Field: "seats", Operator: "greater than", Value: "4"},
++		{FieldType: models.FieldTypeConversationCustomAttribute, Field: "active", Operator: "equals", Value: "true"},
++		{FieldType: models.FieldTypeConversationCustomAttribute, Field: "absent", Operator: "not set"},
++		{FieldType: models.FieldTypeContactCustomAttribute, Field: "plan", Operator: "equals", Value: "free"},
++	} {
++		assert.True(t, engine.evaluateRule(rule, conv, nil), "%+v", rule)
++	}
++	assert.False(t, engine.evaluateRule(models.RuleDetail{FieldType: models.FieldTypeConversationCustomAttribute, Field: "absent", Operator: "not equals", Value: "x"}, conv, nil))
++	conv.CustomAttributes = json.RawMessage(`invalid`)
++	assert.False(t, engine.evaluateRule(models.RuleDetail{FieldType: models.FieldTypeConversationCustomAttribute, Field: "plan", Operator: "set"}, conv, nil))
++}
++
++func TestTagActionsDoNotRequeue(t *testing.T) {
++	for _, action := range []string{models.ActionAddTags, models.ActionSetTags, models.ActionRemoveTags} {
++		t.Run(action, func(t *testing.T) {
++			store := new(mockConversationStore)
++			engine := createQueueTestEngine(store)
++			conv := createTestConversation()
++			rule := createTestRule([]models.RuleGroup{{LogicalOp: models.OperatorAnd, Rules: []models.RuleDetail{{Field: models.ConversationStatus, Operator: "set"}}}}, []models.RuleAction{{Type: action, Value: []string{"VIP"}}}, models.OperatorAnd)
++			store.On("ApplyAction", mock.Anything, mock.Anything, mock.Anything).Run(func(mock.Arguments) {
++				engine.EvaluateConversationUpdateRules(conv, models.EventConversationTagsChange, map[string]string{models.ConversationTagsAdded: "VIP"}, systemActor())
++				engine.EvaluateConversationUpdateRules(conv, models.EventConversationTagsChange, nil, agentActor())
++			}).Return(nil)
++			engine.evalConversationRules([]models.Rule{rule}, conv, nil)
++			assert.Equal(t, 1, store.callCount)
++			assert.Len(t, engine.taskQueue, 1, "only the concurrent agent event survives suppression")
++			assert.False(t, engine.isSuppressed(conv.UUID))
++		})
++	}
++}
++
++func TestRuleFieldValidation(t *testing.T) {
++	for _, tc := range []struct {
++		field, fieldType, operator, event, ruleType string
++		valid                                       bool
++	}{
++		{"tags", "conversation", "equals", models.EventConversationTagsChange, "conversation_update", true},
++		{"tags_added", "conversation", "not set", models.EventConversationTagsChange, "conversation_update", true},
++		{"tags_removed", "", "contains", models.EventConversationTagsChange, "conversation_update", true},
++		{"contact_name", "", "contains", "", "new_conversation", true},
++		{"contact_phone", "", "starts with", "", "time_trigger", true},
++		{"channel", "", "not equals", "", "new_conversation", true},
++		{"plan", models.FieldTypeConversationCustomAttribute, "equals", "", "new_conversation", true},
++		{"plan", models.FieldTypeContactCustomAttribute, "equals", "", "new_conversation", true},
++		{"unknown", "conversation", "equals", "", "new_conversation", false},
++		{"tags", "unknown", "equals", "", "new_conversation", false},
++		{"tags", "", "contains", "unknown", "conversation_update", false},
++		{"tags", "", "unknown", "", "new_conversation", false},
++		{"tags", "", "starts with", "", "new_conversation", false},
++		{"channel", "", "contains", "", "new_conversation", false},
++		{"tags_added", "", "contains", "", "new_conversation", false},
++		{"tags_removed", "", "not set", "", "time_trigger", false},
++	} {
++		rules, err := json.Marshal([]models.Rule{{Groups: []models.RuleGroup{{Rules: []models.RuleDetail{{Field: tc.field, FieldType: tc.fieldType, Operator: tc.operator}}}}}})
++		assert.NoError(t, err)
++		record := models.RuleRecord{Type: tc.ruleType, Rules: rules}
++		if tc.event != "" {
++			record.Events = []string{tc.event}
++		}
++		assert.Equal(t, tc.valid, validateRuleFields(record) == nil, "%+v", tc)
++	}
++}
+diff --git a/internal/automation/models/kuraka.go b/internal/automation/models/kuraka.go
+new file mode 100644
+index 00000000..3a588f1e
+--- /dev/null
++++ b/internal/automation/models/kuraka.go
+@@ -0,0 +1,12 @@
++package models
++
++const (
++	EventConversationTagsChange          = "conversation.tags.change"
++	ConversationTags                     = "tags"
++	ConversationTagsAdded                = "tags_added"
++	ConversationTagsRemoved              = "tags_removed"
++	ContactName                          = "contact_name"
++	ContactPhone                         = "contact_phone"
++	ConversationChannel                  = "channel"
++	FieldTypeConversationCustomAttribute = "conversation_custom_attribute"
++)
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index 4c16176c..45e69031 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -1233,6 +1233,8 @@ func (c *Manager) SetConversationTags(uuid string, action string, tagNames []str
+ 	conversation, err := c.GetConversation(0, uuid, "")
+ 	if err != nil {
+ 		c.lo.Error("error fetching conversation after tags change", "uuid", uuid, "error", err)
++	} else {
++		c.evaluateTagChanges(conversation, prevTags, newTags, actor)
+ 	}
+ 
+ 	// Trigger webhook for conversation tags changed.
+diff --git a/internal/conversation/kuraka.go b/internal/conversation/kuraka.go
+new file mode 100644
+index 00000000..3fa7bb6a
+--- /dev/null
++++ b/internal/conversation/kuraka.go
+@@ -0,0 +1,38 @@
++package conversation
++
++import (
++	"slices"
++	"strings"
++
++	amodels "github.com/abhinavxd/libredesk/internal/automation/models"
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++)
++
++func tagChanges(previous, current []string) map[string]string {
++	var added, removed []string
++	for _, tag := range current {
++		if !slices.Contains(previous, tag) {
++			added = append(added, tag)
++		}
++	}
++	for _, tag := range previous {
++		if !slices.Contains(current, tag) {
++			removed = append(removed, tag)
++		}
++	}
++	if len(added) == 0 && len(removed) == 0 {
++		return nil
++	}
++	return map[string]string{
++		amodels.ConversationTagsAdded:   strings.Join(added, ","),
++		amodels.ConversationTagsRemoved: strings.Join(removed, ","),
++	}
++}
++
++func (c *Manager) evaluateTagChanges(conversation models.Conversation, previous, current []string, actor umodels.User) {
++	if changes := tagChanges(previous, current); changes != nil {
++		// Synchronous dispatch retains the system actor and the engine's suppression window.
++		c.automation.EvaluateConversationUpdateRules(conversation, amodels.EventConversationTagsChange, changes, actor)
++	}
++}
+diff --git a/internal/conversation/kuraka_test.go b/internal/conversation/kuraka_test.go
+new file mode 100644
+index 00000000..5741e446
+--- /dev/null
++++ b/internal/conversation/kuraka_test.go
+@@ -0,0 +1,16 @@
++package conversation
++
++import (
++	"testing"
++
++	amodels "github.com/abhinavxd/libredesk/internal/automation/models"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestTagChanges(t *testing.T) {
++	assert.Nil(t, tagChanges(nil, nil))
++	assert.Nil(t, tagChanges([]string{"VIP", "Billing"}, []string{"Billing", "VIP"}))
++	assert.Equal(t, map[string]string{amodels.ConversationTagsAdded: "New", amodels.ConversationTagsRemoved: "Old"}, tagChanges([]string{"VIP", "Old"}, []string{"New", "VIP"}))
++	assert.Equal(t, map[string]string{amodels.ConversationTagsAdded: "", amodels.ConversationTagsRemoved: "VIP"}, tagChanges([]string{"VIP"}, nil))
++	assert.Equal(t, map[string]string{amodels.ConversationTagsAdded: "VIP", amodels.ConversationTagsRemoved: ""}, tagChanges(nil, []string{"VIP"}))
++}
