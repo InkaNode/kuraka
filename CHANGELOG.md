@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Libredesk updates**: the Libredesk image is tagged with the last commit that changed its patches, so **New patches** only appears when the patches change, not after every **Update Kuraka**. Helpdesks on a 0.3.1 or 0.3.2 image are offered the update once.
 
+- **Libredesk inbox names**: changing a mailbox's display name in Kuraka also changes its Libredesk inbox name and the sender name of the emails it sends. Existing inboxes take the name the next time the display name is saved.
+
 ### Removed
 
 - **Libredesk Account → Profile**: the page only changed the avatar, so agents expected to edit their name there. Admins edit agents in Admin → Agents.
