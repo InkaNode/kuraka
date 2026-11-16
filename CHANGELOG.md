@@ -4,11 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-15
 
 ### Added
 
 - **Patched upstream builds**: `patches/stalwart-webui` and `patches/libredesk` hold Kuraka's changes as patches on an upstream tag (`scripts/patches.sh checkout|export|rebase`). CI applies and builds them; the release attaches `stalwart-webui.zip` and publishes `ghcr.io/inkanode/libredesk:<upstream>-kuraka.<version>` and `:sha-<commit>`. A daily workflow opens a pull request for each new upstream release; patches that no longer apply are skipped with the conflict explained, and CI merges it when every check passes; the release still waits for a normal push to main. System → Updates lists what does not work while a patch is skipped, marked urgent or notice.
+
+- **Libredesk patches**: built-in status icons with a gap before the name; email conversations as a flat thread instead of chat bubbles; an inbox switcher grouped by client; automation conditions on tags (contains, not contains, equals for exactly those tags, set, not set), on tags added or removed with a new "Tags changed" event, on contact name and phone, on channel and on conversation custom fields. Saving a rule with an unknown field, operator or event returns an input error.
+
+### Changed
+
+- **Stalwart 1.1**: Kuraka supports Stalwart `v1.1.x`, so System → Updates offers `v1.1.0` instead of waiting. The update starts it once with `STALWART_UPDATE_ROLE_PERMISSIONS=true`, which adds the new passkey permissions to the default roles.
+- **System → Updates**: helpdesks are listed as Libredesk with their domain below, and the "Waiting for Kuraka" explanation is an info icon with a tooltip instead of a long line in the table.
 
 ## [0.2.0] - 2026-11-05
 
@@ -64,5 +71,7 @@ First release.
 - CI with GitHub Actions: Go and web checks plus integration tests against a real Stalwart.
 - Deployment bundle (`deploy/`) with Caddy, Stalwart and Kuraka, and an install guide.
 
+[0.3.0]: https://github.com/InkaNode/kuraka/releases/tag/v0.3.0
+[0.2.0]: https://github.com/InkaNode/kuraka/releases/tag/v0.2.0
 [0.1.1]: https://github.com/InkaNode/kuraka/releases/tag/v0.1.1
 [0.1.0]: https://github.com/InkaNode/kuraka/releases/tag/v0.1.0
