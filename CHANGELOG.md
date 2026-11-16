@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Libredesk email thread**: incoming emails are shown without the white box, in light and dark mode, and a long email fades into the page above **Expand**. Email backgrounds and text colours are dropped so every email follows the theme; images and links stay, links underlined.
 
+- **Libredesk updates**: the Libredesk image is tagged with the last commit that changed its patches, so **New patches** only appears when the patches change, not after every **Update Kuraka**. Helpdesks on a 0.3.1 or 0.3.2 image are offered the update once.
+
 ### Removed
 
 - **Libredesk Account → Profile**: the page only changed the avatar, so agents expected to edit their name there. Admins edit agents in Admin → Agents.
