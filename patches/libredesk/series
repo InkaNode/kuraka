@@ -3,3 +3,4 @@ feat-statuses-built-in-status-icons-and-a-gap-before-the-nam.patch
 feat-conversations-flat-email-thread-instead-of-chat-bubbles.patch
 feat-inboxes-inbox-switcher-grouped-by-client.patch
 feat-automations-tag-contact-channel-and-conversation-field.patch
+feat-account-remove-the-avatar-only-profile-page.patch

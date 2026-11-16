@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 10:41:13 -0500
+Subject: [PATCH] feat(account): remove the avatar-only profile page
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Account shows a Profile page that only changes the avatar, so agents expect to edit their name there.
+Kuraka-Missing-Es: Cuenta muestra una página Perfil que solo cambia la foto, y los agentes esperan poder editar su nombre ahí.
+---
+ .../apps/main/src/constants/navigation.js     |  5 --
+ .../providers/useNavigationCommands.js        | 12 +--
+ frontend/apps/main/src/router/index.js        | 10 +--
+ .../views/account/profile/ProfileEditView.vue | 89 -------------------
+ 4 files changed, 4 insertions(+), 112 deletions(-)
+ delete mode 100644 frontend/apps/main/src/views/account/profile/ProfileEditView.vue
+
+diff --git a/frontend/apps/main/src/constants/navigation.js b/frontend/apps/main/src/constants/navigation.js
+index 027660f1..9b851242 100644
+--- a/frontend/apps/main/src/constants/navigation.js
++++ b/frontend/apps/main/src/constants/navigation.js
+@@ -267,11 +267,6 @@ export const adminNavItems = [
+ ]
+ 
+ export const accountNavItems = [
+-  {
+-    titleKey: 'globals.terms.profile',
+-    href: '/account/profile',
+-    icon: 'CircleUser'
+-  },
+   {
+     titleKey: 'globals.terms.notification',
+     href: '/account/notifications',
+diff --git a/frontend/apps/main/src/features/command/providers/useNavigationCommands.js b/frontend/apps/main/src/features/command/providers/useNavigationCommands.js
+index aecb288c..20a4bfd0 100644
+--- a/frontend/apps/main/src/features/command/providers/useNavigationCommands.js
++++ b/frontend/apps/main/src/features/command/providers/useNavigationCommands.js
+@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
+ import {
+   AtSign,
+   BookUser,
+-  CircleUser,
+   Eye,
+   Inbox,
+   Layers,
+@@ -121,15 +120,6 @@ export function useNavigationCommands() {
+       run: goTo({ name: 'contacts' })
+     },
+     ...reportCommands(),
+-    ...adminCommands(),
+-    {
+-      id: 'goto.profile',
+-      label: t('globals.terms.profile'),
+-      hint: t('globals.terms.account'),
+-      keywords: [t('globals.terms.account')],
+-      section: SECTIONS.GOTO,
+-      icon: CircleUser,
+-      run: goTo({ name: 'profile' })
+-    }
++    ...adminCommands()
+   ])
+ }
+diff --git a/frontend/apps/main/src/router/index.js b/frontend/apps/main/src/router/index.js
+index e7d4d2f2..c44d871d 100644
+--- a/frontend/apps/main/src/router/index.js
++++ b/frontend/apps/main/src/router/index.js
+@@ -158,17 +158,13 @@ const routes = [
+       {
+         path: '/account/:page?',
+         name: 'account',
+-        redirect: '/account/profile',
++        redirect: '/account/notifications',
+         component: () => import('@main/layouts/account/AccountLayout.vue'),
+         props: true,
+         meta: { titleKey: 'globals.terms.account' },
+         children: [
+-          {
+-            path: 'profile',
+-            name: 'profile',
+-            component: () => import('@main/views/account/profile/ProfileEditView.vue'),
+-            meta: { titleKey: 'account.editProfile' }
+-          },
++          // Agents can only change their avatar here; admins edit agents.
++          { path: 'profile', redirect: '/account/notifications' },
+           {
+             path: 'notifications',
+             name: 'account-notifications',
+diff --git a/frontend/apps/main/src/views/account/profile/ProfileEditView.vue b/frontend/apps/main/src/views/account/profile/ProfileEditView.vue
+deleted file mode 100644
+index 008e6078..00000000
+--- a/frontend/apps/main/src/views/account/profile/ProfileEditView.vue
++++ /dev/null
+@@ -1,89 +0,0 @@
+-<template>
+-  <div class="h-full">
+-    <div class="flex flex-col space-y-5">
+-      <div class="space-y-1">
+-        <span class="sub-title">{{ $t('account.publicAvatar') }}</span>
+-        <p class="text-muted-foreground text-xs">{{ $t('account.changeAvatar') }}</p>
+-      </div>
+-      <AvatarUpload
+-        :src="userStore.avatar"
+-        :initials="userStore.getInitials"
+-        :label="$t('globals.messages.upload')"
+-        :disabled="isSaving"
+-        @upload="onCropped"
+-        @remove="removeAvatar"
+-      />
+-
+-      <Button
+-        class="self-start"
+-        @click="saveUser"
+-        :isLoading="isSaving"
+-        :disabled="!pendingFile"
+-      >
+-        {{ $t('globals.messages.saveChanges') }}
+-      </Button>
+-    </div>
+-  </div>
+-</template>
+-
+-<script setup>
+-import { useUserStore } from '../../../stores/user'
+-import { Button } from '@shared-ui/components/ui/button'
+-import { AvatarUpload } from '@shared-ui/components/ui/avatar'
+-import { ref } from 'vue'
+-import { useEmitter } from '../../../composables/useEmitter'
+-import { handleHTTPError } from '@shared-ui/utils/http.js'
+-import { EMITTER_EVENTS } from '../../../constants/emitterEvents.js'
+-import { useI18n } from 'vue-i18n'
+-import api from '../../../api'
+-
+-const emitter = useEmitter()
+-const { t } = useI18n()
+-const isSaving = ref(false)
+-const userStore = useUserStore()
+-const pendingFile = ref(null)
+-
+-const onCropped = (file) => {
+-  if (isSaving.value) return
+-  pendingFile.value = file
+-  userStore.setAvatar(URL.createObjectURL(file))
+-}
+-
+-const saveUser = async () => {
+-  if (!pendingFile.value) return
+-  const formData = new FormData()
+-  formData.append('files', pendingFile.value, 'avatar.png')
+-  try {
+-    isSaving.value = true
+-    await api.updateCurrentUser(formData)
+-    pendingFile.value = null
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      description: t('globals.messages.savedSuccessfully')
+-    })
+-  } catch (error) {
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      variant: 'destructive',
+-      description: handleHTTPError(error).message
+-    })
+-  } finally {
+-    isSaving.value = false
+-  }
+-}
+-
+-const removeAvatar = async () => {
+-  if (isSaving.value) return
+-  try {
+-    await api.deleteUserAvatar()
+-    pendingFile.value = null
+-    userStore.clearAvatar()
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      description: t('account.avatarRemoved')
+-    })
+-  } catch (error) {
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      variant: 'destructive',
+-      description: handleHTTPError(error).message
+-    })
+-  }
+-}
+-</script>
