@@ -156,6 +156,14 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover { background: var(--panel); }
 .table .empty { white-space: normal; }
+.tip { position: relative; display: inline-flex; }
+.tip-btn { position: relative; display: inline-flex; padding: 4px; border: 0; border-radius: 999px; background: none; color: var(--muted); }
+.tip-btn::before { content: ''; position: absolute; inset: -10px; }
+.tip-btn:hover { color: var(--text); }
+.tip-text { position: absolute; z-index: 2; bottom: calc(100% + 4px); right: 0; width: max-content; max-width: min(280px, 70vw); padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: var(--shadow-pop); font-size: .8125rem; line-height: 1.4; white-space: normal; visibility: hidden; opacity: 0; transition: opacity 150ms; }
+.tip-text::after { content: ''; position: absolute; inset: 100% 0 -6px; }
+.tip:hover .tip-text, .tip-btn:focus + .tip-text { visibility: visible; opacity: 1; }
+.tip.closed .tip-text { visibility: hidden; opacity: 0; }
 .badge, .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: .8125rem; }
 .badge { background: var(--surface-2); font-weight: 550; }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .danger { color: var(--danger); } .neutral { color: var(--muted); }

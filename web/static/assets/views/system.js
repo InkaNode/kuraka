@@ -2,7 +2,7 @@ import '../i18n/system.js';
 import { h, mount } from '../core/h.js';
 import { api, errorMessage } from '../core/api.js';
 import { t, formatDate, getLang } from '../core/i18n.js';
-import { button, card, pageHeader, table, badge, checkbox, errorBox, confirmDialog, toast } from '../core/ui.js';
+import { button, card, pageHeader, table, badge, checkbox, errorBox, confirmDialog, toast, infoTip } from '../core/ui.js';
 
 const UPDATE_POLL_MS = 10000;
 const UPDATE_BADGE = { current: 'ok', available: 'warn', waiting: 'warn', updating: 'neutral', error: 'danger', unknown: 'neutral' };
@@ -43,10 +43,11 @@ export async function systemView() {
           row.key === 'kuraka' && row.url?.startsWith('https:' + '//github.com/')
             ? h('a', { href: row.url, target: '_blank', rel: 'noopener' }, t('system.updates.changes')) : null) },
         { label: t('system.updates.status'), render: row => h('div', { class: 'stack gap-1' },
-          badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
-            ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
-          row.state === 'waiting' ? h('span', { class: 'muted' }, t('system.updates.waiting', { latest: row.latest, supported: row.supported }))
-            : row.message ? h('span', { class: 'muted' }, row.message) : null,
+          h('div', { class: 'row gap-1' },
+            badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
+              ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
+            row.state === 'waiting' ? infoTip(t('system.updates.waiting', { latest: row.latest, supported: row.supported })) : null),
+          row.state !== 'waiting' && row.message ? h('span', { class: 'muted' }, row.message) : null,
           // Patches Kuraka skipped because they no longer apply to this upstream version.
           row.patches?.length ? h('span', { class: 'muted' }, t('system.patches.intro')) : null,
           ...(row.patches || []).map(patch => h('div', { class: 'row gap-1' },
