@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Libredesk email thread**: incoming emails are shown without the white box, in light and dark mode, and a long email fades into the page above **Expand**. In dark mode, an email that sets its own dark text colours can be hard to read.
+- **Libredesk email thread**: incoming emails are shown without the white box, in light and dark mode, and a long email fades into the page above **Expand**. Email backgrounds and text colours are dropped so every email follows the theme; images and links stay, links underlined.
 
 ## [0.3.1] - 2026-11-15
 
