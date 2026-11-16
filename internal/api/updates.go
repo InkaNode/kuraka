@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,7 +160,17 @@ type updateResult struct {
 func (s *Server) latestTags() (libredesk, webui, stalwart string) {
 	s.updates.mu.Lock()
 	defer s.updates.mu.Unlock()
-	return provision.LibredeskTag(), s.updates.kuraka.Tag, s.updates.stalwart
+	return provision.LibredeskTag(), webuiTag(s.updates.kuraka.Tag), s.updates.stalwart
+}
+
+// webuiTag names the web interface in a Kuraka release like a Libredesk image:
+// <upstream>-kuraka.<version>, so the panel can show the upstream version.
+// frugal: the upstream is this build's; a newer Kuraka release may use a newer one.
+func webuiTag(kuraka string) string {
+	if kuraka == "" {
+		return ""
+	}
+	return patches.Upstream("stalwart-webui") + "-kuraka." + strings.TrimPrefix(kuraka, "v")
 }
 
 // requestVersion reads the pending request <name>.json or last result
@@ -232,6 +243,10 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	applied, err := s.st.GetSetting(ctx, webuiSetting)
 	if err != nil {
 		return nil, err
+	}
+	// Before 0.3.1 the setting held the Kuraka tag; those releases built v2.0.6.
+	if applied != "" && !strings.Contains(applied, "-kuraka.") {
+		applied = "v2.0.6-kuraka." + strings.TrimPrefix(applied, "v")
 	}
 	rows, err := s.st.ListHelpdesks(ctx, nil)
 	if err != nil {

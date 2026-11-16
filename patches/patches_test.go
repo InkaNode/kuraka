@@ -3,6 +3,7 @@ package patches
 import (
 	"io/fs"
 	"path"
+	"regexp"
 	"testing"
 )
 
@@ -13,6 +14,9 @@ func TestSeries(t *testing.T) {
 	}
 	for _, s := range apps {
 		app := path.Dir(s)
+		if ref := Upstream(app); !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(ref) {
+			t.Errorf("%s: UPSTREAM REF = %q", app, ref)
+		}
 		series, err := Series(app)
 		if err != nil {
 			t.Fatal(err)

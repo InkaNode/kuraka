@@ -126,7 +126,7 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	}
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
 	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != provision.LibredeskTag() || v.Libredesk.Helpdesks[0].State != "available" ||
-		v.WebUI.Latest != gh.tags[kurakaRepo] || v.WebUI.Current != "" || v.WebUI.State != "available" ||
+		v.WebUI.Latest != webuiTag(gh.tags[kurakaRepo]) || v.WebUI.Current != "" || v.WebUI.State != "available" ||
 		v.Stalwart.Latest != "v1.0.3" || v.Stalwart.State != "available" {
 		t.Fatalf("after check: %+v", v)
 	}
@@ -145,7 +145,7 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	if n := gh.hitCount(); n != 4 {
 		t.Fatalf("GitHub hits = %d, want 4", n)
 	}
-	if v.Error == "" || v.WebUI.Latest != "v99.0.0" || v.Kuraka.Latest != "v99.0.0" ||
+	if v.Error == "" || v.WebUI.Latest != webuiTag("v99.0.0") || v.Kuraka.Latest != "v99.0.0" ||
 		v.Kuraka.LatestCommit != strings.Repeat("a", 40) || v.Kuraka.URL != "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0" ||
 		!strings.Contains(v.Error, kurakaRepo) {
 		t.Fatalf("failed check must keep the previous tag: %+v", v)
@@ -212,7 +212,7 @@ func TestUpdateWebUI(t *testing.T) {
 	h.root.do("POST", "/updates/webui", nil, 409)
 	h.root.do("POST", "/updates/check", nil, 200)
 	v := decodeUpdates(t, h.root.do("POST", "/updates/webui", nil, 200))
-	if v.WebUI.Current != gh.tags[kurakaRepo] || v.WebUI.State != "current" {
+	if v.WebUI.Current != webuiTag(gh.tags[kurakaRepo]) || v.WebUI.State != "current" {
 		t.Fatalf("webui: %+v", v.WebUI)
 	}
 	h.sw.mu.Lock()
@@ -225,8 +225,15 @@ func TestUpdateWebUI(t *testing.T) {
 	if url != webuiURL {
 		t.Fatalf("webui URL = %q, want %q", url, webuiURL)
 	}
-	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != gh.tags[kurakaRepo] {
+	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != webuiTag(gh.tags[kurakaRepo]) {
 		t.Fatalf("applied = %q %v", applied, err)
+	}
+	// A Kuraka tag stored before 0.3.1 is read as the v2.0.6 web interface.
+	if err := h.st.SetSetting(context.Background(), webuiSetting, "v0.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	if v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)); v.WebUI.Current != "v2.0.6-kuraka.0.3.0" {
+		t.Fatalf("legacy webui: %+v", v.WebUI)
 	}
 }
 
