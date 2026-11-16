@@ -1,0 +1,275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Sun, 15 Nov 2026 20:04:24 -0500
+Subject: [PATCH] feat(inboxes): inbox switcher grouped by client
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: There is no inbox switcher; conversation lists always mix every inbox.
+Kuraka-Missing-Es: No hay selector de buzón; las listas de conversaciones siempre mezclan todos los buzones.
+---
+ .../sidebar/KurakaInboxSwitcher.vue           | 115 ++++++++++++++++++
+ .../main/src/components/sidebar/Sidebar.vue   |   2 +
+ frontend/apps/main/src/stores/conversation.js |  19 ++-
+ i18n/en-US.json                               |   3 +
+ i18n/es-ES.json                               |   3 +
+ internal/conversation/models/models.go        |   1 +
+ internal/conversation/queries.sql             |   2 +
+ 7 files changed, 144 insertions(+), 1 deletion(-)
+ create mode 100644 frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
+
+diff --git a/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue b/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
+new file mode 100644
+index 00000000..e5d334b6
+--- /dev/null
++++ b/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
+@@ -0,0 +1,115 @@
++<template>
++  <div class="px-2 pb-1">
++    <Tooltip v-if="inboxes.length <= 1">
++      <TooltipTrigger as-child>
++        <div
++          tabindex="0"
++          aria-disabled="true"
++          class="flex h-10 w-full cursor-default items-center gap-2 rounded-md border border-border px-2 text-left text-sm opacity-80"
++        >
++          <Mail class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
++          <span class="min-w-0 flex-1 truncate">{{ inboxes[0]?.name ?? t('kuraka.allInboxes') }}</span>
++          <ChevronsUpDown class="size-3.5 shrink-0 opacity-30" aria-hidden="true" />
++        </div>
++      </TooltipTrigger>
++      <TooltipContent side="right" class="max-w-60">
++        <p>{{ t('kuraka.onlyInbox') }}</p>
++      </TooltipContent>
++    </Tooltip>
++
++    <DropdownMenu v-else>
++      <DropdownMenuTrigger as-child>
++        <button
++          type="button"
++          :aria-label="t('kuraka.switchInbox')"
++          class="flex h-10 w-full items-center gap-2 rounded-md border border-border px-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
++        >
++          <Mail class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
++          <span class="min-w-0 flex-1 truncate">{{ active?.name ?? t('kuraka.allInboxes') }}</span>
++          <span v-if="!active" class="text-xs tabular-nums text-muted-foreground">{{ inboxes.length }}</span>
++          <ChevronsUpDown class="size-3.5 shrink-0 opacity-50" aria-hidden="true" />
++        </button>
++      </DropdownMenuTrigger>
++      <DropdownMenuContent align="start" class="max-h-[70vh] w-64 overflow-y-auto">
++        <DropdownMenuRadioGroup
++          :model-value="conversationStore.activeInboxID"
++          @update:model-value="conversationStore.setActiveInbox"
++        >
++          <DropdownMenuRadioItem value="">
++            {{ t('kuraka.allInboxes') }}
++            <span class="ml-auto pl-2 text-xs tabular-nums text-muted-foreground">{{ inboxes.length }}</span>
++          </DropdownMenuRadioItem>
++          <template v-for="group in groups" :key="group.name">
++            <DropdownMenuSeparator />
++            <DropdownMenuLabel class="flex items-center text-xs font-medium text-muted-foreground">
++              <span class="truncate">{{ group.name }}</span>
++              <span class="ml-auto pl-2 tabular-nums">{{ group.inboxes.length }}</span>
++            </DropdownMenuLabel>
++            <DropdownMenuRadioItem
++              v-for="inbox in group.inboxes"
++              :key="inbox.id"
++              :value="String(inbox.id)"
++            >
++              <span class="flex min-w-0 flex-col">
++                <span class="truncate">{{ inbox.name }}</span>
++                <span v-if="inbox.email" class="truncate text-xs text-muted-foreground">{{ inbox.email }}</span>
++              </span>
++            </DropdownMenuRadioItem>
++          </template>
++        </DropdownMenuRadioGroup>
++      </DropdownMenuContent>
++    </DropdownMenu>
++  </div>
++</template>
++
++<script setup>
++// Kuraka: pick which inbox the conversation lists show, grouped by client (the
++// address domain). Inboxes are added from Kuraka, so one inbox shows a hint instead.
++import { computed, watch } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { Mail, ChevronsUpDown } from 'lucide-vue-next'
++import {
++  DropdownMenu,
++  DropdownMenuContent,
++  DropdownMenuLabel,
++  DropdownMenuRadioGroup,
++  DropdownMenuRadioItem,
++  DropdownMenuSeparator,
++  DropdownMenuTrigger
++} from '@shared-ui/components/ui/dropdown-menu'
++import { Tooltip, TooltipContent, TooltipTrigger } from '@shared-ui/components/ui/tooltip'
++import { useInboxStore } from '@main/stores/inbox'
++import { useConversationStore } from '@main/stores/conversation'
++import { extractEmailAddress } from '@main/utils/email-sender'
++
++const { t } = useI18n()
++const inboxStore = useInboxStore()
++const conversationStore = useConversationStore()
++
++const inboxes = computed(() =>
++  inboxStore.inboxes
++    .filter((inbox) => inbox.enabled)
++    .map((inbox) => ({ ...inbox, email: inbox.from ? extractEmailAddress(inbox.from) : '' }))
++)
++
++const groups = computed(() => {
++  const byName = new Map()
++  for (const inbox of inboxes.value) {
++    const name = inbox.email.split('@')[1] || inbox.channel
++    if (!byName.has(name)) byName.set(name, [])
++    byName.get(name).push(inbox)
++  }
++  return [...byName].map(([name, list]) => ({ name, inboxes: list }))
++})
++
++const active = computed(() =>
++  inboxes.value.find((inbox) => String(inbox.id) === conversationStore.activeInboxID)
++)
++
++// A remembered inbox that was removed or disabled falls back to all inboxes.
++watch(
++  () => inboxStore.inboxes.length && conversationStore.activeInboxID && !active.value,
++  (stale) => stale && conversationStore.setActiveInbox(''),
++  { immediate: true }
++)
++</script>
+diff --git a/frontend/apps/main/src/components/sidebar/Sidebar.vue b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+index 462c9433..29cbbe6f 100644
+--- a/frontend/apps/main/src/components/sidebar/Sidebar.vue
++++ b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+@@ -58,6 +58,7 @@ import {
+ import MobileDrawerNav from './MobileDrawerNav.vue'
+ import MobileDrawerFooter from './MobileDrawerFooter.vue'
+ import SidebarCountBadge from './SidebarCountBadge.vue'
++import KurakaInboxSwitcher from './KurakaInboxSwitcher.vue'
+ import { filterNavItems } from '@main/utils/nav-permissions'
+ import { permissions } from '@main/constants/permissions'
+ import { useStorage } from '@vueuse/core'
+@@ -323,6 +324,7 @@ onMounted(() => {
+             </Button>
+           </template>
+         </SidebarSectionHeader>
++        <KurakaInboxSwitcher />
+ 
+         <SidebarContent>
+           <MobileDrawerNav />
+diff --git a/frontend/apps/main/src/stores/conversation.js b/frontend/apps/main/src/stores/conversation.js
+index 4479d178..278d68a4 100644
+--- a/frontend/apps/main/src/stores/conversation.js
++++ b/frontend/apps/main/src/stores/conversation.js
+@@ -373,7 +373,19 @@ export const useConversationStore = defineStore('conversation', () => {
+     }
+   }
+ 
++  // Kuraka: inbox picked in the sidebar switcher ('' = all inboxes). Views keep their own filters.
++  const activeInboxID = useStorage('kurakaActiveInbox', '')
++  const inInboxScope = (conv) =>
++    !activeInboxID.value || conversations.listType === CONVERSATION_LIST_TYPE.VIEW || String(conv.inbox_id) === activeInboxID.value
++
++  function setActiveInbox (id) {
++    activeInboxID.value = id ? String(id) : ''
++    resetConversations()
++    reFetchConversationsList()
++  }
++
+   function belongsToList (conv) {
++    if (!inInboxScope(conv)) return false
+     const matched = matchesAssignmentScope(conv)
+     return matched === null ? true : matched
+   }
+@@ -727,6 +739,9 @@ export const useConversationStore = defineStore('conversation', () => {
+   }
+ 
+   async function makeConversationListRequest (listType, teamID, viewID, filters, page) {
++    if (activeInboxID.value) {
++      filters = [...filters, { model: 'conversations', field: 'inbox_id', operator: 'equals', value: activeInboxID.value }]
++    }
+     filters = filters.length > 0 ? JSON.stringify(filters) : []
+     switch (listType) {
+       case CONVERSATION_LIST_TYPE.ASSIGNED:
+@@ -1135,7 +1150,7 @@ export const useConversationStore = defineStore('conversation', () => {
+       }
+       return
+     }
+-    if (!canPushInsert(payload)) return
++    if (!canPushInsert(payload) || !inInboxScope(payload)) return
+     if (conversations.status !== '' && payload.status !== conversations.status) return
+     if (!conversations.data) conversations.data = []
+     conversations.data.unshift(payload)
+@@ -1341,6 +1356,8 @@ export const useConversationStore = defineStore('conversation', () => {
+     handleConvPush,
+     mergeContactUpdate,
+     addNewConversation,
++    activeInboxID,
++    setActiveInbox,
+     getContactFullName,
+     fetchNextMessages,
+     fetchNextConversations,
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 7cbcc214..976032f4 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1549,6 +1549,9 @@
+   "inbox.oauthAlreadyExists": "An inbox with this email already exists. Use Reconnect to update credentials.",
+   "inbox.oauthEmailMismatch": "The authorized email doesn't match this inbox. Please authorize with the correct account.",
+   "inbox.oauthNotFound": "No inbox found with this email to reconnect.",
++  "kuraka.allInboxes": "All inboxes",
++  "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
++  "kuraka.switchInbox": "Switch inbox",
+   "macro.actionNotAllowed": "{name} action not allowed",
+   "macro.actionType": "Action type",
+   "macro.applied": "Macro applied",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index e14e2af3..a6dd78b0 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -816,6 +816,9 @@
+   "inbox.oauthAlreadyExists": "Ya existe una bandeja de entrada con este correo electrónico. Usa Reconectar para actualizar las credenciales.",
+   "inbox.oauthEmailMismatch": "El correo electrónico autorizado no coincide con esta bandeja de entrada. Por favor autoriza con la cuenta correcta.",
+   "inbox.oauthNotFound": "No se encontró ninguna bandeja de entrada con este correo electrónico para reconectar.",
++  "kuraka.allInboxes": "Todos los buzones",
++  "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
++  "kuraka.switchInbox": "Cambiar de buzón",
+   "macro.actionNotAllowed": "Acción {name} no permitida",
+   "macro.actionType": "Tipo de acción",
+   "macro.applied": "Macro aplicada",
+diff --git a/internal/conversation/models/models.go b/internal/conversation/models/models.go
+index 2f7192b6..49f0986a 100644
+--- a/internal/conversation/models/models.go
++++ b/internal/conversation/models/models.go
+@@ -133,6 +133,7 @@ type ConversationListItem struct {
+ 	ReferenceNumber       string                  `db:"reference_number" json:"reference_number"`
+ 	WaitingSince          null.Time               `db:"waiting_since" json:"waiting_since"`
+ 	Contact               ConversationListContact `db:"contact" json:"contact"`
++	InboxID               int                     `db:"inbox_id" json:"inbox_id"`
+ 	InboxChannel          string                  `db:"inbox_channel" json:"inbox_channel"`
+ 	InboxName             string                  `db:"inbox_name" json:"inbox_name"`
+ 	SLAPolicyID           null.Int                `db:"sla_policy_id" json:"sla_policy_id"`
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 8575df6a..77aa2822 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -49,6 +49,7 @@ SELECT
+     users.last_name as "contact.last_name",
+     users.email as "contact.email",
+     users.avatar_url as "contact.avatar_url",
++    conversations.inbox_id,
+     inboxes.channel as inbox_channel,
+     inboxes.name as inbox_name,
+     conversations.sla_policy_id,
+@@ -145,6 +146,7 @@ SELECT
+     users.last_name as "contact.last_name",
+     users.email as "contact.email",
+     users.avatar_url as "contact.avatar_url",
++    conversations.inbox_id,
+     inboxes.channel as inbox_channel,
+     inboxes.name as inbox_name,
+     conversations.sla_policy_id,

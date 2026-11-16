@@ -1,3 +1,4 @@
 feat-statuses-display-names-and-icons.patch
 feat-statuses-built-in-status-icons-and-a-gap-before-the-nam.patch
 feat-conversations-flat-email-thread-instead-of-chat-bubbles.patch
+feat-inboxes-inbox-switcher-grouped-by-client.patch
