@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **System → Updates**: Libredesk and the Stalwart web interface show their own version (`v2.9.2`, `v2.0.6`) instead of the Kuraka build tag. When only Kuraka's patches changed, the status reads **New patches** and the update is still offered.
+- **README**: overview and architecture images instead of the Mermaid chart, and sections on patches, updates and security.
 
 ## [0.3.0] - 2026-11-15
 
