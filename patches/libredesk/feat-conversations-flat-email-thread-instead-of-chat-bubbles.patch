@@ -10,11 +10,11 @@ Kuraka-Missing-Es: Las conversaciones muestran los mensajes como burbujas de cha
 ---
  .../conversation/message/MessageBubble.vue    | 434 +++++++++---------
  .../conversation/message/MessageList.vue      |   2 +-
- frontend/shared-ui/assets/styles/main.scss    |  11 +-
- 3 files changed, 214 insertions(+), 233 deletions(-)
+ frontend/shared-ui/assets/styles/main.scss    |  18 +-
+ 3 files changed, 224 insertions(+), 230 deletions(-)
 
 diff --git a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
-index 954a991c..fd0d122a 100644
+index 954a991c..3a473c51 100644
 --- a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
 +++ b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
 @@ -1,249 +1,239 @@
@@ -237,7 +237,7 @@ index 954a991c..fd0d122a 100644
 +                :allowedSchemas="allowedSchemas"
 +                :rewriteExternalLinks="rewriteMessageLink"
 +                :allowed-css-properties="extendedCssProperties"
-+                class="mb-1 native-html break-words"
++                class="mb-1 native-html email-plain break-words"
                  :class="{ 'mb-3': message.attachments.length > 0 }"
 -              >
 -                {{ sanitizedContent }}
@@ -502,7 +502,7 @@ index 89a50cd0..7c1cdc1e 100644
  
  const loadMore = async () => {
 diff --git a/frontend/shared-ui/assets/styles/main.scss b/frontend/shared-ui/assets/styles/main.scss
-index 582ba339..54650f27 100644
+index 582ba339..6f562ac1 100644
 --- a/frontend/shared-ui/assets/styles/main.scss
 +++ b/frontend/shared-ui/assets/styles/main.scss
 @@ -271,7 +271,7 @@
@@ -514,19 +514,27 @@ index 582ba339..54650f27 100644
  
    @media (max-width: 767px) {
      overflow-wrap: break-word;
-@@ -293,15 +293,6 @@
+@@ -293,13 +293,17 @@
    }
  }
  
 -// Sender colours are only legible against white, so incoming email HTML is not themed.
 -.dark .email-light-canvas {
 -  @apply p-2 rounded border border-border;
--
++// Email HTML follows the theme: its own backgrounds and text colours are
++// dropped, so no white or coloured box is drawn around or inside it.
++.email-plain,
++.email-plain * {
++  background: transparent !important;
++  color: inherit !important;
++  border-color: hsl(var(--border)) !important;
++}
+ 
 -  color-scheme: light;
 -  background: #fff;
 -  color: #1a1a1a;
--}
--
- .overlay {
-   background: hsl(var(--foreground) / 0.5);
++.email-plain a {
++  text-decoration: underline !important;
  }
+ 
+ .overlay {
