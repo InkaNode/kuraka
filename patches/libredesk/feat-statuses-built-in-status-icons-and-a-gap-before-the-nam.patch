@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Sun, 15 Nov 2026 20:04:23 -0500
+Subject: [PATCH] feat(statuses): built-in status icons and a gap before the
+ name
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Default statuses use emoji icons, and status icons sit right against their names.
+Kuraka-Missing-Es: Los estados por defecto usan íconos emoji y el ícono queda pegado al nombre del estado.
+---
+ .../components/combobox/SelectCombobox.vue    |  4 +--
+ .../src/features/admin/status/StatusForm.vue  | 21 ++++++++++--
+ .../features/admin/status/dataTableColumns.js |  2 +-
+ frontend/shared-ui/components/StatusIcon.vue  | 33 +++++++++++++++++--
+ i18n/en-US.json                               |  1 +
+ i18n/es-ES.json                               |  1 +
+ internal/kuraka/migrate.go                    |  9 ++++-
+ 7 files changed, 63 insertions(+), 8 deletions(-)
+
+diff --git a/frontend/apps/main/src/components/combobox/SelectCombobox.vue b/frontend/apps/main/src/components/combobox/SelectCombobox.vue
+index 33e931b7..514eb4a1 100644
+--- a/frontend/apps/main/src/components/combobox/SelectCombobox.vue
++++ b/frontend/apps/main/src/components/combobox/SelectCombobox.vue
+@@ -32,7 +32,7 @@
+ 
+         <!-- Others -->
+         <PriorityMarker v-else-if="type === 'priority'" :priority="item.label" :tooltip="false" />
+-        <StatusIcon v-else-if="item.icon" :icon="item.icon" />
++        <StatusIcon v-else-if="item.icon" :icon="item.icon" alone />
+         <span v-else-if="item.emoji">{{ item.emoji }}</span>
+         <span>{{ item.label }}</span>
+         <span v-if="isCurrentUser(item)" class="text-muted-foreground text-xs"
+@@ -65,7 +65,7 @@
+             :priority="selected.label"
+             :tooltip="false"
+           />
+-          <StatusIcon v-else-if="selected.icon" :icon="selected.icon" class="shrink-0" />
++          <StatusIcon v-else-if="selected.icon" :icon="selected.icon" alone class="shrink-0" />
+           <span v-else-if="selected.emoji" class="shrink-0">{{ selected.emoji }}</span>
+           <span class="truncate">{{ selected.label }}</span>
+           <span v-if="isCurrentUser(selected)" class="text-muted-foreground text-xs shrink-0"
+diff --git a/frontend/apps/main/src/features/admin/status/StatusForm.vue b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+index 5f324983..070ada96 100644
+--- a/frontend/apps/main/src/features/admin/status/StatusForm.vue
++++ b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+@@ -55,7 +55,7 @@
+             :aria-label="$t('status.icon')"
+             @click="isEmojiPickerVisible = !isEmojiPickerVisible"
+           >
+-            <StatusIcon v-if="value" :icon="value" />
++            <StatusIcon v-if="value" :icon="value" alone />
+             <SmilePlus v-else class="h-4 w-4" />
+           </Button>
+           <FormControl>
+@@ -107,6 +107,23 @@
+             />
+           </div>
+         </div>
++        <div class="flex flex-wrap gap-1" role="group" :aria-label="$t('status.builtinIcons')">
++          <Button
++            v-for="key in Object.keys(BUILTIN_STATUS_ICONS)"
++            :key="key"
++            type="button"
++            variant="outline"
++            size="icon"
++            class="size-8"
++            :class="{ 'ring-2 ring-ring': value === key }"
++            :aria-label="key.slice(7)"
++            :title="key.slice(7)"
++            :aria-pressed="value === key"
++            @click="handleChange(key)"
++          >
++            <StatusIcon :icon="key" alone />
++          </Button>
++        </div>
+         <FormMessage />
+       </FormItem>
+     </FormField>
+@@ -130,7 +147,7 @@ import {
+ } from '@shared-ui/components/ui/form'
+ import { Input } from '@shared-ui/components/ui/input'
+ import { Button } from '@shared-ui/components/ui/button'
+-import StatusIcon from '@shared-ui/components/StatusIcon.vue'
++import StatusIcon, { BUILTIN_STATUS_ICONS } from '@shared-ui/components/StatusIcon.vue'
+ import { useEmitter } from '@main/composables/useEmitter.js'
+ import { EMITTER_EVENTS } from '@main/constants/emitterEvents.js'
+ import { handleHTTPError } from '@shared-ui/utils/http.js'
+diff --git a/frontend/apps/main/src/features/admin/status/dataTableColumns.js b/frontend/apps/main/src/features/admin/status/dataTableColumns.js
+index 50b9b10d..a401fd57 100644
+--- a/frontend/apps/main/src/features/admin/status/dataTableColumns.js
++++ b/frontend/apps/main/src/features/admin/status/dataTableColumns.js
+@@ -13,7 +13,7 @@ export const createColumns = (t, { onEdit } = {}) => [
+       return h('div', null, t('status.icon'))
+     },
+     cell: function ({ row }) {
+-      return h('div', null, h(StatusIcon, { icon: row.getValue('icon') || '' }))
++      return h('div', null, h(StatusIcon, { icon: row.getValue('icon') || '', alone: true }))
+     }
+   },
+   {
+diff --git a/frontend/shared-ui/components/StatusIcon.vue b/frontend/shared-ui/components/StatusIcon.vue
+index 65399500..7c2d8a16 100644
+--- a/frontend/shared-ui/components/StatusIcon.vue
++++ b/frontend/shared-ui/components/StatusIcon.vue
+@@ -4,16 +4,45 @@
+     :src="icon"
+     alt=""
+     class="inline-block h-[1em] w-[1em] rounded object-contain"
++    :class="gap"
+   />
+-  <span v-else-if="icon" aria-hidden="true">{{ icon }}</span>
++  <component
++    :is="builtin.component"
++    v-else-if="builtin"
++    class="inline-block h-[1.1em] w-[1.1em] shrink-0 align-[-0.15em]"
++    :class="[builtin.color, gap]"
++    :stroke-width="2.25"
++    aria-hidden="true"
++  />
++  <span v-else-if="icon" :class="gap" aria-hidden="true">{{ icon }}</span>
+ </template>
+ 
++<script>
++import { CircleDot, Moon, CircleCheck, CircleSlash, Hourglass, Ban } from 'lucide-vue-next'
++
++// Kuraka's built-in status icons, stored as "kuraka:<name>".
++export const BUILTIN_STATUS_ICONS = {
++  'kuraka:open': { component: CircleDot, color: 'text-sky-500' },
++  'kuraka:snoozed': { component: Moon, color: 'text-violet-500' },
++  'kuraka:resolved': { component: CircleCheck, color: 'text-emerald-500' },
++  'kuraka:closed': { component: CircleSlash, color: 'text-muted-foreground' },
++  'kuraka:waiting': { component: Hourglass, color: 'text-amber-500' },
++  'kuraka:spam': { component: Ban, color: 'text-rose-500' }
++}
++</script>
++
+ <script setup>
+ import { computed } from 'vue'
+ 
+ const props = defineProps({
+-  icon: { type: String, default: '' }
++  icon: { type: String, default: '' },
++  // Icon shown without a label next to it (no trailing gap).
++  alone: { type: Boolean, default: false }
+ })
+ 
+ const isURL = computed(() => props.icon.startsWith('https://') || props.icon.startsWith('/uploads/'))
++const builtin = computed(() => BUILTIN_STATUS_ICONS[props.icon])
++// A small gap before the status name that follows the icon.
++const gap = computed(() => (props.alone ? '' : 'me-1.5'))
+ </script>
++
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index e4d62e45..7cbcc214 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1700,6 +1700,7 @@
+   "sla.new": "New SLA policy",
+   "sla.overdueBy": "Overdue by",
+   "sla.selectMetric": "Select SLA metric",
++  "status.builtinIcons": "Built-in icons",
+   "status.deletionConfirmation": "This action cannot be undone. This will permanently delete this status.",
+   "status.deniedPermission": "Permission denied",
+   "status.disabledFileUpload": "File Upload is disabled",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 475e8cef..e14e2af3 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -914,6 +914,7 @@
+   "sla.new": "Nueva política SLA",
+   "sla.overdueBy": "Vencido por",
+   "sla.selectMetric": "Seleccionar métrica SLA",
++  "status.builtinIcons": "Íconos incluidos",
+   "status.deletionConfirmation": "Esta acción no se puede deshacer. Se eliminará permanentemente este estado.",
+   "status.deniedPermission": "Permiso denegado",
+   "status.disabledFileUpload": "La subida de archivos está desactivada",
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index 2ad954dc..c224dbe6 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -17,10 +17,17 @@ func Migrate(db *sqlx.DB) error {
+     ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 50),
+     ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048);
+    UPDATE conversation_statuses SET icon = CASE name
+-    WHEN 'Open' THEN '🟢' WHEN 'Snoozed' THEN '💤' WHEN 'Resolved' THEN '✅' WHEN 'Closed' THEN '🔒' END
++    WHEN 'Open' THEN 'kuraka:open' WHEN 'Snoozed' THEN 'kuraka:snoozed' WHEN 'Resolved' THEN 'kuraka:resolved' WHEN 'Closed' THEN 'kuraka:closed' END
+    WHERE name IN ('Open', 'Snoozed', 'Resolved', 'Closed');
+   END IF;
+  END $$`)
++	if err != nil {
++		return err
++	}
++	// Default statuses still on the old emoji move to Kuraka's built-in icons.
++	_, err = tx.Exec(`UPDATE conversation_statuses SET icon = CASE icon
++    WHEN '🟢' THEN 'kuraka:open' WHEN '💤' THEN 'kuraka:snoozed' WHEN '✅' THEN 'kuraka:resolved' WHEN '🔒' THEN 'kuraka:closed' END
++   WHERE (name, icon) IN (('Open', '🟢'), ('Snoozed', '💤'), ('Resolved', '✅'), ('Closed', '🔒'))`)
+ 	if err != nil {
+ 		return err
+ 	}
