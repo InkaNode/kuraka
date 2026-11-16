@@ -29,13 +29,14 @@ export async function systemView() {
       { key: 'kuraka', name: 'Kuraka', state: 'unknown', ...updates.kuraka },
       { key: 'stalwart', name: t('system.updates.stalwart'), ...updates.stalwart },
       { key: 'webui', name: t('system.updates.webui'), ...updates.webui },
-      ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, latest: updates.libredesk.latest, patches: updates.libredesk.patches })),
+      ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, name: 'Libredesk', domain: desk.name, latest: updates.libredesk.latest, patches: updates.libredesk.patches })),
     ];
     mount(updatesBody,
       h('p', { class: 'muted' }, updates.checked_at ? t('system.updates.checked', { date: formatDate(updates.checked_at) }) : t('system.updates.never')),
       updates.error ? h('p', { class: 'help' }, t('system.updates.checkError')) : null,
       table({ rows: list, columns: [
-        { label: t('system.updates.name'), render: row => row.name },
+        { label: t('system.updates.name'), render: row => row.domain
+          ? h('div', { class: 'stack' }, row.name, h('span', { class: 'muted mono' }, row.domain)) : row.name },
         { label: t('system.updates.current'), render: row => version(row.key === 'kuraka' && row.commit ? `${row.current} (${row.commit.slice(0, 7)})` : row.current) },
         { label: t('system.updates.latest'), render: row => h('div', { class: 'stack gap-1' },
           version(row.key === 'kuraka' && row.latest_commit ? `${row.latest} (${row.latest_commit.slice(0, 7)})` : row.latest),
@@ -95,7 +96,7 @@ export async function systemView() {
     const kuraka = row.key === 'kuraka', webui = row.key === 'webui', stalwart = row.key === 'stalwart';
     applying.add(row.key); renderUpdates();
     try {
-      if (!webui && !await confirmDialog({ title: t('system.updates.confirmTitle', { name: row.name }),
+      if (!webui && !await confirmDialog({ title: t('system.updates.confirmTitle', { name: row.domain ? `${row.name} (${row.domain})` : row.name }),
         message: t(kuraka ? 'system.updates.confirmKuraka' : stalwart ? 'system.updates.confirmStalwart' : 'system.updates.confirm'),
         confirmLabel: t(kuraka ? 'system.updates.confirmApply' : 'system.updates.apply') })) return;
       if (!updatesBody.isConnected) return;
