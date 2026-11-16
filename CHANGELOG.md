@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Libredesk email thread**: incoming emails are shown without the white box, in light and dark mode, and a long email fades into the page above **Expand**. Email backgrounds and text colours are dropped so every email follows the theme; images and links stay, links underlined.
 
+### Removed
+
+- **Libredesk Account → Profile**: the page only changed the avatar, so agents expected to edit their name there. Admins edit agents in Admin → Agents.
+
 ## [0.3.1] - 2026-11-15
 
 ### Fixed
