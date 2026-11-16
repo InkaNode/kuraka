@@ -82,7 +82,6 @@ jobs:
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       publish: true
-      version: ${{ needs.version.outputs.version }}
 
   release:
     needs: [version, image, patches]
