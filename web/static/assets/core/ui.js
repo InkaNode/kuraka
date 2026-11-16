@@ -44,6 +44,15 @@ export function table({ columns, rows, empty }) {
         ? rows.map(row => h('tr', {}, columns.map(column => h('td', { class: column.className }, column.render(row)))))
         : h('tr', {}, h('td', { colspan: Math.max(columns.length, 1) }, empty || emptyState({ title: t('empty.title'), text: t('empty.text') }))))));
 }
+// Info icon whose text shows on hover, focus or tap; Esc hides it.
+export function infoTip(text) {
+  const tip = h('span', { class: 'tip', onmouseleave: () => tip.classList.remove('closed') },
+    h('button', { type: 'button', class: 'tip-btn', 'aria-label': text,
+      onkeydown: event => { if (event.key === 'Escape') tip.classList.add('closed'); },
+      onblur: () => tip.classList.remove('closed') }, svgIcon('info', { size: 16 })),
+    h('span', { class: 'tip-text', 'aria-hidden': 'true' }, text));
+  return tip;
+}
 export function badge(text, kind = 'neutral') { return h('span', { class: ['badge', kind] }, text); }
 export function chip(text, { onRemove } = {}) {
   return h('span', { class: 'chip' }, h('span', {}, text), onRemove ? button({ icon: 'x', variant: 'ghost', ariaLabel: t('remove', { name: text }), onClick: onRemove }) : null);

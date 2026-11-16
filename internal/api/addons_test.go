@@ -144,7 +144,7 @@ func TestAddonDisabledAndAdmin(t *testing.T) {
 		if len(row) != 3 || row["disabled"] != false || row["report"] != nil {
 			t.Fatal(row)
 		}
-		if app == "stalwart" && (len(supported) != 2 || supported["stalwart"] != "1.0" || supported["webui"] != "2.0") ||
+		if app == "stalwart" && (len(supported) != 2 || supported["stalwart"] != "1.1" || supported["webui"] != "2.0") ||
 			app == "desk" && (len(supported) != 1 || supported["libredesk"] != "2.9") {
 			t.Fatal(supported)
 		}
