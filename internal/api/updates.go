@@ -26,6 +26,8 @@ const (
 	stalwartRepo = "stalwartlabs/stalwart"
 	kurakaRepo   = "InkaNode/kuraka"
 	webuiSetting = "webui_applied"
+	// The upstream version of the applied web interface.
+	webuiVersionSetting = "webui_version"
 	// Keep in sync with WEBUI_URL in deploy/setup.sh.
 	webuiURL = "https://github.com/InkaNode/kuraka/releases/latest/download/stalwart-webui.zip"
 )
@@ -33,8 +35,9 @@ const (
 var deskHost = regexp.MustCompile(`^kuraka-[a-z0-9-]+-desk$`)
 var stableTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
-// deskTag is a patched Libredesk image tag, see provision.LibredeskTag.
-var deskTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+// deskTag is a patched Libredesk image tag: sha-<commit> (see
+// provision.LibredeskTag) or, before 0.3.1, <upstream>-kuraka.<version>.
+var deskTag = regexp.MustCompile(`^(sha-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$`)
 var kurakaTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 // updateState caches the latest release tags read from GitHub.
@@ -127,6 +130,17 @@ func versionState(current, latest string) string {
 	return "available"
 }
 
+// updateKind tells a new upstream version from new Kuraka patches on the same
+// one, for builds Kuraka patches.
+func updateKind(row map[string]any, current, latest string) {
+	if row["state"] == "available" {
+		row["kind"] = "version"
+		if current == latest {
+			row["kind"] = "patches"
+		}
+	}
+}
+
 func addonCompatibility(row map[string]any, component, latest string) {
 	if row["state"] == "available" && !addons.Allows(component, latest) {
 		row["state"] = "waiting"
@@ -145,7 +159,8 @@ func deskContainer(h store.Helpdesk) string {
 }
 
 // updateResult is written by deploy/apply-updates.sh. Current is the tag the
-// compose project runs after the attempt.
+// compose project runs after the attempt and Version its upstream version
+// (Libredesk only).
 type updateResult struct {
 	Tag     string `json:"tag"`
 	Commit  string `json:"commit"`
@@ -153,33 +168,26 @@ type updateResult struct {
 	Message string `json:"message"`
 	At      string `json:"at"`
 	Current string `json:"current"`
+	Version string `json:"version"`
 }
 
 // latestTags returns the versions to offer. Libredesk and the web interface
-// are built by Kuraka releases with patches/<app>, so they follow Kuraka.
+// are built by Kuraka releases with patches/<app>, so they follow Kuraka: the
+// web interface is the latest Kuraka release tag.
 func (s *Server) latestTags() (libredesk, webui, stalwart string) {
 	s.updates.mu.Lock()
 	defer s.updates.mu.Unlock()
-	return provision.LibredeskTag(), webuiTag(s.updates.kuraka.Tag), s.updates.stalwart
-}
-
-// webuiTag names the web interface in a Kuraka release like a Libredesk image:
-// <upstream>-kuraka.<version>, so the panel can show the upstream version.
-// frugal: the upstream is this build's; a newer Kuraka release may use a newer one.
-func webuiTag(kuraka string) string {
-	if kuraka == "" {
-		return ""
-	}
-	return patches.Upstream("stalwart-webui") + "-kuraka." + strings.TrimPrefix(kuraka, "v")
+	return provision.LibredeskTag(), s.updates.kuraka.Tag, s.updates.stalwart
 }
 
 // requestVersion reads the pending request <name>.json or last result
-// <name>.result.json the host timer left in the updates directory. installed
-// is the version shown when there is no result.
-func (s *Server) requestVersion(name, installed, latest string) (current, status, message string) {
-	current = installed
+// <name>.result.json the host timer left in the updates directory. It returns
+// the running tag, its upstream version and its state against latest; tag and
+// upstream are the installed ones when there is no result.
+func (s *Server) requestVersion(name, tag, upstream, latest string) (current, shown, status, message string) {
+	current, shown = tag, upstream
 	if s.cfg.UpdatesDir == "" {
-		return current, versionState(current, latest), ""
+		return current, shown, versionState(current, latest), ""
 	}
 	base := filepath.Join(s.cfg.UpdatesDir, name)
 	var result updateResult
@@ -192,21 +200,27 @@ func (s *Server) requestVersion(name, installed, latest string) (current, status
 	}
 	switch {
 	case stableTag.MatchString(result.Current) || deskTag.MatchString(result.Current):
-		current = result.Current
+		current, shown = result.Current, result.Version
 	case result.Status == "ok":
-		current = result.Tag
+		current, shown = result.Tag, result.Version
+	}
+	if !stableTag.MatchString(shown) {
+		// Stalwart tags and Libredesk tags before 0.3.1 start with the version.
+		if shown, _, _ = strings.Cut(current, "-kuraka."); !stableTag.MatchString(shown) {
+			shown = upstream
+		}
 	}
 	if _, err := os.Stat(base + ".json"); err == nil {
-		return current, "updating", ""
+		return current, shown, "updating", ""
 	}
 	if result.Status == "error" && result.Tag == latest {
 		message = result.Message
 		if len(message) > 300 {
 			message = message[:300]
 		}
-		return current, "error", message
+		return current, shown, "error", message
 	}
-	return current, versionState(current, latest), ""
+	return current, shown, versionState(current, latest), ""
 }
 
 func (s *Server) kurakaState(latest releases.Release) (status, message string) {
@@ -244,9 +258,18 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Before 0.3.1 the setting held the Kuraka tag; those releases built v2.0.6.
-	if applied != "" && !strings.Contains(applied, "-kuraka.") {
-		applied = "v2.0.6-kuraka." + strings.TrimPrefix(applied, "v")
+	appliedVersion, err := s.st.GetSetting(ctx, webuiVersionSetting)
+	if err != nil {
+		return nil, err
+	}
+	// Releases before 0.3.1 stored no version; they built v2.0.6.
+	if applied != "" && appliedVersion == "" {
+		appliedVersion = "v2.0.6"
+	}
+	// frugal: the upstream is this build's; a newer Kuraka release may use a newer one.
+	webuiVersion := ""
+	if webui != "" {
+		webuiVersion = patches.Upstream("stalwart-webui")
 	}
 	rows, err := s.st.ListHelpdesks(ctx, nil)
 	if err != nil {
@@ -266,14 +289,16 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		if container == "" {
 			continue
 		}
-		current, status, message := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, libredesk)
+		// Without a result the installed tag is unknown, so an update is offered.
+		_, current, status, message := s.requestVersion("libredesk-"+container, "", provision.LibredeskVersion, libredesk)
 		row := map[string]any{"id": h.ID, "name": h.Name, "current": current, "state": status}
+		updateKind(row, current, provision.LibredeskVersion)
 		if message != "" {
 			row["message"] = message
 		}
 		desks = append(desks, row)
 	}
-	current, status, message := s.requestVersion("stalwart", s.cfg.StalwartVersion, stalwart)
+	_, current, status, message := s.requestVersion("stalwart", s.cfg.StalwartVersion, s.cfg.StalwartVersion, stalwart)
 	server := map[string]any{"latest": stalwart, "current": current, "state": status}
 	addonCompatibility(server, "stalwart", stalwart)
 	if message != "" {
@@ -297,14 +322,15 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if status == "error" {
 		self["message"] = message
 	}
-	web := map[string]any{"latest": webui, "current": applied, "state": versionState(applied, webui), "patches": webuiSkipped}
+	web := map[string]any{"latest": webuiVersion, "current": appliedVersion, "state": versionState(applied, webui), "patches": webuiSkipped}
+	updateKind(web, appliedVersion, webuiVersion)
 	out := map[string]any{
 		"checked_at":  nil,
 		"updates_dir": s.cfg.UpdatesDir != "",
 		"stalwart":    server,
 		"kuraka":      self,
 		"webui":       web,
-		"libredesk":   map[string]any{"latest": libredesk, "helpdesks": desks, "patches": deskSkipped},
+		"libredesk":   map[string]any{"latest": provision.LibredeskVersion, "helpdesks": desks, "patches": deskSkipped},
 	}
 	if !checkedAt.IsZero() {
 		out["checked_at"] = checkedAt
@@ -342,12 +368,16 @@ func (s *Server) updateWebUI(_ http.ResponseWriter, r *http.Request) (any, error
 	if err := s.st.SetSetting(r.Context(), webuiSetting, latest); err != nil {
 		return nil, err
 	}
+	if err := s.st.SetSetting(r.Context(), webuiVersionSetting, patches.Upstream("stalwart-webui")); err != nil {
+		return nil, err
+	}
 	return s.updatesBody(r.Context())
 }
 
 // updateHelpdesk leaves a request for deploy/apply-updates.sh, which runs as
-// root on the host. Kuraka only writes the container name and the tag; the
-// host validates both and finds the compose directory from Docker labels.
+// root on the host. Kuraka only writes the container name, the tag and its
+// upstream version; the host validates them and finds the compose directory
+// from Docker labels.
 func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, error) {
 	id, err := pathID(r)
 	if err != nil {
@@ -369,7 +399,7 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 	s.updates.requestMu.Lock()
 	defer s.updates.requestMu.Unlock()
 	// A failed attempt can be retried; it is reported as "error".
-	switch _, status, _ := s.requestVersion("libredesk-"+container, provision.LibredeskVersion, latest); status {
+	switch _, _, status, _ := s.requestVersion("libredesk-"+container, "", provision.LibredeskVersion, latest); status {
 	case "updating":
 		return nil, conflict("Helpdesk update already in progress")
 	case "available", "error":
@@ -377,10 +407,10 @@ func (s *Server) updateHelpdesk(_ http.ResponseWriter, r *http.Request) (any, er
 		return nil, conflict("No helpdesk update available")
 	}
 	state(r).detail = latest
-	if !deskTag.MatchString(latest) {
+	if !deskTag.MatchString(latest) && !stableTag.MatchString(latest) {
 		return nil, invalid("release tag")
 	}
-	data, err := json.Marshal(map[string]string{"container": container, "tag": latest})
+	data, err := json.Marshal(map[string]string{"container": container, "tag": latest, "version": provision.LibredeskVersion})
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +429,7 @@ func (s *Server) updateStalwart(_ http.ResponseWriter, r *http.Request) (any, er
 	_, _, latest := s.latestTags()
 	s.updates.requestMu.Lock()
 	defer s.updates.requestMu.Unlock()
-	switch _, status, _ := s.requestVersion("stalwart", s.cfg.StalwartVersion, latest); status {
+	switch _, _, status, _ := s.requestVersion("stalwart", s.cfg.StalwartVersion, s.cfg.StalwartVersion, latest); status {
 	case "updating":
 		return nil, conflict("Stalwart update already in progress")
 	case "available", "error":
