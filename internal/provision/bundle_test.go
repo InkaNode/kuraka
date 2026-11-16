@@ -177,13 +177,13 @@ func TestBundleSystemPassword(t *testing.T) {
 }
 
 func TestLibredeskTag(t *testing.T) {
-	defer func(commit string) { version.Commit = commit }(version.Commit)
-	version.Commit = ""
+	defer func(commit, desk string) { version.Commit, version.LibredeskCommit = commit, desk }(version.Commit, version.LibredeskCommit)
+	version.Commit, version.LibredeskCommit = strings.Repeat("b", 40), ""
 	if got := LibredeskTag(); got != LibredeskVersion {
 		t.Fatalf("without commit: %s", got)
 	}
-	version.Commit = strings.Repeat("c", 40)
-	if got := LibredeskTag(); got != "sha-"+version.Commit {
+	version.LibredeskCommit = strings.Repeat("c", 40)
+	if got := LibredeskTag(); got != "sha-"+version.LibredeskCommit {
 		t.Fatalf("with commit: %s", got)
 	}
 }

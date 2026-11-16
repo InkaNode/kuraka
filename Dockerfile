@@ -7,10 +7,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# Set by the release workflow and apply-updates.sh; the panel compares it
-# with the latest release to offer updates.
+# Set by the release workflow and apply-updates.sh; the panel compares
+# KURAKA_COMMIT with the latest release to offer updates, and installs
+# ghcr.io/inkanode/libredesk:sha-<LIBREDESK_COMMIT>.
 ARG KURAKA_COMMIT=
-RUN go build -trimpath -ldflags="-s -w -X github.com/InkaNode/kuraka/internal/version.Commit=${KURAKA_COMMIT}" -o /out/kuraka ./cmd/kuraka \
+ARG LIBREDESK_COMMIT=
+RUN go build -trimpath -ldflags="-s -w -X github.com/InkaNode/kuraka/internal/version.Commit=${KURAKA_COMMIT} -X github.com/InkaNode/kuraka/internal/version.LibredeskCommit=${LIBREDESK_COMMIT}" -o /out/kuraka ./cmd/kuraka \
     && mkdir -p /out/data \
     && chown 65532:65532 /out/data
 

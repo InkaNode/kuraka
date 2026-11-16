@@ -41,7 +41,8 @@ The commit must be on `origin/main`.
 The timer stops Kuraka, backs up its data to `deploy/backups/kuraka-<UTC timestamp>.tar`,
 checks out the commit and sets `KURAKA_VERSION=sha-<commit>` in `deploy/.env`.
 It pulls `ghcr.io/inkanode/kuraka:sha-<commit>` or builds it locally with
-`KURAKA_COMMIT` if the pull fails, starts the stack with `up -d --build` to
+`KURAKA_COMMIT` and `LIBREDESK_COMMIT` (the last commit that changed
+`patches/libredesk`) if the pull fails, starts the stack with `up -d --build` to
 rebuild Caddy when its Dockerfile changes, reloads Caddy and waits up
 to 180 seconds for Kuraka to become healthy. On failure it rolls back the
 checkout and version, restores the data backup if the new container may have

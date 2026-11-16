@@ -5,7 +5,8 @@ name: Release
 # commit since "chore: bump version to <version>". Images: <version>,
 # <major>.<minor> and latest (stable versions only), plus sha-<commit>, which
 # the panel's Kuraka update installs. patches.yml adds stalwart-webui.zip and
-# the Libredesk image built from patches/.
+# the Libredesk image built from patches/, tagged with the last commit that
+# changed patches/libredesk (LIBREDESK_COMMIT in the Kuraka image).
 
 on:
   workflow_run:
@@ -30,10 +31,12 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tags: ${{ steps.v.outputs.tags }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      libredesk_commit: ${{ steps.v.outputs.libredesk_commit }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
       - id: v
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -49,7 +52,9 @@ jobs:
           else
             TAGS="$TAGS,$IMAGE:${VERSION%.*},$IMAGE:latest"
           fi
-          { echo "version=$VERSION"; echo "tags=$TAGS"; echo "prerelease=$PRERELEASE"; } >> "$GITHUB_OUTPUT"
+          LIBREDESK_COMMIT=$(git log -1 --format=%H "$HEAD_SHA" -- patches/libredesk)
+          [[ $LIBREDESK_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "no commit changed patches/libredesk"; exit 1; }
+          { echo "version=$VERSION"; echo "tags=$TAGS"; echo "prerelease=$PRERELEASE"; echo "libredesk_commit=$LIBREDESK_COMMIT"; } >> "$GITHUB_OUTPUT"
 
   image:
     needs: version
@@ -71,7 +76,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ needs.version.outputs.tags }}
-          build-args: KURAKA_COMMIT=${{ github.event.workflow_run.head_sha }}
+          build-args: |
+            KURAKA_COMMIT=${{ github.event.workflow_run.head_sha }}
+            LIBREDESK_COMMIT=${{ needs.version.outputs.libredesk_commit }}
           labels: org.opencontainers.image.version=${{ needs.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -81,6 +88,7 @@ jobs:
     uses: ./.github/workflows/patches.yml
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      libredesk_commit: ${{ needs.version.outputs.libredesk_commit }}
       publish: true
 
   release:

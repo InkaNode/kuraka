@@ -4,12 +4,16 @@ name: Patches
 # calls it to check every patch still applies and builds; the release also
 # publishes the results: stalwart-webui.zip (artifact, attached to the
 # release) and ghcr.io/inkanode/libredesk:<upstream>, moved by every release,
-# and :sha-<commit>, which Kuraka installs and never moves.
+# and :sha-<libredesk_commit> (the last commit that changed patches/libredesk),
+# which Kuraka installs.
 
 on:
   workflow_call:
     inputs:
       ref:
+        type: string
+        default: ""
+      libredesk_commit:
         type: string
         default: ""
       publish:
@@ -52,13 +56,14 @@ jobs:
       - id: meta
         env:
           PUBLISH: ${{ inputs.publish }}
-          COMMIT: ${{ inputs.ref || github.sha }}
+          COMMIT: ${{ inputs.libredesk_commit }}
         run: |
           set -euo pipefail
           source patches/libredesk/UPSTREAM
           IMAGE=ghcr.io/inkanode/libredesk
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           if [[ $PUBLISH == true ]]; then
+            [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "publish needs libredesk_commit"; exit 1; }
             echo "tags=$IMAGE:$REF,$IMAGE:sha-$COMMIT" >> "$GITHUB_OUTPUT"
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
           else

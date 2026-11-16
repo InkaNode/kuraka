@@ -18,14 +18,15 @@ import (
 const LibredeskVersion = "v2.9.2"
 
 // LibredeskTag is the ghcr.io/inkanode/libredesk tag new bundles install and
-// System > Updates offers: sha-<commit>, published for this build's commit and
-// never moved, or LibredeskVersion, moved by every release, when the build has
-// no commit.
+// System > Updates offers: sha-<commit>, the last commit that changed
+// patches/libredesk, so Kuraka updates without patch changes keep the image,
+// or LibredeskVersion, moved by every release, when the build has no such
+// commit.
 func LibredeskTag() string {
-	if version.Commit == "" {
+	if version.LibredeskCommit == "" {
 		return LibredeskVersion
 	}
-	return "sha-" + version.Commit
+	return "sha-" + version.LibredeskCommit
 }
 
 type Options struct {

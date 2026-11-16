@@ -388,7 +388,7 @@ update_kuraka() {
   image=ghcr.io/inkanode/kuraka:sha-$commit
   if ! docker pull "$image" >&2; then
     log "kuraka: pull failed; building $image locally"
-    docker build -q --build-arg "KURAKA_COMMIT=$commit" -t "$image" "$REPO" >&2 ||
+    docker build -q --build-arg "KURAKA_COMMIT=$commit"       --build-arg "LIBREDESK_COMMIT=$(git -C "$REPO" log -1 --format=%H "$commit" -- patches/libredesk)" -t "$image" "$REPO" >&2 ||
       { ERROR="could not build $image"; return 1; }
   fi
   # From here the new version may have migrated the database.
