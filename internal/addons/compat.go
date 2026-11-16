@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var Supported = map[string]string{"stalwart": "1.0", "webui": "2.0", "libredesk": "2.9"}
+var Supported = map[string]string{"stalwart": "1.1", "webui": "2.0", "libredesk": "2.9"}
 
 var tagVersion = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
 

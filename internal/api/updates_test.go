@@ -160,15 +160,15 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 func TestAddonUpdatesWaiting(t *testing.T) {
 	h, gh, dir, _, _ := updatesHarness(t)
 	gh.mu.Lock()
-	gh.tags[stalwartRepo] = "v1.1.0"
+	gh.tags[stalwartRepo] = "v1.2.0"
 	gh.mu.Unlock()
 	v := decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
-	if v.Stalwart.State != "waiting" || v.Stalwart.Supported != "1.0" ||
+	if v.Stalwart.State != "waiting" || v.Stalwart.Supported != "1.1" ||
 		v.Kuraka.State != "available" {
 		t.Fatalf("waiting: %+v", v)
 	}
 	for _, tc := range []struct{ path, tag string }{
-		{"/updates/stalwart", "v1.1.0"},
+		{"/updates/stalwart", "v1.2.0"},
 	} {
 		body := h.root.do("POST", tc.path, nil, 409)
 		assertCode(t, body, "conflict")
