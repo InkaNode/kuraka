@@ -17,10 +17,16 @@ import (
 // release; keep it equal to REF in patches/libredesk/UPSTREAM.
 const LibredeskVersion = "v2.9.2"
 
-// LibredeskTag is the ghcr.io/inkanode/libredesk tag this release publishes
-// and new bundles install. Installed helpdesks are upgraded from
-// Integrations > Updates.
-func LibredeskTag() string { return LibredeskVersion + "-kuraka." + version.Version }
+// LibredeskTag is the ghcr.io/inkanode/libredesk tag new bundles install and
+// System > Updates offers: sha-<commit>, published for this build's commit and
+// never moved, or LibredeskVersion, moved by every release, when the build has
+// no commit.
+func LibredeskTag() string {
+	if version.Commit == "" {
+		return LibredeskVersion
+	}
+	return "sha-" + version.Commit
+}
 
 type Options struct {
 	MailNetwork    string

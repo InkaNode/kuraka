@@ -3,8 +3,8 @@ name: Patches
 # Builds Stalwart WebUI and Libredesk from upstream plus patches/<app>. CI
 # calls it to check every patch still applies and builds; the release also
 # publishes the results: stalwart-webui.zip (artifact, attached to the
-# release) and ghcr.io/inkanode/libredesk:<upstream>-kuraka.<version> and
-# :sha-<commit>.
+# release) and ghcr.io/inkanode/libredesk:<upstream>, moved by every release,
+# and :sha-<commit>, which Kuraka installs and never moves.
 
 on:
   workflow_call:
@@ -15,9 +15,6 @@ on:
       publish:
         type: boolean
         default: false
-      version:
-        type: string
-        default: ""
 
 jobs:
   webui:
@@ -55,7 +52,6 @@ jobs:
       - id: meta
         env:
           PUBLISH: ${{ inputs.publish }}
-          VERSION: ${{ inputs.version }}
           COMMIT: ${{ inputs.ref || github.sha }}
         run: |
           set -euo pipefail
@@ -63,8 +59,7 @@ jobs:
           IMAGE=ghcr.io/inkanode/libredesk
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           if [[ $PUBLISH == true ]]; then
-            [[ -n $VERSION ]] || { echo "publishing needs a version"; exit 1; }
-            echo "tags=$IMAGE:$REF-kuraka.$VERSION,$IMAGE:sha-$COMMIT" >> "$GITHUB_OUTPUT"
+            echo "tags=$IMAGE:$REF,$IMAGE:sha-$COMMIT" >> "$GITHUB_OUTPUT"
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
           else
             echo "tags=libredesk:ci" >> "$GITHUB_OUTPUT"

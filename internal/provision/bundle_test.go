@@ -66,7 +66,7 @@ func TestBundle(t *testing.T) {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	for _, want := range []string{"name: kuraka-team-one", "ghcr.io/inkanode/libredesk:v2.9.2-kuraka." + version.Version, "postgres:17-alpine", "redis:7-alpine", "container_name: kuraka-team-one-desk", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
+	for _, want := range []string{"name: kuraka-team-one", "ghcr.io/inkanode/libredesk:" + LibredeskTag(), "postgres:17-alpine", "redis:7-alpine", "container_name: kuraka-team-one-desk", "external: true", "name: kuraka_mail", "--idempotent-install", "networks: [default, mail]"} {
 		if !strings.Contains(files["docker-compose.yml"], want) {
 			t.Errorf("missing %s", want)
 		}
@@ -173,5 +173,17 @@ func TestBundleSystemPassword(t *testing.T) {
 		if _, err := Bundle("test", "desk.example.com", Options{SystemPassword: bad}); err == nil || err.Error() != "invalid bundle options" {
 			t.Fatalf("invalid password: %v", err)
 		}
+	}
+}
+
+func TestLibredeskTag(t *testing.T) {
+	defer func(commit string) { version.Commit = commit }(version.Commit)
+	version.Commit = ""
+	if got := LibredeskTag(); got != LibredeskVersion {
+		t.Fatalf("without commit: %s", got)
+	}
+	version.Commit = strings.Repeat("c", 40)
+	if got := LibredeskTag(); got != "sha-"+version.Commit {
+		t.Fatalf("with commit: %s", got)
 	}
 }

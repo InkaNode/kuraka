@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-15
+
+### Fixed
+
+- **Libredesk email thread**: in dark mode a long incoming email now fades to white above **Expand** instead of a dark band over the email, and the white email box is only as wide as the email.
+
+### Changed
+
+- **System → Updates**: Libredesk and the Stalwart web interface show their own version (`v2.9.2`, `v2.0.6`) instead of the Kuraka build tag. When only Kuraka's patches changed, the status reads **New patches** and the update is still offered.
+- **Libredesk image tags**: releases publish `ghcr.io/inkanode/libredesk:<upstream>` and `:sha-<commit>` instead of `<upstream>-kuraka.<version>`. New helpdesks and **Update now** use `sha-<commit>`, which never moves, so a rollback always returns to the same image. Existing helpdesks keep working and move to the new tag on their next update.
+- **README**: overview and architecture images instead of the Mermaid chart, and sections on patches, updates and security.
+
 ## [0.3.0] - 2026-11-15
 
 ### Added

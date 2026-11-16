@@ -18,29 +18,31 @@
 > In the Inca empire, the *kuraka* governed his community on behalf of the Inca.
 > Kuraka lets you hand each customer the keys to their own mail domains.
 
+<p align="center">
+  <img src="docs/img/overview.svg" alt="You and your customers use Kuraka, which runs mail on Stalwart, DNS on Cloudflare and helpdesks on Libredesk" width="100%">
+</p>
+
 ## What it does
 
 - **Tenants and roles:** superadmins manage everything; each tenant admin sees only their own domains, mailboxes, aliases and quotas.
 - **DNS on autopilot:** plans, applies and checks the records Stalwart needs through Cloudflare, or shows them for manual setup.
 - **Helpdesks:** deploys Libredesk per tenant and connects mailboxes to it.
-- **Branding:** name, logo and colors, global or per tenant, applied to Kuraka, the official Stalwart web interface and Libredesk through small addons, so no forks are needed.
+- **Branding:** name, logo and colors, global or per tenant, applied to Kuraka, the official Stalwart web interface and Libredesk through small addons.
 - **Updates from the panel:** Kuraka, Stalwart, its web interface and Libredesk, with a backup first and rollback on failure.
 - **Day to day:** mail queue, metrics, IMAP migrations, blocked IP addresses and an audit log, in Spanish and English.
 
-## How it fits
+## How it works
 
-```mermaid
-flowchart LR
-  user([Browser]) -- HTTPS --> caddy[Caddy]
-  caddy --> kuraka[Kuraka]
-  caddy -- addons --> stalwart[Stalwart]
-  caddy -- addons --> desk[Libredesk]
-  kuraka -- JMAP --> stalwart
-  kuraka --> desk
-  kuraka -- API --> cf[(Cloudflare DNS)]
-```
+<p align="center">
+  <img src="docs/img/architecture.svg" alt="Caddy serves Kuraka, Stalwart and Libredesk on one server; each Kuraka release builds the Stalwart web interface and Libredesk from upstream plus small patches" width="100%">
+</p>
 
-Kuraka is one Go binary with an embedded SQLite database. It talks to Stalwart only through its public JMAP management API, never gets the Docker socket, and keeps Stalwart's admin interface private.
+Kuraka is one Go binary with an embedded SQLite database, running next to Stalwart, Caddy and the Libredesk helpdesks on one server with Docker Compose.
+
+- **Stalwart** is used as released. Kuraka talks to it only through its public JMAP management API and keeps Stalwart's admin interface private.
+- **The Stalwart web interface and Libredesk** are built from their upstream releases plus a few small patches in [`patches/`](patches) (status icons, an email thread view, an inbox switcher, more automation conditions). Upstream code is never copied into this repository, and each patch says what users lose if it stops applying.
+- **Updates:** System › Updates shows the upstream version of each part. A new upstream release shows as a new version; a Kuraka release that only changes the patches shows as **New patches**. A daily job opens a pull request for every new upstream release, and patches that no longer apply are skipped and listed in Updates until they are fixed.
+- **Security:** Kuraka never gets the Docker socket. Updates are applied by a small timer on the host that accepts only a validated version, backs up first and rolls back on failure.
 
 ## Install
 
@@ -52,7 +54,7 @@ cp deploy/.env.example deploy/.env   # set PANEL_HOST, MAIL_HOST, MAIL_DOMAIN, A
 bash deploy/setup.sh
 ```
 
-Requirements, DNS and next steps: [docs/install.md](docs/install.md).
+You need a VPS with 2 GB of RAM or more, Docker with Compose, ports 25, 80, 443, 465 and 993 open (outbound 25 too) and DNS records for the panel and mail hosts. Requirements, DNS and next steps: [docs/install.md](docs/install.md).
 
 ## Docs
 

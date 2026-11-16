@@ -44,7 +44,7 @@ export async function systemView() {
             ? h('a', { href: row.url, target: '_blank', rel: 'noopener' }, t('system.updates.changes')) : null) },
         { label: t('system.updates.status'), render: row => h('div', { class: 'stack gap-1' },
           h('div', { class: 'row gap-1' },
-            badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
+            badge(t(row.state === 'available' && ['version', 'commits', 'patches'].includes(row.kind)
               ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
             row.state === 'waiting' ? infoTip(t('system.updates.waiting', { latest: row.latest, supported: row.supported })) : null),
           row.state !== 'waiting' && row.message ? h('span', { class: 'muted' }, row.message) : null,

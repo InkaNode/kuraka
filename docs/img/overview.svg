@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <title>What Kuraka does</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#B3A89F"/>
+    </marker>
+    <g id="logo">
+      <path fill="#A5431E" d="M32 228L55.3 34L200.7 34L224 228L196 228L176.1 62L79.9 62L60 228Z"/>
+      <path fill="#A5431E" d="M80 35L80 24L104 24L104 14L152 14L152 24L176 24L176 35Z"/>
+      <path fill="#D9922E" d="M70 228L88.7 72L167.3 72L186 228L166 228L149.9 94L106.1 94L90 228Z"/>
+    </g>
+  </defs>
+  <style>
+    .card { fill: #FFFFFF; stroke: #E6E0DA; stroke-width: 1; }
+    .title { font-size: 15px; font-weight: 600; fill: #221D19; }
+    .desc { font-size: 13px; fill: #6E665F; }
+    .tag { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; fill: #8E3A1A; }
+    .tagbg { fill: #F6E9E3; }
+    .line { stroke: #B3A89F; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .chip { fill: #F3EFEB; }
+    .chiptext { font-size: 13px; fill: #4F4842; }
+  </style>
+
+  <rect x="0.5" y="0.5" width="1199" height="469" rx="16" fill="#FBF9F6" stroke="#E6E0DA"/>
+
+  <use href="#logo" transform="translate(48 34) scale(0.125)"/>
+  <text x="90" y="56" font-size="22" font-weight="700" fill="#221D19">What Kuraka does</text>
+  <text x="48" y="90" class="desc" font-size="14">One panel to run mail, DNS and helpdesks for every customer, on your own server.</text>
+
+  <!-- People -->
+  <rect class="card" x="48" y="126" width="260" height="100" rx="10"/>
+  <text class="title" x="68" y="164">You</text>
+  <text class="desc" x="68" y="188">Superadmin: every customer,</text>
+  <text class="desc" x="68" y="206">settings and updates</text>
+
+  <rect class="card" x="48" y="246" width="260" height="100" rx="10"/>
+  <text class="title" x="68" y="284">Your customers</text>
+  <text class="desc" x="68" y="308">Tenant admins: only their</text>
+  <text class="desc" x="68" y="326">own domains and mailboxes</text>
+
+  <path class="line" d="M308 176 C350 176 350 216 392 216"/>
+  <path class="line" d="M308 296 C350 296 350 256 392 256"/>
+
+  <!-- Kuraka -->
+  <rect x="396" y="126" width="240" height="220" rx="12" fill="#FFFFFF" stroke="#A5431E" stroke-width="2"/>
+  <use href="#logo" transform="translate(484 152) scale(0.25)"/>
+  <text x="516" y="250" text-anchor="middle" font-size="22" font-weight="700" fill="#221D19">Kuraka</text>
+  <text x="516" y="274" text-anchor="middle" class="desc">Web panel</text>
+  <rect x="461" y="294" width="110" height="26" rx="13" class="chip"/>
+  <text x="516" y="312" text-anchor="middle" class="chiptext">Spanish · English</text>
+
+  <path class="line" d="M636 236 C676 236 676 160 716 160"/>
+  <path class="line" d="M636 236 L716 236"/>
+  <path class="line" d="M636 236 C676 236 676 312 716 312"/>
+
+  <!-- Outcomes -->
+  <rect class="card" x="720" y="126" width="432" height="68" rx="10"/>
+  <rect class="tagbg" x="736" y="148" width="76" height="24" rx="6"/>
+  <text class="tag" x="774" y="164" text-anchor="middle">MAIL</text>
+  <text class="title" x="828" y="154">Stalwart Mail Server</text>
+  <text class="desc" x="828" y="176">Domains, mailboxes, aliases, quotas and queue</text>
+
+  <rect class="card" x="720" y="202" width="432" height="68" rx="10"/>
+  <rect class="tagbg" x="736" y="224" width="76" height="24" rx="6"/>
+  <text class="tag" x="774" y="240" text-anchor="middle">DNS</text>
+  <text class="title" x="828" y="230">Cloudflare</text>
+  <text class="desc" x="828" y="252">Records planned, applied and checked for you</text>
+
+  <rect class="card" x="720" y="278" width="432" height="68" rx="10"/>
+  <rect class="tagbg" x="736" y="300" width="76" height="24" rx="6"/>
+  <text class="tag" x="774" y="316" text-anchor="middle">HELPDESK</text>
+  <text class="title" x="828" y="306">Libredesk</text>
+  <text class="desc" x="828" y="328">One per customer, with its mailboxes connected</text>
+
+  <!-- Extras -->
+  <line x1="48" y1="380" x2="1152" y2="380" stroke="#E6E0DA"/>
+  <text x="48" y="420" class="desc">Also included</text>
+  <rect class="chip" x="148" y="402" width="168" height="28" rx="14"/><text class="chiptext" x="232" y="421" text-anchor="middle">Branding per customer</text>
+  <rect class="chip" x="326" y="402" width="186" height="28" rx="14"/><text class="chiptext" x="419" y="421" text-anchor="middle">Updates from the panel</text>
+  <rect class="chip" x="522" y="402" width="134" height="28" rx="14"/><text class="chiptext" x="589" y="421" text-anchor="middle">IMAP migrations</text>
+  <rect class="chip" x="666" y="402" width="134" height="28" rx="14"/><text class="chiptext" x="733" y="421" text-anchor="middle">Mail queue</text>
+  <rect class="chip" x="810" y="402" width="100" height="28" rx="14"/><text class="chiptext" x="860" y="421" text-anchor="middle">Metrics</text>
+  <rect class="chip" x="920" y="402" width="140" height="28" rx="14"/><text class="chiptext" x="990" y="421" text-anchor="middle">Blocked IPs</text>
+  <rect class="chip" x="1070" y="402" width="82" height="28" rx="14"/><text class="chiptext" x="1111" y="421" text-anchor="middle">Audit log</text>
+</svg>

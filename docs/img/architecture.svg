@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <title>How Kuraka works</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#B3A89F"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#A5431E"/>
+    </marker>
+    <g id="logo">
+      <path fill="#A5431E" d="M32 228L55.3 34L200.7 34L224 228L196 228L176.1 62L79.9 62L60 228Z"/>
+      <path fill="#A5431E" d="M80 35L80 24L104 24L104 14L152 14L152 24L176 24L176 35Z"/>
+      <path fill="#D9922E" d="M70 228L88.7 72L167.3 72L186 228L166 228L149.9 94L106.1 94L90 228Z"/>
+    </g>
+  </defs>
+  <style>
+    .section { fill: #FFFFFF; stroke: #E6E0DA; }
+    .label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; fill: #8E3A1A; }
+    .card { fill: #FBF9F6; stroke: #DDD6CF; }
+    .key { fill: #FFFFFF; stroke: #A5431E; stroke-width: 2; }
+    .patch { fill: #F6E9E3; stroke: #E3C6B8; }
+    .title { font-size: 15px; font-weight: 600; fill: #221D19; }
+    .desc { font-size: 13px; fill: #6E665F; }
+    .mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; fill: #4F4842; }
+    .edge { font-size: 12px; fill: #6E665F; }
+    .line { stroke: #B3A89F; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .dash { stroke: #B3A89F; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+    .accent { stroke: #A5431E; stroke-width: 1.5; fill: none; marker-end: url(#arrow-accent); }
+  </style>
+
+  <rect x="0.5" y="0.5" width="1199" height="899" rx="16" fill="#FBF9F6" stroke="#E6E0DA"/>
+  <use href="#logo" transform="translate(48 34) scale(0.125)"/>
+  <text x="90" y="56" font-size="22" font-weight="700" fill="#221D19">How Kuraka works</text>
+  <text x="48" y="90" class="desc" font-size="14">Everything runs on one server with Docker Compose. Kuraka never gets the Docker socket.</text>
+
+  <!-- ============ On your server ============ -->
+  <rect class="section" x="32" y="112" width="1136" height="388" rx="12"/>
+  <text class="label" x="56" y="142">ON YOUR SERVER</text>
+
+  <rect class="card" x="56" y="250" width="140" height="72" rx="10"/>
+  <text class="title" x="76" y="282">Browser</text>
+  <text class="desc" x="76" y="304">You and customers</text>
+
+  <rect class="card" x="246" y="240" width="200" height="92" rx="10"/>
+  <text class="title" x="266" y="272">Caddy</text>
+  <text class="desc" x="266" y="294">HTTPS for every site,</text>
+  <text class="desc" x="266" y="312">adds the branding addons</text>
+
+  <path class="line" d="M196 286 L242 286"/>
+
+  <rect class="key" x="510" y="160" width="270" height="92" rx="10"/>
+  <text class="title" x="530" y="192">Kuraka</text>
+  <text class="desc" x="530" y="214">One Go binary with SQLite:</text>
+  <text class="desc" x="530" y="232">customers, users, audit log</text>
+
+  <rect class="card" x="510" y="290" width="270" height="76" rx="10"/>
+  <text class="title" x="530" y="322">Stalwart</text>
+  <text class="desc" x="530" y="344">Mail server and its web interface</text>
+
+  <rect class="card" x="510" y="400" width="270" height="76" rx="10"/>
+  <text class="title" x="530" y="432">Libredesk</text>
+  <text class="desc" x="530" y="454">One helpdesk per customer</text>
+
+  <path class="line" d="M446 270 C478 270 478 206 506 206"/>
+  <path class="line" d="M446 290 C478 290 478 328 506 328"/>
+  <path class="line" d="M446 310 C478 310 478 438 506 438"/>
+
+  <path class="accent" d="M590 252 L590 286"/>
+  <text class="edge" x="598" y="274">JMAP API</text>
+  <path class="accent" d="M780 230 C820 230 820 438 784 438"/>
+  <text class="edge" x="826" y="342">API</text>
+
+  <rect class="card" x="880" y="160" width="264" height="76" rx="10"/>
+  <text class="title" x="900" y="192">Cloudflare DNS</text>
+  <text class="desc" x="900" y="214">Records for every mail domain</text>
+  <path class="accent" d="M780 198 L876 198"/>
+
+  <rect class="card" x="880" y="290" width="264" height="140" rx="10"/>
+  <text class="title" x="900" y="322">Update timer</text>
+  <text class="desc" x="900" y="344">Runs on the host as root and</text>
+  <text class="desc" x="900" y="362">applies what you ask for in</text>
+  <text class="desc" x="900" y="380">System › Updates: backup, pull,</text>
+  <text class="desc" x="900" y="398">restart, roll back on failure</text>
+  <path class="dash" d="M780 244 C850 244 850 300 876 300"/>
+  <text class="edge" x="796" y="282">request</text>
+  <path class="dash" d="M880 410 C840 410 840 360 784 342"/>
+  <path class="dash" d="M880 420 C840 420 840 456 784 456"/>
+
+  <!-- ============ Each release ============ -->
+  <rect class="section" x="32" y="520" width="1136" height="348" rx="12"/>
+  <text class="label" x="56" y="550">WHAT EACH KURAKA RELEASE SHIPS</text>
+  <text class="desc" x="56" y="576">Upstream versions stay as they are. Kuraka adds small patches on top and builds them.</text>
+
+  <text class="edge" x="56" y="608">Upstream</text>
+  <text class="edge" x="356" y="608">Kuraka patches</text>
+  <text class="edge" x="626" y="608">Built</text>
+
+  <rect class="card" x="56" y="620" width="260" height="56" rx="10"/>
+  <text class="title" x="76" y="644">Stalwart web interface</text>
+  <text class="mono" x="76" y="664">stalwartlabs/webui</text>
+  <rect class="patch" x="356" y="620" width="230" height="56" rx="10"/>
+  <text class="mono" x="376" y="653">patches/stalwart-webui</text>
+  <rect class="card" x="626" y="620" width="270" height="56" rx="10"/>
+  <text class="mono" x="646" y="653">stalwart-webui.zip</text>
+  <path class="line" d="M316 648 L352 648"/>
+  <path class="line" d="M586 648 L622 648"/>
+
+  <rect class="card" x="56" y="690" width="260" height="56" rx="10"/>
+  <text class="title" x="76" y="714">Libredesk</text>
+  <text class="mono" x="76" y="734">abhinavxd/libredesk</text>
+  <rect class="patch" x="356" y="690" width="230" height="56" rx="10"/>
+  <text class="mono" x="376" y="723">patches/libredesk</text>
+  <rect class="card" x="626" y="690" width="270" height="56" rx="10"/>
+  <text class="mono" x="646" y="723">ghcr.io/inkanode/libredesk</text>
+  <path class="line" d="M316 718 L352 718"/>
+  <path class="line" d="M586 718 L622 718"/>
+
+  <rect class="card" x="56" y="760" width="260" height="56" rx="10"/>
+  <text class="title" x="76" y="784">Kuraka</text>
+  <text class="mono" x="76" y="804">InkaNode/kuraka</text>
+  <rect class="card" x="626" y="760" width="270" height="56" rx="10"/>
+  <text class="mono" x="646" y="793">ghcr.io/inkanode/kuraka</text>
+  <path class="line" d="M316 788 L622 788"/>
+
+  <rect class="key" x="936" y="620" width="208" height="196" rx="10"/>
+  <text class="title" x="956" y="652">GitHub release</text>
+  <text class="desc" x="956" y="684">Shows up in</text>
+  <text class="desc" x="956" y="702">System › Updates as a</text>
+  <text class="desc" x="956" y="720">new version, or as</text>
+  <text class="desc" x="956" y="738">“New patches” when only</text>
+  <text class="desc" x="956" y="756">Kuraka’s patches changed</text>
+  <path class="line" d="M896 648 L932 648"/>
+  <path class="line" d="M896 718 L932 718"/>
+  <path class="line" d="M896 788 L932 788"/>
+
+  <text class="desc" x="56" y="848">A daily check opens a pull request when the Stalwart web interface or Libredesk publish a release. Patches that no longer apply are skipped, and Updates says what is missing.</text>
+</svg>

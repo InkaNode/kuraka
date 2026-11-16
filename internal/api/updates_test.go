@@ -17,6 +17,7 @@ import (
 	"github.com/InkaNode/kuraka/internal/releases"
 	"github.com/InkaNode/kuraka/internal/store"
 	"github.com/InkaNode/kuraka/internal/version"
+	"github.com/InkaNode/kuraka/patches"
 )
 
 type fakeGitHub struct {
@@ -75,7 +76,7 @@ func updatesHarness(t *testing.T) (*harness, *fakeGitHub, string, int64, int64) 
 	return h, gh, dir, desk.ID, other.ID
 }
 
-type versionReply struct{ Latest, Current, State, Message, Supported string }
+type versionReply struct{ Latest, Current, State, Kind, Message, Supported string }
 
 type kurakaReply struct {
 	Latest, Current, Commit, URL, State, Kind, Message string
@@ -87,6 +88,7 @@ type deskReply struct {
 	Name    string
 	Current string
 	State   string
+	Kind    string
 	Message string
 }
 
@@ -121,12 +123,12 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 		v.Stalwart.Current != "v1.0.2" || v.Stalwart.State != "unknown" {
 		t.Fatalf("before check: %+v", v)
 	}
-	if d := v.Libredesk.Helpdesks[0]; d.ID != desk || d.Current != provision.LibredeskVersion || d.State != "available" {
+	if d := v.Libredesk.Helpdesks[0]; d.ID != desk || d.Current != provision.LibredeskVersion || d.State != "available" || d.Kind != "patches" {
 		t.Fatalf("desk before check: %+v", d)
 	}
 	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
-	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != provision.LibredeskTag() || v.Libredesk.Helpdesks[0].State != "available" ||
-		v.WebUI.Latest != gh.tags[kurakaRepo] || v.WebUI.Current != "" || v.WebUI.State != "available" ||
+	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != provision.LibredeskVersion || v.Libredesk.Helpdesks[0].State != "available" ||
+		v.WebUI.Latest != patches.Upstream("stalwart-webui") || v.WebUI.Current != "" || v.WebUI.State != "available" || v.WebUI.Kind != "version" ||
 		v.Stalwart.Latest != "v1.0.3" || v.Stalwart.State != "available" {
 		t.Fatalf("after check: %+v", v)
 	}
@@ -145,7 +147,7 @@ func TestUpdatesStatusAndCheck(t *testing.T) {
 	if n := gh.hitCount(); n != 4 {
 		t.Fatalf("GitHub hits = %d, want 4", n)
 	}
-	if v.Error == "" || v.WebUI.Latest != "v99.0.0" || v.Kuraka.Latest != "v99.0.0" ||
+	if v.Error == "" || v.WebUI.Latest != patches.Upstream("stalwart-webui") || v.Kuraka.Latest != "v99.0.0" ||
 		v.Kuraka.LatestCommit != strings.Repeat("a", 40) || v.Kuraka.URL != "https://github.com/InkaNode/kuraka/releases/tag/v99.0.0" ||
 		!strings.Contains(v.Error, kurakaRepo) {
 		t.Fatalf("failed check must keep the previous tag: %+v", v)
@@ -212,7 +214,7 @@ func TestUpdateWebUI(t *testing.T) {
 	h.root.do("POST", "/updates/webui", nil, 409)
 	h.root.do("POST", "/updates/check", nil, 200)
 	v := decodeUpdates(t, h.root.do("POST", "/updates/webui", nil, 200))
-	if v.WebUI.Current != gh.tags[kurakaRepo] || v.WebUI.State != "current" {
+	if v.WebUI.Current != patches.Upstream("stalwart-webui") || v.WebUI.State != "current" {
 		t.Fatalf("webui: %+v", v.WebUI)
 	}
 	h.sw.mu.Lock()
@@ -227,6 +229,15 @@ func TestUpdateWebUI(t *testing.T) {
 	}
 	if applied, err := h.st.GetSetting(context.Background(), webuiSetting); err != nil || applied != gh.tags[kurakaRepo] {
 		t.Fatalf("applied = %q %v", applied, err)
+	}
+	// A release before 0.3.1 stored no version; it built v2.0.6.
+	for key, value := range map[string]string{webuiSetting: "v0.3.0", webuiVersionSetting: ""} {
+		if err := h.st.SetSetting(context.Background(), key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)); v.WebUI.Current != "v2.0.6" || v.WebUI.State != "available" {
+		t.Fatalf("legacy webui: %+v", v.WebUI)
 	}
 }
 
@@ -247,7 +258,8 @@ func TestUpdateHelpdesk(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]string
-	if err := json.Unmarshal(data, &got); err != nil || len(got) != 2 || got["container"] != "kuraka-acme-desk" || got["tag"] != provision.LibredeskTag() {
+	if err := json.Unmarshal(data, &got); err != nil || len(got) != 3 || got["container"] != "kuraka-acme-desk" || got["tag"] != provision.LibredeskTag() ||
+		got["version"] != provision.LibredeskVersion {
 		t.Fatalf("request file: %s", data)
 	}
 	assertCode(t, h.root.do("POST", path, nil, 409), "conflict")
@@ -274,10 +286,24 @@ func TestUpdateHelpdesk(t *testing.T) {
 	}
 	writeResult(fmt.Sprintf(`{"tag":%q,"status":"ok","message":"","at":"2026-11-04T10:05:00Z","current":%q}`, provision.LibredeskTag(), provision.LibredeskTag()))
 	d = decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Libredesk.Helpdesks[0]
-	if d.State != "current" || d.Current != provision.LibredeskTag() || d.Message != "" {
+	if d.State != "current" || d.Current != provision.LibredeskVersion || d.Message != "" {
 		t.Fatalf("ok result: %+v", d)
 	}
 	h.root.do("POST", path, nil, 409) // nothing to update
+
+	// sha-<commit> tags show the result's version; older tags start with it.
+	sha := "sha-" + strings.Repeat("b", 40)
+	for _, tc := range []struct{ current, version, shown, kind string }{
+		{sha, "v2.9.2", "v2.9.2", "patches"},
+		{sha, "", provision.LibredeskVersion, "patches"},
+		{"v2.9.1-kuraka.0.3.0", "", "v2.9.1", "version"},
+	} {
+		writeResult(fmt.Sprintf(`{"tag":%q,"status":"ok","current":%q,"version":%q}`, tc.current, tc.current, tc.version))
+		d = decodeUpdates(t, h.root.do("GET", "/updates", nil, 200)).Libredesk.Helpdesks[0]
+		if d.State != "available" || d.Current != tc.shown || d.Kind != tc.kind {
+			t.Fatalf("%+v: %+v", tc, d)
+		}
+	}
 
 	h.s.cfg.UpdatesDir = ""
 	assertCode(t, h.root.do("POST", path, nil, 409), "updates_disabled")

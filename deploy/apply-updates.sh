@@ -2,7 +2,7 @@
 # Installs Libredesk and applies Libredesk, Stalwart and Kuraka updates requested in the panel.
 # Runs as root from kuraka-updates.timer, installed by deploy/setup.sh.
 #
-# Kuraka only writes <dir>/libredesk-<container>.json = {"container", "tag"}
+# Kuraka only writes <dir>/libredesk-<container>.json = {"container", "tag", "version"}
 # and <dir>/stalwart.json = {"tag"}, <dir>/kuraka.json = {"tag", "commit"}.
 # Installs use <dir>/install-<name>.json = {"name", "host", "system_password"}.
 # Root renders install files with its trusted Kuraka image, never with panel files.
@@ -26,7 +26,7 @@ DEPLOY=${KURAKA_DEPLOY:-/root/kuraka/deploy}
 REPO=$(dirname "$DEPLOY")
 DIR=$DEPLOY/updates
 # Matches the upstream image of older bundles and Kuraka's patched build.
-IMAGE_RE='s#(image: )(libredesk/libredesk|ghcr\.io/inkanode/libredesk):v[0-9][0-9A-Za-z.-]*#\1'
+IMAGE_RE='s#(image: )(libredesk/libredesk|ghcr\.io/inkanode/libredesk):(v[0-9][0-9A-Za-z.-]*|sha-[0-9a-f]{40})#\1'
 DESK_IMAGE=ghcr.io/inkanode/libredesk
 ENV_FILE=$DEPLOY/.env
 COMPOSE=(docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml" --env-file "$ENV_FILE")
@@ -51,13 +51,14 @@ shopt -s nullglob
 PRIVATE=$DEPLOY/.updates-tmp
 install -d -m 0700 "$PRIVATE"
 
-# write_result FILE TAG STATUS MESSAGE CURRENT [COMMIT]
+# write_result FILE TAG STATUS MESSAGE CURRENT [COMMIT] [VERSION]
+# VERSION is the upstream version of CURRENT, for Libredesk.
 write_result() {
   local tmp
   tmp=$(mktemp "$PRIVATE/result.XXXXXX")
   jq -n --arg tag "$2" --arg status "$3" --arg message "$4" --arg current "$5" \
-    --arg commit "${6:-}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{tag: $tag, status: $status, message: $message, at: $at, current: $current, commit: $commit}' >"$tmp"
+    --arg commit "${6:-}" --arg version "${7:-}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{tag: $tag, status: $status, message: $message, at: $at, current: $current, commit: $commit, version: $version}' >"$tmp"
   chmod 644 "$tmp"
   mv -T "$tmp" "$1"
 }
@@ -70,7 +71,7 @@ update() {
     { ERROR="container not found"; return 1; }
   compose_file=$desk_dir/docker-compose.yml
   [[ $desk_dir == /* && -f $compose_file ]] || { ERROR="docker-compose.yml not found"; return 1; }
-  old_image=$(sed -n -E 's#^[[:space:]]*image: ((libredesk/libredesk|ghcr\.io/inkanode/libredesk):v[0-9][0-9A-Za-z.-]*)[[:space:]]*$#\1#p' "$compose_file" | head -n 1)
+  old_image=$(sed -n -E 's#^[[:space:]]*image: ((libredesk/libredesk|ghcr\.io/inkanode/libredesk):(v[0-9][0-9A-Za-z.-]*|sha-[0-9a-f]{40}))[[:space:]]*$#\1#p' "$compose_file" | head -n 1)
   old=${old_image##*:}
   [[ -n $old ]] || { ERROR="libredesk image not found in docker-compose.yml"; return 1; }
 
@@ -285,13 +286,16 @@ done
 
 for request in "$DIR"/libredesk-*.json; do
   [[ $request == *.result.json ]] && continue
-  container= tag= desk_dir= compose_file= old= old_image= backup= changed=0 started=0 ERROR=
+  container= tag= version= desk_dir= compose_file= old= old_image= backup= changed=0 started=0 ERROR=
   if [[ -f $request && ! -L $request ]]; then
     container=$(jq -r '.container // empty' "$request" 2>/dev/null) || container=
     tag=$(jq -r '.tag // empty' "$request" 2>/dev/null) || tag=
+    version=$(jq -r '.version // empty' "$request" 2>/dev/null) || version=
   fi
-  if [[ ! $container =~ ^kuraka-[a-z0-9-]+-desk$ || ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ||
-    $request != "$DIR/libredesk-$container.json" ]]; then
+  # Tags are sha-<commit>, <upstream> or, before Kuraka 0.3.1, <upstream>-kuraka.<version>.
+  if [[ ! $container =~ ^kuraka-[a-z0-9-]+-desk$ ||
+    ! $tag =~ ^(sha-[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+(-kuraka\.[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)?)$ ||
+    ! $version =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)?$ || $request != "$DIR/libredesk-$container.json" ]]; then
     log "rejected $request"
     rm -f "$request"
     continue
@@ -299,13 +303,15 @@ for request in "$DIR"/libredesk-*.json; do
   result=$DIR/libredesk-$container.result.json
   log "$container: updating to $tag"
   if update "$container" "$tag"; then
-    write_result "$result" "$tag" ok "" "$tag"
+    write_result "$result" "$tag" ok "" "$tag" "" "$version"
     log "$container: running $tag"
   else
     log "$container: $ERROR"
     rollback
     current=${old:-$(jq -r '.current // empty' "$result" 2>/dev/null || true)}
-    write_result "$result" "$tag" error "$ERROR" "$current"
+    # The previous result knows the version of a sha-<commit> tag.
+    version=$(jq -r --arg current "$current" 'select(.current == $current) | .version // empty' "$result" 2>/dev/null || true)
+    write_result "$result" "$tag" error "$ERROR" "$current" "" "$version"
   fi
   rm -f "$request"
 done

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-//go:embed */series */*.patch
+//go:embed */UPSTREAM */series */*.patch
 var files embed.FS
 
 // Patch is one entry of an app's series. Missing* tell users what does not
@@ -59,6 +59,17 @@ func Series(app string) ([]Patch, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// Upstream returns the upstream tag (REF in <app>/UPSTREAM) app is built from.
+func Upstream(app string) string {
+	data, _ := files.ReadFile(app + "/UPSTREAM")
+	for _, line := range strings.Split(string(data), "\n") {
+		if ref, ok := strings.CutPrefix(strings.TrimSpace(line), "REF="); ok {
+			return ref
+		}
+	}
+	return ""
 }
 
 // Skipped lists app's patches this build left out.
