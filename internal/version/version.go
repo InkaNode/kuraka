@@ -2,7 +2,7 @@
 package version
 
 // Version is the current Kuraka release.
-const Version = "0.3.1"
+const Version = "0.3.2"
 
 // Commit is the build's 40-hex SHA, set by -ldflags
 // -X github.com/InkaNode/kuraka/internal/version.Commit=<40-hex sha>.
