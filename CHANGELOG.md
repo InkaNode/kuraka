@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-16
+
+### Fixed
+
+- **Libredesk email thread**: incoming emails are shown without the white box, in light and dark mode, and a long email fades into the page above **Expand**. In dark mode, an email that sets its own dark text colours can be hard to read.
+
 ## [0.3.1] - 2026-11-15
 
 ### Fixed
