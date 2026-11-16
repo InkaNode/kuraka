@@ -8,16 +8,16 @@ Kuraka-Severity: normal
 Kuraka-Missing-En: Conversations show messages as chat bubbles, which squeeze email content.
 Kuraka-Missing-Es: Las conversaciones muestran los mensajes como burbujas de chat, que aprietan el contenido de los correos.
 ---
- .../conversation/message/MessageBubble.vue    | 443 +++++++++---------
+ .../conversation/message/MessageBubble.vue    | 434 +++++++++---------
  .../conversation/message/MessageList.vue      |   2 +-
- frontend/shared-ui/assets/styles/main.scss    |   4 +-
- 3 files changed, 224 insertions(+), 225 deletions(-)
+ frontend/shared-ui/assets/styles/main.scss    |  11 +-
+ 3 files changed, 214 insertions(+), 233 deletions(-)
 
 diff --git a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
-index 954a991c..692c656d 100644
+index 954a991c..fd0d122a 100644
 --- a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
 +++ b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
-@@ -1,249 +1,245 @@
+@@ -1,249 +1,239 @@
  <template>
 -  <div class="flex flex-col text-left" :class="isOutgoing ? 'items-end' : 'items-start'">
 -    <!-- Sender Name -->
@@ -208,10 +208,7 @@ index 954a991c..692c656d 100644
 +            v-else
 +            ref="contentWrapperEl"
 +            class="relative"
-+            :class="{
-+              'max-h-[400px] overflow-hidden': isExpandable && !isExpanded,
-+              'w-fit max-w-full': isEmailCanvas
-+            }"
++            :class="{ 'max-h-[400px] overflow-hidden': isExpandable && !isExpanded }"
 +          >
              <div
 -              v-if="message.meta?.wa_unsupported"
@@ -231,7 +228,6 @@ index 954a991c..692c656d 100644
 +              v-else-if="message.content_type !== 'text' && sanitizedContent"
 +              ref="messageContentEl"
 +              @click="onMessageContentClick"
-+              :class="{ 'email-light-canvas': isEmailCanvas }"
              >
 -              <div
 -                v-if="message.content_type === 'text' && sanitizedContent"
@@ -303,9 +299,7 @@ index 954a991c..692c656d 100644
 +              :class="
 +                message.private
 +                  ? 'bg-gradient-to-t from-private via-private/90 to-transparent'
-+                  : isEmailCanvas
-+                    ? 'bg-gradient-to-t from-background via-background/90 to-transparent dark:from-white dark:via-white/90'
-+                    : 'bg-gradient-to-t from-background via-background/90 to-transparent'
++                  : 'bg-gradient-to-t from-background via-background/90 to-transparent'
 +              "
              >
 -              {{ showQuotedText ? t('conversation.hideQuotedText') : t('conversation.showQuotedText') }}
@@ -399,9 +393,6 @@ index 954a991c..692c656d 100644
 +
 +          <!-- Attachments -->
 +          <BubbleAttachmentPreview :attachments="nonInlineAttachments" />
-+
-+          <!-- CSAT Response -->
-+          <CSATResponseDisplay :message="message" />
  
 -    <!-- Timestamp tooltip -->
 -    <div v-if="!groupWithNext" :class="isOutgoing ? 'lg:pr-10' : 'lg:pl-10'">
@@ -415,6 +406,9 @@ index 954a991c..692c656d 100644
 -          <p>{{ formatFullTimestamp(message.created_at) }}</p>
 -        </TooltipContent>
 -      </Tooltip>
++          <!-- CSAT Response -->
++          <CSATResponseDisplay :message="message" />
++
 +          <!-- Spinner for Pending Messages (outgoing only) -->
 +          <Spinner v-if="pendingSpinner" size="sm" />
 +
@@ -483,17 +477,7 @@ index 954a991c..692c656d 100644
      </div>
    </div>
  
-@@ -382,6 +378,9 @@ const aiAssistantRoute = computed(() => {
- })
- 
- const isOutgoing = computed(() => props.direction === 'outgoing')
-+const isEmailCanvas = computed(
-+  () => !isOutgoing.value && convStore.current?.inbox_channel === 'email'
-+)
- const pendingSpinner = ref(false)
- 
- watch(
-@@ -437,8 +436,8 @@ const nonInlineAttachments = computed(() =>
+@@ -437,8 +427,8 @@ const nonInlineAttachments = computed(() =>
  )
  
  const bubbleClasses = computed(() => ({
@@ -518,7 +502,7 @@ index 89a50cd0..7c1cdc1e 100644
  
  const loadMore = async () => {
 diff --git a/frontend/shared-ui/assets/styles/main.scss b/frontend/shared-ui/assets/styles/main.scss
-index 582ba339..7b4de18a 100644
+index 582ba339..54650f27 100644
 --- a/frontend/shared-ui/assets/styles/main.scss
 +++ b/frontend/shared-ui/assets/styles/main.scss
 @@ -271,7 +271,7 @@
@@ -530,12 +514,19 @@ index 582ba339..7b4de18a 100644
  
    @media (max-width: 767px) {
      overflow-wrap: break-word;
-@@ -295,7 +295,7 @@
+@@ -293,15 +293,6 @@
+   }
+ }
  
- // Sender colours are only legible against white, so incoming email HTML is not themed.
- .dark .email-light-canvas {
+-// Sender colours are only legible against white, so incoming email HTML is not themed.
+-.dark .email-light-canvas {
 -  @apply p-2 rounded border border-border;
-+  @apply p-4 rounded-lg;
- 
-   color-scheme: light;
-   background: #fff;
+-
+-  color-scheme: light;
+-  background: #fff;
+-  color: #1a1a1a;
+-}
+-
+ .overlay {
+   background: hsl(var(--foreground) / 0.5);
+ }
