@@ -25,27 +25,30 @@ export async function systemView() {
     if (!updates) { mount(updatesBody, updatesError ? errorBox(updatesError) : null); return; }
     const dash = () => h('span', { class: 'muted' }, '—');
     const version = value => value ? h('span', { class: 'mono' }, value) : dash();
+    // Patched builds are tagged <upstream>-kuraka.<version>; show the upstream version.
+    const upstream = tag => tag?.split('-kuraka.')[0];
     const list = [
       { key: 'kuraka', name: 'Kuraka', state: 'unknown', ...updates.kuraka },
       { key: 'stalwart', name: t('system.updates.stalwart'), ...updates.stalwart },
       { key: 'webui', name: t('system.updates.webui'), ...updates.webui },
       ...updates.libredesk.helpdesks.map(desk => ({ ...desk, key: desk.id, name: 'Libredesk', domain: desk.name, latest: updates.libredesk.latest, patches: updates.libredesk.patches })),
-    ];
+    ].map(row => row.key === 'kuraka' || row.key === 'stalwart' || row.state !== 'available' ? row
+      : { ...row, kind: upstream(row.current) === upstream(row.latest) ? 'patches' : 'version' });
     mount(updatesBody,
       h('p', { class: 'muted' }, updates.checked_at ? t('system.updates.checked', { date: formatDate(updates.checked_at) }) : t('system.updates.never')),
       updates.error ? h('p', { class: 'help' }, t('system.updates.checkError')) : null,
       table({ rows: list, columns: [
         { label: t('system.updates.name'), render: row => row.domain
           ? h('div', { class: 'stack' }, row.name, h('span', { class: 'muted mono' }, row.domain)) : row.name },
-        { label: t('system.updates.current'), render: row => version(row.key === 'kuraka' && row.commit ? `${row.current} (${row.commit.slice(0, 7)})` : row.current) },
+        { label: t('system.updates.current'), render: row => version(row.key === 'kuraka' && row.commit ? `${row.current} (${row.commit.slice(0, 7)})` : upstream(row.current)) },
         { label: t('system.updates.latest'), render: row => h('div', { class: 'stack gap-1' },
-          version(row.key === 'kuraka' && row.latest_commit ? `${row.latest} (${row.latest_commit.slice(0, 7)})` : row.latest),
+          version(row.key === 'kuraka' && row.latest_commit ? `${row.latest} (${row.latest_commit.slice(0, 7)})` : upstream(row.latest)),
           row.key === 'kuraka' && row.url?.startsWith('https:' + '//github.com/')
             ? h('a', { href: row.url, target: '_blank', rel: 'noopener' }, t('system.updates.changes')) : null) },
         { label: t('system.updates.status'), render: row => h('div', { class: 'stack gap-1' },
           h('div', { class: 'row gap-1' },
-            badge(t(row.key === 'kuraka' && row.state === 'available' && ['version', 'commits'].includes(row.kind)
-              ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: row.latest }), UPDATE_BADGE[row.state] || 'neutral'),
+            badge(t(row.state === 'available' && ['version', 'commits', 'patches'].includes(row.kind)
+              ? `system.updates.available.${row.kind}` : `system.updates.state.${row.state}`, { latest: upstream(row.latest) }), UPDATE_BADGE[row.state] || 'neutral'),
             row.state === 'waiting' ? infoTip(t('system.updates.waiting', { latest: row.latest, supported: row.supported })) : null),
           row.state !== 'waiting' && row.message ? h('span', { class: 'muted' }, row.message) : null,
           // Patches Kuraka skipped because they no longer apply to this upstream version.
