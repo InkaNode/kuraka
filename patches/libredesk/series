@@ -4,3 +4,4 @@ feat-conversations-flat-email-thread-instead-of-chat-bubbles.patch
 feat-inboxes-inbox-switcher-grouped-by-client.patch
 feat-automations-tag-contact-channel-and-conversation-field.patch
 feat-account-remove-the-avatar-only-profile-page.patch
+feat-automations-icons-for-rule-types-events-conditions-and.patch

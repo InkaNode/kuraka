@@ -1,0 +1,464 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:34:05 -0500
+Subject: [PATCH] feat(automations): icons for rule types, events, conditions
+ and actions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Automation rule types, events, conditions and actions are plain text lists without icons.
+Kuraka-Missing-Es: Los tipos, eventos, condiciones y acciones de las automatizaciones son listas de solo texto, sin íconos.
+---
+ .../src/composables/useConversationFilters.js | 54 +++++++++++++++++--
+ .../features/admin/automation/ActionBox.vue   |  2 +-
+ .../src/features/admin/automation/RuleBox.vue |  6 +--
+ .../admin/automations/CreateOrEditRule.vue    | 34 ++++++++----
+ .../components/ui/select/SelectTag.vue        |  5 ++
+ 5 files changed, 83 insertions(+), 18 deletions(-)
+
+diff --git a/frontend/apps/main/src/composables/useConversationFilters.js b/frontend/apps/main/src/composables/useConversationFilters.js
+index 00c066fa..c612c7fd 100644
+--- a/frontend/apps/main/src/composables/useConversationFilters.js
++++ b/frontend/apps/main/src/composables/useConversationFilters.js
+@@ -5,6 +5,10 @@ import { useSlaStore } from '@/stores/sla'
+ import { useCustomAttributeStore } from '@/stores/customAttributes'
+ import { FIELD_TYPE, FIELD_OPERATORS } from '@/constants/filterConfig'
+ import { useI18n } from 'vue-i18n'
++import {
++    AlignLeft, AtSign, Bell, CheckCheck, CircleCheck, CircleDot, Clock, Flag, Gauge, Heading, History, Hourglass, Inbox,
++    Mail, Moon, Phone, Radio, Reply, Shapes, Star, StickyNote, Tag, Tags, Timer, User, UserCheck, Users, Webhook, X
++} from 'lucide-vue-next'
+ 
+ export function useConversationFilters () {
+     const cStore = useConversationStore()
+@@ -142,6 +146,7 @@ export function useConversationFilters () {
+             .reduce((acc, attribute) => {
+                 acc[attribute.key] = {
+                     label: attribute.label,
++                    icon: Shapes,
+                     type: customAttributeDataTypeToFieldType[attribute.data_type] || FIELD_TYPE.TEXT,
+                     operators: customAttributeDataTypeToFieldOperators[attribute.data_type] || FIELD_OPERATORS.TEXT,
+                     allowCaseSensitive: ['text', 'link'].includes(attribute.data_type),
+@@ -157,27 +162,31 @@ export function useConversationFilters () {
+     const contactCustomAttributes = computed(() => attributeFilters(customAttributeStore.contactAttributeOptions))
+     const conversationCustomAttributes = computed(() => attributeFilters(customAttributeStore.conversationAttributeOptions))
+ 
+-    const tagFilter = (label) => ({
++    const tagFilter = (label, icon) => ({
+         label,
++        icon,
+         type: FIELD_TYPE.MULTI_SELECT,
+         operators: ['contains', 'not contains', 'equals', 'set', 'not set']
+     })
+     const commonAutomationFilters = computed(() => ({
+-        tags: tagFilter(t('globals.terms.tag', 2)),
++        tags: tagFilter(t('globals.terms.tag', 2), Tags),
+         contact_name: {
+             label: t('admin.automation.contactName'),
++            icon: User,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT_AUTOMATION,
+             allowCaseSensitive: true
+         },
+         contact_phone: {
+             label: t('admin.automation.contactPhone'),
++            icon: Phone,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT_AUTOMATION,
+             allowCaseSensitive: true
+         },
+         channel: {
+             label: t('globals.terms.channel'),
++            icon: Radio,
+             type: FIELD_TYPE.SELECT,
+             operators: ['equals', 'not equals'],
+             options: [
+@@ -192,52 +201,61 @@ export function useConversationFilters () {
+         ...commonAutomationFilters.value,
+         contact_email: {
+             label: t('globals.terms.email'),
++            icon: Mail,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT_AUTOMATION
+         },
+         to: {
+             label: t('globals.terms.toEmailAddress'),
++            icon: AtSign,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT
+         },
+         content: {
+             label: t('globals.terms.content'),
++            icon: AlignLeft,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT_AUTOMATION,
+             allowCaseSensitive: true
+         },
+         subject: {
+             label: t('globals.terms.subject'),
++            icon: Heading,
+             type: FIELD_TYPE.TEXT,
+             operators: FIELD_OPERATORS.TEXT_AUTOMATION,
+             allowCaseSensitive: true
+         },
+         status: {
+             label: t('globals.terms.status'),
++            icon: CircleDot,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.statusOptions
+         },
+         priority: {
+             label: t('globals.terms.priority'),
++            icon: Flag,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.priorityOptions
+         },
+         assigned_team: {
+             label: t('actions.assignTeam'),
++            icon: Users,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'team'
+         },
+         assigned_user: {
+             label: t('actions.assignAgent'),
++            icon: UserCheck,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'agent'
+         },
+         inbox: {
+             label: t('globals.terms.inbox'),
++            icon: Inbox,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: iStore.options
+@@ -246,83 +264,97 @@ export function useConversationFilters () {
+ 
+     const conversationFilters = computed(() => ({
+         ...commonAutomationFilters.value,
+-        tags_added: tagFilter(t('admin.automation.tagsAdded')),
+-        tags_removed: tagFilter(t('admin.automation.tagsRemoved')),
++        tags_added: tagFilter(t('admin.automation.tagsAdded'), Tag),
++        tags_removed: tagFilter(t('admin.automation.tagsRemoved'), X),
+         status: {
+             label: t('globals.terms.status'),
++            icon: CircleDot,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.statusOptions
+         },
+         priority: {
+             label: t('globals.terms.priority'),
++            icon: Flag,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.priorityOptions
+         },
+         assigned_team: {
+             label: t('actions.assignTeam'),
++            icon: Users,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'team'
+         },
+         assigned_user: {
+             label: t('actions.assignAgent'),
++            icon: UserCheck,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'agent'
+         },
+         hours_since_created: {
+             label: t('globals.messages.hoursSinceCreated'),
++            icon: Clock,
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
+         hours_since_first_reply: {
+             label: t('globals.messages.hoursSinceFirstReply'),
++            icon: Timer,
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
+         hours_since_last_reply: {
+             label: t('globals.messages.hoursSinceLastReply'),
++            icon: Hourglass,
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
+         hours_since_resolved: {
+             label: t('globals.messages.hoursSinceResolved'),
++            icon: CircleCheck,
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
+         hours_since_last_resolved: {
+             label: t('globals.messages.hoursSinceLastResolved'),
++            icon: CheckCheck,
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
+         inbox: {
+             label: t('globals.terms.inbox'),
++            icon: Inbox,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: iStore.options
+         },
+         previous_status: {
+             label: t('admin.automation.previousStatus'),
++            icon: History,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.statusOptions
+         },
+         previous_priority: {
+             label: t('admin.automation.previousPriority'),
++            icon: History,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             options: cStore.priorityOptions
+         },
+         previous_assigned_user: {
+             label: t('admin.automation.previousAssignedUser'),
++            icon: History,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'agent'
+         },
+         previous_assigned_team: {
+             label: t('admin.automation.previousAssignedTeam'),
++            icon: History,
+             type: FIELD_TYPE.SELECT,
+             operators: FIELD_OPERATORS.SELECT,
+             entity: 'team'
+@@ -332,62 +364,76 @@ export function useConversationFilters () {
+     const conversationActions = computed(() => ({
+         assign_team: {
+             label: t('actions.assignTeam'),
++            icon: Users,
+             type: FIELD_TYPE.SELECT,
+             entity: 'team'
+         },
+         assign_user: {
+             label: t('actions.assignAgent'),
++            icon: UserCheck,
+             type: FIELD_TYPE.SELECT,
+             entity: 'agent'
+         },
+         set_status: {
+             label: t('actions.setStatus'),
++            icon: CircleDot,
+             type: FIELD_TYPE.SELECT,
+             options: cStore.statusOptionsNoSnooze
+         },
+         set_priority: {
+             label: t('actions.setPriority'),
++            icon: Flag,
+             type: FIELD_TYPE.SELECT,
+             options: cStore.priorityOptions
+         },
+         send_private_note: {
+             label: t('actions.addPrivateNote'),
++            icon: StickyNote,
+             type: FIELD_TYPE.RICHTEXT
+         },
+         send_reply: {
+             label: t('actions.sendReply'),
++            icon: Reply,
+             type: FIELD_TYPE.RICHTEXT
+         },
+         send_csat: {
+             label: t('actions.sendCsat'),
++            icon: Star,
+         },
+         set_sla: {
+             label: t('actions.setSla'),
++            icon: Gauge,
+             type: FIELD_TYPE.SELECT,
+             options: slaStore.options
+         },
+         add_tags: {
+             label: t('actions.addTags'),
++            icon: Tag,
+             type: FIELD_TYPE.TAG
+         },
+         set_tags: {
+             label: t('actions.setTags'),
++            icon: Tags,
+             type: FIELD_TYPE.TAG
+         },
+         remove_tags: {
+             label: t('actions.removeTags'),
++            icon: X,
+             type: FIELD_TYPE.TAG
+         },
+         notify: {
+             label: t('actions.notify'),
++            icon: Bell,
+             type: FIELD_TYPE.RECIPIENTS
+         },
+         snooze: {
+             label: t('globals.terms.snooze'),
++            icon: Moon,
+             type: FIELD_TYPE.TEXT
+         },
+         trigger_webhook: {
+             label: t('actions.triggerWebhook'),
++            icon: Webhook,
+             type: FIELD_TYPE.WEBHOOK
+         }
+     }))
+diff --git a/frontend/apps/main/src/features/admin/automation/ActionBox.vue b/frontend/apps/main/src/features/admin/automation/ActionBox.vue
+index d271b0f9..ff1c03d3 100644
+--- a/frontend/apps/main/src/features/admin/automation/ActionBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/ActionBox.vue
+@@ -25,7 +25,7 @@
+                         :key="key"
+                         :value="key"
+                       >
+-                        {{ actionConfig.label }}
++                        <span class="inline-flex items-center gap-2"><component :is="actionConfig.icon" v-if="actionConfig.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ actionConfig.label }}</span>
+                       </SelectItem>
+                     </SelectGroup>
+                   </SelectContent>
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleBox.vue b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+index b78db229..f728b4f9 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+@@ -52,7 +52,7 @@
+                       $t('globals.terms.conversation')
+                     }}</SelectLabel>
+                     <SelectItem v-for="(field, key) in currentFilters" :key="key" :value="key">
+-                      {{ field.label }}
++                      <span class="inline-flex items-center gap-2"><component :is="field.icon" v-if="field.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ field.label }}</span>
+                     </SelectItem>
+                     <SelectLabel v-if="hasContactCustomAttributes">{{
+                       $t('globals.terms.contact')
+@@ -62,7 +62,7 @@
+                       :key="key"
+                       :value="`contact_custom_attribute:${key}`"
+                     >
+-                      {{ field.label }}
++                      <span class="inline-flex items-center gap-2"><component :is="field.icon" v-if="field.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ field.label }}</span>
+                     </SelectItem>
+                     <SelectLabel v-if="!contactsOnly && Object.keys(conversationCustomAttributes).length">{{
+                       $t('admin.automation.conversationCustomAttributes')
+@@ -73,7 +73,7 @@
+                         :key="`conversation_custom_attribute:${key}`"
+                         :value="`conversation_custom_attribute:${key}`"
+                       >
+-                        {{ field.label }}
++                        <span class="inline-flex items-center gap-2"><component :is="field.icon" v-if="field.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ field.label }}</span>
+                       </SelectItem>
+                     </template>
+                   </SelectGroup>
+diff --git a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+index 0d2cc1d9..34471db6 100644
+--- a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
++++ b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+@@ -57,13 +57,13 @@
+                     <SelectContent>
+                       <SelectGroup>
+                         <SelectItem value="new_conversation">
+-                          {{ $t('conversation.newConversation') }}
++                          <span class="inline-flex items-center gap-2"><MessageSquarePlus class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ $t('conversation.newConversation') }}</span>
+                         </SelectItem>
+                         <SelectItem value="conversation_update">
+-                          {{ $t('admin.automation.conversationUpdate') }}
++                          <span class="inline-flex items-center gap-2"><RefreshCw class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ $t('admin.automation.conversationUpdate') }}</span>
+                         </SelectItem>
+                         <SelectItem value="time_trigger">
+-                          {{ $t('admin.automation.timeTriggers') }}
++                          <span class="inline-flex items-center gap-2"><Clock class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{{ $t('admin.automation.timeTriggers') }}</span>
+                         </SelectItem>
+                       </SelectGroup>
+                     </SelectContent>
+@@ -174,6 +174,18 @@ import { handleHTTPError } from '@shared-ui/utils/http.js'
+ import { SelectTag } from '@shared-ui/components/ui/select'
+ import { OPERATOR } from '@main/constants/filterConfig'
+ import { useI18n } from 'vue-i18n'
++import {
++  ArrowDownLeft,
++  ArrowUpRight,
++  CircleDot,
++  Clock,
++  Flag,
++  MessageSquarePlus,
++  RefreshCw,
++  Tags,
++  UserCheck,
++  Users
++} from 'lucide-vue-next'
+ import {
+   Select,
+   SelectContent,
+@@ -226,17 +238,19 @@ const rule = ref({
+ const conversationEventOptions = [
+   {
+     label: t('conversation.agentAssigned'),
+-    value: 'conversation.user.assigned'
++    value: 'conversation.user.assigned',
++    icon: UserCheck
+   },
+   {
+     label: t('conversation.teamAssigned'),
+-    value: 'conversation.team.assigned'
++    value: 'conversation.team.assigned',
++    icon: Users
+   },
+-  { label: t('admin.automation.event.priority.change'), value: 'conversation.priority.change' },
+-  { label: t('admin.automation.event.status.change'), value: 'conversation.status.change' },
+-  { label: t('admin.automation.event.message.outgoing'), value: 'conversation.message.outgoing' },
+-  { label: t('admin.automation.event.message.incoming'), value: 'conversation.message.incoming' },
+-  { label: t('admin.automation.event.tags.change'), value: 'conversation.tags.change' }
++  { label: t('admin.automation.event.priority.change'), value: 'conversation.priority.change', icon: Flag },
++  { label: t('admin.automation.event.status.change'), value: 'conversation.status.change', icon: CircleDot },
++  { label: t('admin.automation.event.message.outgoing'), value: 'conversation.message.outgoing', icon: ArrowUpRight },
++  { label: t('admin.automation.event.message.incoming'), value: 'conversation.message.incoming', icon: ArrowDownLeft },
++  { label: t('admin.automation.event.tags.change'), value: 'conversation.tags.change', icon: Tags }
+ ]
+ 
+ const props = defineProps({
+diff --git a/frontend/shared-ui/components/ui/select/SelectTag.vue b/frontend/shared-ui/components/ui/select/SelectTag.vue
+index 17c1e148..9f500432 100644
+--- a/frontend/shared-ui/components/ui/select/SelectTag.vue
++++ b/frontend/shared-ui/components/ui/select/SelectTag.vue
+@@ -13,6 +13,7 @@
+       class="min-w-0"
+       :class="compact ? 'max-w-[calc(100%-4rem)]' : ''"
+     >
++      <component :is="getIcon(tagValue)" v-if="getIcon(tagValue)" class="ml-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+       <TagsInputItemText
+         class="min-w-0"
+         :class="compact ? 'truncate' : ''"
+@@ -53,6 +54,7 @@
+                 :value="item.value"
+                 @select="handleSelect"
+               >
++                <component :is="item.icon" v-if="item.icon" class="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                 {{ item.label }}
+               </CommandItem>
+             </CommandGroup>
+@@ -108,6 +110,7 @@
+                 :value="item.value"
+                 @select="handleSelect"
+               >
++                <component :is="item.icon" v-if="item.icon" class="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                 {{ item.label }}
+               </CommandItem>
+             </CommandGroup>
+@@ -250,6 +253,8 @@ const getLabel = (value) => {
+   return item?.label || seenLabels.get(value) || value
+ }
+ 
++const getIcon = (value) => displayedItems.value.find((item) => item.value === value)?.icon
++
+ const focusAfterRemove = () => {
+   if (!props.compact) return
+   nextTick(() => {
