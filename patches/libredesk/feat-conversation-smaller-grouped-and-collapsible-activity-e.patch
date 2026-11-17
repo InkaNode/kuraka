@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:47:52 -0500
+Subject: [PATCH] feat(conversation): smaller, grouped and collapsible activity
+ events
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Missing-En: Activity events are large and each takes its own row, so long runs of them bury the messages.
+Kuraka-Missing-Es: Los eventos de actividad son grandes y cada uno ocupa su propia fila, así que las rachas largas tapan los mensajes.
+---
+ cmd/settings.go                               |  3 +
+ .../admin/general/GeneralSettingForm.vue      | 16 +++++
+ .../src/features/admin/general/formSchema.js  |  8 ++-
+ .../message/ActivityMessageBubble.vue         |  4 +-
+ .../conversation/message/MessageList.vue      | 67 ++++++++++++++++---
+ .../cypress/e2e/ui/generalSettingsForm.cy.js  |  3 +-
+ i18n/en-US.json                               |  5 ++
+ i18n/es-ES.json                               |  5 ++
+ internal/kuraka/migrate.go                    |  4 ++
+ internal/setting/models/models.go             |  1 +
+ schema.sql                                    |  1 +
+ 11 files changed, 105 insertions(+), 12 deletions(-)
+
+diff --git a/cmd/settings.go b/cmd/settings.go
+index dbcb9fd0..b76260b4 100644
+--- a/cmd/settings.go
++++ b/cmd/settings.go
+@@ -61,6 +61,9 @@ func handleUpdateGeneralSettings(r *fastglue.Request) error {
+ 	if !httputil.IsValidHTTPURL(req.RootURL) {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.rootURL.valid"), nil, envelope.InputError)
+ 	}
++	if req.ActivityCollapseAfter < 1 || req.ActivityCollapseAfter > 50 {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.activityCollapseAfter.valid"), nil, envelope.InputError)
++	}
+ 
+ 	app.Lock()
+ 	oldLang := ko.String("app.lang")
+diff --git a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+index 18031ca6..a93a102e 100644
+--- a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
++++ b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+@@ -105,6 +105,22 @@
+           />
+         </FormItem>
+       </FormField>
++      <FormGrid class="mt-5">
++        <FormField
++          v-slot="{ field }"
++          name="activity_collapse_after"
++          :value="props.initialValues.activity_collapse_after"
++        >
++          <FormItem>
++            <FormLabel>{{ t('admin.general.activityCollapseAfter') }}</FormLabel>
++            <FormControl>
++              <Input type="number" min="1" max="50" placeholder="2" v-bind="field" />
++            </FormControl>
++            <FormDescription>{{ t('admin.general.activityCollapseAfter.description') }}</FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++      </FormGrid>
+     </fieldset>
+     <fieldset class="min-w-0">
+       <legend :class="SECTION_HEADING_CLASS">{{ t('globals.terms.branding') }}</legend>
+diff --git a/frontend/apps/main/src/features/admin/general/formSchema.js b/frontend/apps/main/src/features/admin/general/formSchema.js
+index 50895b47..ced044c9 100644
+--- a/frontend/apps/main/src/features/admin/general/formSchema.js
++++ b/frontend/apps/main/src/features/admin/general/formSchema.js
+@@ -40,5 +40,11 @@ export const createFormSchema = (t) => z.object({
+       message: t('admin.general.maxAllowedFileUploadSize.valid')
+     }),
+   allowed_file_upload_extensions: z.array(z.string()).nullable().optional().default([]),
+-  show_conversation_subject: z.boolean().optional()
++  show_conversation_subject: z.boolean().optional(),
++  activity_collapse_after: z
++    .number()
++    .int({ message: t('admin.general.activityCollapseAfter.valid') })
++    .min(1, { message: t('admin.general.activityCollapseAfter.valid') })
++    .max(50, { message: t('admin.general.activityCollapseAfter.valid') })
++    .optional()
+ })
+diff --git a/frontend/apps/main/src/features/conversation/message/ActivityMessageBubble.vue b/frontend/apps/main/src/features/conversation/message/ActivityMessageBubble.vue
+index cca80e79..7cd9dc11 100644
+--- a/frontend/apps/main/src/features/conversation/message/ActivityMessageBubble.vue
++++ b/frontend/apps/main/src/features/conversation/message/ActivityMessageBubble.vue
+@@ -1,10 +1,10 @@
+ <template>
+   <div class="text-center">
+-    <div class="text-muted-foreground text-sm">
++    <div class="text-muted-foreground text-xs">
+       {{ message.content }}
+       <Tooltip>
+         <TooltipTrigger>
+-          <span class="text-xs ml-1">{{ format(message.updated_at, 'h:mm a') }}</span>
++          <span class="text-[11px] ml-1 opacity-80">{{ format(message.updated_at, 'h:mm a') }}</span>
+         </TooltipTrigger>
+         <TooltipContent>
+           <p>
+diff --git a/frontend/apps/main/src/features/conversation/message/MessageList.vue b/frontend/apps/main/src/features/conversation/message/MessageList.vue
+index 7c1cdc1e..c2fb8d38 100644
+--- a/frontend/apps/main/src/features/conversation/message/MessageList.vue
++++ b/frontend/apps/main/src/features/conversation/message/MessageList.vue
+@@ -13,8 +13,9 @@
+           <div
+             v-for="row in messageRows"
+             :key="row.message.render_key || row.message.uuid"
++            v-show="row.firstInGroup || !isCollapsed(row.activityGroup)"
+             :data-message-uuid="row.message.uuid"
+-            :class="[row.spacingClass, { 'my-2': row.message.type === 'activity' }]"
++            :class="[row.spacingClass, { 'my-2': row.message.type === 'activity' && !row.activityGroup }]"
+           >
+             <DaySeparator
+               v-if="row.showDaySeparator"
+@@ -38,7 +39,25 @@
+               />
+             </div>
+             <div v-else-if="row.message.type === 'activity'">
+-              <ActivityMessageBubble :message="row.message" />
++              <button
++                v-if="row.firstInGroup && row.activityGroup.size > activityCollapseAfter"
++                type="button"
++                class="mx-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
++                :aria-expanded="!isCollapsed(row.activityGroup)"
++                @click="toggleGroup(row.activityGroup)"
++              >
++                <ChevronRight
++                  class="size-3.5 transition-transform"
++                  :class="{ 'rotate-90': !isCollapsed(row.activityGroup) }"
++                  aria-hidden="true"
++                />
++                {{
++                  isCollapsed(row.activityGroup)
++                    ? $t('conversation.activity.show', row.activityGroup.size)
++                    : $t('conversation.activity.hide')
++                }}
++              </button>
++              <ActivityMessageBubble v-show="!isCollapsed(row.activityGroup)" :message="row.message" />
+             </div>
+           </div>
+         </TransitionGroup>
+@@ -85,7 +104,8 @@ import MessageBubble from './MessageBubble.vue'
+ import ActivityMessageBubble from './ActivityMessageBubble.vue'
+ import { useConversationStore } from '@main/stores/conversation'
+ import { useUserStore } from '@main/stores/user'
+-import { Loader2 } from 'lucide-vue-next'
++import { useAppSettingsStore } from '@main/stores/appSettings'
++import { ChevronRight, Loader2 } from 'lucide-vue-next'
+ import ScrollToBottomButton from '@shared-ui/components/ScrollToBottomButton'
+ import DaySeparator from '@shared-ui/components/DaySeparator'
+ import { isSameDay } from 'date-fns'
+@@ -108,6 +128,7 @@ const route = useRoute()
+ 
+ const conversationStore = useConversationStore()
+ const userStore = useUserStore()
++const appSettingsStore = useAppSettingsStore()
+ const threadEl = ref(null)
+ const { height: threadHeight } = useElementSize(threadEl)
+ const contentEl = ref(null)
+@@ -337,19 +358,49 @@ const fillShortThread = () => {
+ 
+ watch([threadHeight, readReady], fillShortThread, { flush: 'post' })
+ 
++const sameDay = (a, b) => isSameDay(new Date(a.created_at), new Date(b.created_at))
++
++// Two or more activity events in a row on the same day form a group.
++const inActivityRun = (a, b) => a?.type === 'activity' && b?.type === 'activity' && sameDay(a, b)
++
++const activityCollapseAfter = computed(
++  () => Number(appSettingsStore.settings['app.activity_collapse_after']) || 2
++)
++
++// Groups whose open state the agent flipped from the default, by key.
++const toggledGroups = ref(new Set())
++
++const isCollapsed = (group) =>
++  !!group && (group.size > activityCollapseAfter.value) !== toggledGroups.value.has(group.key)
++
++const toggleGroup = (group) => {
++  const next = new Set(toggledGroups.value)
++  if (!next.delete(group.key)) next.add(group.key)
++  toggledGroups.value = next
++}
++
++watch(() => conversationStore.current?.uuid, () => { toggledGroups.value = new Set() })
++
+ const messageRows = computed(() => {
+   const messages = conversationStore.conversationMessages
++  let group = null
+   return messages.map((message, index) => {
+-    const groupWithPrev = canGroup(messages[index - 1], message)
++    const prev = messages[index - 1]
++    const groupWithPrev = canGroup(prev, message)
+     const groupWithNext = canGroup(message, messages[index + 1])
++    const inGroup = inActivityRun(prev, message)
++    if (inGroup) group.size++
++    else group = inActivityRun(message, messages[index + 1])
++      ? { key: message.render_key || message.uuid, size: 1 }
++      : null
+     return {
+       message,
+       groupWithPrev,
+       groupWithNext,
+-      spacingClass: getSpacingClass(index, groupWithPrev),
+-      showDaySeparator:
+-        index === 0 ||
+-        !isSameDay(new Date(messages[index - 1].created_at), new Date(message.created_at))
++      activityGroup: group,
++      firstInGroup: !!group && !inGroup,
++      spacingClass: getSpacingClass(index, groupWithPrev || inGroup),
++      showDaySeparator: index === 0 || !sameDay(prev, message)
+     }
+   })
+ })
+diff --git a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+index cd40883e..1a54c29d 100644
+--- a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
++++ b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+@@ -14,7 +14,8 @@ describe('General settings form', () => {
+     'app.allowed_file_upload_extensions',
+     'app.timezone',
+     'app.business_hours_id',
+-    'app.show_conversation_subject'
++    'app.show_conversation_subject',
++    'app.activity_collapse_after'
+   ]
+ 
+   let original
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index a734ac11..56946043 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -257,6 +257,9 @@
+   "admin.customAttributes.regex.description": "Regex to validate the value of this custom attribute. Leave empty to skip validation.",
+   "admin.customAttributes.regexHint.description": "Regex pattern hint.",
+   "admin.empty": "Select a section from the sidebar",
++  "admin.general.activityCollapseAfter": "Collapse activity events after",
++  "admin.general.activityCollapseAfter.description": "In a conversation, runs of more activity events than this start collapsed.",
++  "admin.general.activityCollapseAfter.valid": "Enter a number between 1 and 50",
+   "admin.general.allowedFileUploadExtensions": "Allowed file upload extensions",
+   "admin.general.allowedFileUploadExtensions.description": "Use `*` to permit all file types. For example: `jpg, png, pdf`",
+   "admin.general.businessHours.placeholder": "Select business hours",
+@@ -753,6 +756,8 @@
+   "contextLink.tokenExpiryHelp": "The external app should reject tokens older than this. Included as 'exp' (expiry timestamp) inside the encrypted token.",
+   "contextLink.urlTemplate": "URL template",
+   "contextLink.urlTemplateHelp": "{'{{token}}'} is a base64-encoded AES-256-GCM encrypted blob containing all contact and agent fields (requires secret). Individual variables like {'{{email}}'}, {'{{phone}}'}, {'{{external_user_id}}'}, {'{{contact_id}}'}, {'{{first_name}}'}, {'{{last_name}}'}, {'{{conversation_uuid}}'} are passed as plain text.",
++  "conversation.activity.hide": "Hide activity events",
++  "conversation.activity.show": "Show {count} activity event | Show {count} activity events",
+   "conversation.agentAssigned": "Agent assigned",
+   "conversation.allLoaded": "All conversations loaded",
+   "conversation.assignSelfAction": "Assign to me",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index b1c3ad2a..5cbcba17 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -106,6 +106,9 @@
+   "admin.customAttributes.regex.description": "Regex para validar el valor de este atributo personalizado. Deja vacío para omitir la validación.",
+   "admin.customAttributes.regexHint.description": "Sugerencia del patrón regex.",
+   "admin.empty": "Selecciona una sección de la barra lateral",
++  "admin.general.activityCollapseAfter": "Contraer eventos de actividad a partir de",
++  "admin.general.activityCollapseAfter.description": "En una conversación, los grupos con más eventos de actividad que este número se muestran contraídos.",
++  "admin.general.activityCollapseAfter.valid": "Escribe un número entre 1 y 50",
+   "admin.general.allowedFileUploadExtensions": "Extensiones de carga de archivo permitidas",
+   "admin.general.allowedFileUploadExtensions.description": "Usa `*` para permitir todos los tipos de archivo. Por ejemplo: `jpg, png, pdf`",
+   "admin.general.businessHours.placeholder": "Seleccionar horario de atención",
+@@ -456,6 +459,8 @@
+   "contextLink.tokenExpiryHelp": "La aplicación externa debe rechazar los tokens más antiguos que este. Se incluye como «exp» (marca de tiempo de caducidad) dentro del token cifrado.",
+   "contextLink.urlTemplate": "Plantilla de URL",
+   "contextLink.urlTemplateHelp": "{'{{token}}'} es un blob cifrado con AES-256-GCM codificado en base64 que contiene todos los campos del contacto y del agente (requiere secreto). Las variables individuales como {'{{email}}'}, {'{{phone}}'}, {'{{external_user_id}}'}, {'{{contact_id}}'}, {'{{first_name}}'}, {'{{last_name}}'}, {'{{conversation_uuid}}'} se pasan como texto plano.",
++  "conversation.activity.hide": "Ocultar eventos de actividad",
++  "conversation.activity.show": "Mostrar {count} evento de actividad | Mostrar {count} eventos de actividad",
+   "conversation.agentAssigned": "Agente asignado",
+   "conversation.allLoaded": "Todas las conversaciones cargadas",
+   "conversation.couldNotFetch": "No se pudieron obtener las conversaciones",
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index b7e9c121..bb917cff 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -46,6 +46,10 @@ func Migrate(db *sqlx.DB) error {
+    ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048);
+   END IF;
+  END $$`)
++	if err != nil {
++		return err
++	}
++	_, err = tx.Exec(`INSERT INTO settings (key, value) VALUES ('app.activity_collapse_after', '2'::jsonb) ON CONFLICT (key) DO NOTHING`)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/internal/setting/models/models.go b/internal/setting/models/models.go
+index 6bd03372..df9fb182 100644
+--- a/internal/setting/models/models.go
++++ b/internal/setting/models/models.go
+@@ -11,6 +11,7 @@ type General struct {
+ 	Timezone                    string   `json:"app.timezone"`
+ 	BusinessHoursID             string   `json:"app.business_hours_id"`
+ 	ShowConversationSubject     bool     `json:"app.show_conversation_subject"`
++	ActivityCollapseAfter       int      `json:"app.activity_collapse_after"`
+ }
+ 
+ type EmailNotification struct {
+diff --git a/schema.sql b/schema.sql
+index c6f350ef..92555d9d 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -1121,6 +1121,7 @@ VALUES
+ 	('app.timezone', '"Asia/Kolkata"'::jsonb),
+ 	('app.business_hours_id', '""'::jsonb),
+ 	('app.show_conversation_subject', 'true'::jsonb),
++	('app.activity_collapse_after', '2'::jsonb),
+ 	('ai_agent.faq_learning_enabled', 'false'::jsonb),
+     ('notification.email.username', '"admin@yourcompany.com"'::jsonb),
+     ('notification.email.host', '""'::jsonb),
