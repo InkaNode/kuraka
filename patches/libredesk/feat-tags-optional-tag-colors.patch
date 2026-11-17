@@ -1,0 +1,450 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:39:12 -0500
+Subject: [PATCH] feat(tags): optional tag colors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Missing-En: Tags have no color, so they all look the same.
+Kuraka-Missing-Es: Las etiquetas no tienen color, así que todas se ven iguales.
+---
+ cmd/tag_import.go                             |  2 +-
+ cmd/tags.go                                   | 18 +++++++-
+ .../components/combobox/SelectTagCombobox.vue | 22 ++++++++--
+ .../combobox/remote-combobox.test.js          |  2 +-
+ .../main/src/features/admin/tags/TagsForm.vue | 42 ++++++++++++++++++-
+ .../features/admin/tags/dataTableColumns.js   |  6 ++-
+ .../src/features/admin/tags/formSchema.js     |  3 +-
+ frontend/apps/main/src/stores/tag.js          |  1 +
+ i18n/en-US.json                               | 10 +++++
+ i18n/es-ES.json                               | 10 +++++
+ internal/kuraka/migrate.go                    |  9 ++++
+ internal/tag/models/models.go                 |  1 +
+ internal/tag/queries.sql                      | 11 +++--
+ internal/tag/tag.go                           |  8 ++--
+ internal/tag/tag_test.go                      |  6 +--
+ schema.sql                                    |  1 +
+ 16 files changed, 129 insertions(+), 23 deletions(-)
+
+diff --git a/cmd/tag_import.go b/cmd/tag_import.go
+index 38492673..031d7cd3 100644
+--- a/cmd/tag_import.go
++++ b/cmd/tag_import.go
+@@ -88,7 +88,7 @@ func processTagImport(app *App, records [][]string) error {
+ 			continue
+ 		}
+ 
+-		_, err := app.tag.Create(name)
++		_, err := app.tag.Create(name, "")
+ 		if err != nil {
+ 			app.importer.UpdateCounts(importNSTags, 0, 0, 1)
+ 			e, ok := err.(envelope.Error)
+diff --git a/cmd/tags.go b/cmd/tags.go
+index 61e62eaf..b6dcc569 100644
+--- a/cmd/tags.go
++++ b/cmd/tags.go
+@@ -1,7 +1,9 @@
+ package main
+ 
+ import (
++	"regexp"
+ 	"strconv"
++	"strings"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
+ 	tmodels "github.com/abhinavxd/libredesk/internal/tag/models"
+@@ -9,6 +11,8 @@ import (
+ 	"github.com/zerodha/fastglue"
+ )
+ 
++var tagColorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
++
+ // handleGetTags returns tags from the database, all of them without page params.
+ func handleGetTags(r *fastglue.Request) error {
+ 	var (
+@@ -44,7 +48,12 @@ func handleCreateTag(r *fastglue.Request) error {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.Ts("globals.messages.empty", "name", "`name`"), nil, envelope.InputError)
+ 	}
+ 
+-	createdTag, err := app.tag.Create(tag.Name)
++	tag.Color = strings.ToLower(tag.Color)
++	if tag.Color != "" && !tagColorRe.MatchString(tag.Color) {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("validation.invalidColor"), nil, envelope.InputError)
++	}
++
++	createdTag, err := app.tag.Create(tag.Name, tag.Color)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -88,7 +97,12 @@ func handleUpdateTag(r *fastglue.Request) error {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.Ts("globals.messages.empty", "name", "`name`"), nil, envelope.InputError)
+ 	}
+ 
+-	updatedTag, err := app.tag.Update(id, tag.Name)
++	tag.Color = strings.ToLower(tag.Color)
++	if tag.Color != "" && !tagColorRe.MatchString(tag.Color) {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("validation.invalidColor"), nil, envelope.InputError)
++	}
++
++	updatedTag, err := app.tag.Update(id, tag.Name, tag.Color)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/frontend/apps/main/src/components/combobox/SelectTagCombobox.vue b/frontend/apps/main/src/components/combobox/SelectTagCombobox.vue
+index 443e66fb..3e302090 100644
+--- a/frontend/apps/main/src/components/combobox/SelectTagCombobox.vue
++++ b/frontend/apps/main/src/components/combobox/SelectTagCombobox.vue
+@@ -26,7 +26,7 @@
+ </template>
+ 
+ <script setup>
+-import { computed, onMounted, watch } from 'vue'
++import { computed, h, onMounted, watch } from 'vue'
+ import { useI18n } from 'vue-i18n'
+ import { useTagStore } from '@/stores/tag'
+ import SelectComboBox from '@/components/combobox/SelectCombobox.vue'
+@@ -60,14 +60,28 @@ const tagStore = useTagStore()
+ 
+ const placeholderText = computed(() => props.placeholder || t('placeholders.selectTags'))
+ 
++// Cached per color so chips keep the same component across renders.
++const colorDots = {}
++const withColorDot = (item) => ({
++  ...item,
++  icon: item.color
++    ? (colorDots[item.color] ||= () =>
++        h('span', { class: 'flex items-center justify-center' }, [
++          h('span', { class: 'size-2.5 rounded-full', style: { backgroundColor: item.color } })
++        ]))
++    : undefined
++})
++
+ const items = computed(() =>
+   props.valueField === 'id'
+     ? tagStore.tagOptions
+-    : tagStore.tagNames.map((name) => ({ label: name, value: name }))
++    : tagStore.tags.map((tag) => withColorDot({ label: tag.name, value: tag.name, color: tag.color }))
+ )
+ 
+-const searchTags = (query) =>
+-  props.valueField === 'id' ? tagStore.searchTagOptions(query) : tagStore.searchTagNames(query)
++const searchTags = async (query) =>
++  props.valueField === 'id'
++    ? tagStore.searchTagOptions(query)
++    : (await tagStore.searchTagNames(query)).map(withColorDot)
+ 
+ onMounted(tagStore.fetchTags)
+ 
+diff --git a/frontend/apps/main/src/components/combobox/remote-combobox.test.js b/frontend/apps/main/src/components/combobox/remote-combobox.test.js
+index 3bd9129c..aa9301c7 100644
+--- a/frontend/apps/main/src/components/combobox/remote-combobox.test.js
++++ b/frontend/apps/main/src/components/combobox/remote-combobox.test.js
+@@ -28,7 +28,7 @@ vi.mock('@/stores/user', () => ({ useUserStore: () => ({ userID: 1 }) }))
+ vi.mock('@/stores/tag', () => ({
+   useTagStore: () => ({
+     tagOptions: [],
+-    tagNames: [],
++    tags: [],
+     fetchTags: vi.fn(),
+     searchTagNames: vi.fn(),
+     searchTagOptions: vi.fn(),
+diff --git a/frontend/apps/main/src/features/admin/tags/TagsForm.vue b/frontend/apps/main/src/features/admin/tags/TagsForm.vue
+index d1a23efc..19c1071e 100644
+--- a/frontend/apps/main/src/features/admin/tags/TagsForm.vue
++++ b/frontend/apps/main/src/features/admin/tags/TagsForm.vue
+@@ -10,12 +10,40 @@
+                 <FormMessage />
+             </FormItem>
+         </FormField>
++        <FormField v-slot="{ value, handleChange }" name="color">
++            <FormItem>
++                <FormLabel>{{ $t('tag.color') }}</FormLabel>
++                <div role="radiogroup" :aria-label="$t('tag.color')" class="flex flex-wrap gap-2">
++                    <label v-for="color in TAG_COLORS" :key="color.value" class="cursor-pointer">
++                        <input
++                            type="radio"
++                            name="tag-color"
++                            class="peer sr-only"
++                            :value="color.value"
++                            :checked="(value || '') === color.value"
++                            :aria-label="$t(color.label)"
++                            @change="handleChange(color.value)"
++                        />
++                        <span
++                            class="flex size-6 items-center justify-center rounded-full border ring-offset-background peer-checked:ring-2 peer-checked:ring-foreground peer-checked:ring-offset-2 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2"
++                            :style="color.value ? { backgroundColor: color.value } : undefined"
++                            aria-hidden="true"
++                        >
++                            <Ban v-if="!color.value" class="size-4 text-muted-foreground" />
++                            <Check v-else-if="value === color.value" class="size-3.5 text-white" />
++                        </span>
++                    </label>
++                </div>
++                <FormMessage />
++            </FormItem>
++        </FormField>
+         <!-- Form submit button slot -->
+         <slot name="footer" ></slot>
+     </form>
+ </template>
+ 
+ <script setup>
++import { Ban, Check } from 'lucide-vue-next'
+ import {
+     FormControl,
+     FormDescription,
+@@ -25,4 +53,16 @@ import {
+     FormMessage
+ } from '@shared-ui/components/ui/form'
+ import { Input } from '@shared-ui/components/ui/input'
+-</script>
+\ No newline at end of file
++
++const TAG_COLORS = [
++    { value: '', label: 'tag.colors.none' },
++    { value: '#ef4444', label: 'tag.colors.red' },
++    { value: '#f97316', label: 'tag.colors.orange' },
++    { value: '#eab308', label: 'tag.colors.yellow' },
++    { value: '#22c55e', label: 'tag.colors.green' },
++    { value: '#14b8a6', label: 'tag.colors.teal' },
++    { value: '#3b82f6', label: 'tag.colors.blue' },
++    { value: '#8b5cf6', label: 'tag.colors.violet' },
++    { value: '#ec4899', label: 'tag.colors.pink' }
++]
++</script>
+diff --git a/frontend/apps/main/src/features/admin/tags/dataTableColumns.js b/frontend/apps/main/src/features/admin/tags/dataTableColumns.js
+index c2428740..9c060130 100644
+--- a/frontend/apps/main/src/features/admin/tags/dataTableColumns.js
++++ b/frontend/apps/main/src/features/admin/tags/dataTableColumns.js
+@@ -9,14 +9,16 @@ export const createColumns = (t, { onEdit } = {}) => [
+       return h('div', null, t('globals.terms.name'))
+     },
+     cell: function ({ row }) {
+-      return h('div', null,
++      const color = row.original.color
++      return h('div', color ? { class: 'flex items-center gap-2' } : null, [
++        color && h('span', { class: 'size-2.5 shrink-0 rounded-full', style: { backgroundColor: color }, 'aria-hidden': 'true' }),
+         onEdit
+           ? h('span', {
+               class: 'text-foreground font-medium hover:underline cursor-pointer',
+               onClick: () => onEdit(row.original)
+             }, row.getValue('name'))
+           : row.getValue('name')
+-      )
++      ])
+     }
+   },
+   {
+diff --git a/frontend/apps/main/src/features/admin/tags/formSchema.js b/frontend/apps/main/src/features/admin/tags/formSchema.js
+index 29255e93..a6073090 100644
+--- a/frontend/apps/main/src/features/admin/tags/formSchema.js
++++ b/frontend/apps/main/src/features/admin/tags/formSchema.js
+@@ -7,5 +7,6 @@ export const createFormSchema = (t) => z.object({
+     })
+     .min(3, {
+       message: t('admin.conversationTags.name.valid'),
+-    })
++    }),
++  color: z.string().optional()
+ })
+diff --git a/frontend/apps/main/src/stores/tag.js b/frontend/apps/main/src/stores/tag.js
+index cccea665..15100c4b 100644
+--- a/frontend/apps/main/src/stores/tag.js
++++ b/frontend/apps/main/src/stores/tag.js
+@@ -28,6 +28,7 @@ export const useTagStore = defineStore('tags', () => {
+     const searchTagNames = async (query) => (await lookup.search(query)).map(tag => ({
+         label: tag.name,
+         value: tag.name,
++        color: tag.color,
+     }))
+     const searchTagOptions = async (query) => (await lookup.search(query)).map(tag => ({
+         label: tag.name,
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index ddc6961c..a734ac11 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1716,6 +1716,16 @@
+   "status.disabledInbox": "Inbox is disabled",
+   "status.edit": "Edit status",
+   "status.new": "New status",
++  "tag.color": "Color",
++  "tag.colors.none": "No color",
++  "tag.colors.red": "Red",
++  "tag.colors.orange": "Orange",
++  "tag.colors.yellow": "Yellow",
++  "tag.colors.green": "Green",
++  "tag.colors.teal": "Teal",
++  "tag.colors.blue": "Blue",
++  "tag.colors.violet": "Violet",
++  "tag.colors.pink": "Pink",
+   "tag.edit": "Edit tag",
+   "tag.new": "New tag",
+   "team.edit": "Edit team",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index d77c998b..b1c3ad2a 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -930,6 +930,16 @@
+   "status.disabledInbox": "La bandeja de entrada está desactivada",
+   "status.edit": "Editar estado",
+   "status.new": "Nuevo estado",
++  "tag.color": "Color",
++  "tag.colors.none": "Sin color",
++  "tag.colors.red": "Rojo",
++  "tag.colors.orange": "Naranja",
++  "tag.colors.yellow": "Amarillo",
++  "tag.colors.green": "Verde",
++  "tag.colors.teal": "Turquesa",
++  "tag.colors.blue": "Azul",
++  "tag.colors.violet": "Violeta",
++  "tag.colors.pink": "Rosa",
+   "tag.edit": "Editar etiqueta",
+   "tag.new": "Nueva etiqueta",
+   "team.edit": "Editar equipo",
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index c224dbe6..cf88843e 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -28,6 +28,15 @@ func Migrate(db *sqlx.DB) error {
+ 	_, err = tx.Exec(`UPDATE conversation_statuses SET icon = CASE icon
+     WHEN '🟢' THEN 'kuraka:open' WHEN '💤' THEN 'kuraka:snoozed' WHEN '✅' THEN 'kuraka:resolved' WHEN '🔒' THEN 'kuraka:closed' END
+    WHERE (name, icon) IN (('Open', '🟢'), ('Snoozed', '💤'), ('Resolved', '✅'), ('Closed', '🔒'))`)
++	if err != nil {
++		return err
++	}
++	_, err = tx.Exec(`DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
++   WHERE table_schema = current_schema() AND table_name = 'tags' AND column_name = 'color') THEN
++   ALTER TABLE tags ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '' CHECK (color = '' OR color ~ '^#[0-9a-f]{6}$');
++  END IF;
++ END $$`)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/internal/tag/models/models.go b/internal/tag/models/models.go
+index 02cb048d..83285999 100644
+--- a/internal/tag/models/models.go
++++ b/internal/tag/models/models.go
+@@ -7,4 +7,5 @@ type Tag struct {
+ 	CreatedAt time.Time `db:"created_at" json:"created_at"`
+ 	UpdateAt  time.Time `db:"updated_at" json:"updated_at"`
+ 	Name      string    `db:"name" json:"name"`
++	Color     string    `db:"color" json:"color"`
+ }
+diff --git a/internal/tag/queries.sql b/internal/tag/queries.sql
+index ab9bf332..bfb128bc 100644
+--- a/internal/tag/queries.sql
++++ b/internal/tag/queries.sql
+@@ -3,7 +3,8 @@ select
+     id,
+     created_at,
+     updated_at,
+-    name
++    name,
++    color
+ from
+     tags
+ where
+@@ -17,7 +18,8 @@ select
+     id,
+     created_at,
+     updated_at,
+-    name
++    name,
++    color
+ from
+     tags
+ where
+@@ -27,9 +29,9 @@ order by
+ 
+ -- name: insert-tag
+ INSERT into
+-    tags (name)
++    tags (name, color)
+ values
+-    ($1)
++    ($1, $2)
+ RETURNING *;
+ 
+ -- name: delete-tag
+@@ -43,6 +45,7 @@ UPDATE
+     tags
+ set
+     name = $2,
++    color = $3,
+     updated_at = now()
+ where
+     id = $1
+diff --git a/internal/tag/tag.go b/internal/tag/tag.go
+index 255362da..4f8c89ca 100644
+--- a/internal/tag/tag.go
++++ b/internal/tag/tag.go
+@@ -76,9 +76,9 @@ func (t *Manager) GetByIDs(ids []int) ([]models.Tag, error) {
+ }
+ 
+ // Create creates a new tag.
+-func (t *Manager) Create(name string) (models.Tag, error) {
++func (t *Manager) Create(name, color string) (models.Tag, error) {
+ 	var tag models.Tag
+-	if err := t.q.InsertTag.Get(&tag, name); err != nil {
++	if err := t.q.InsertTag.Get(&tag, name, color); err != nil {
+ 		if dbutil.IsUniqueViolationError(err) {
+ 			return tag, envelope.NewError(envelope.ConflictError, t.i18n.T("errors.alreadyExistsTag"), nil)
+ 		}
+@@ -98,9 +98,9 @@ func (t *Manager) Delete(id int) error {
+ }
+ 
+ // Update updates a tag by id.
+-func (t *Manager) Update(id int, name string) (models.Tag, error) {
++func (t *Manager) Update(id int, name, color string) (models.Tag, error) {
+ 	var tag models.Tag
+-	if err := t.q.UpdateTag.Get(&tag, id, name); err != nil {
++	if err := t.q.UpdateTag.Get(&tag, id, name, color); err != nil {
+ 		t.lo.Error("error updating tag", "error", err)
+ 		return tag, envelope.NewError(envelope.GeneralError, t.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/internal/tag/tag_test.go b/internal/tag/tag_test.go
+index fa39a47d..4298952b 100644
+--- a/internal/tag/tag_test.go
++++ b/internal/tag/tag_test.go
+@@ -21,7 +21,7 @@ func newTestManager(t *testing.T) *Manager {
+ func TestGetAllPagination(t *testing.T) {
+ 	mgr := newTestManager(t)
+ 	for _, name := range []string{"alpha", "bravo", "charlie", "delta", "echo"} {
+-		if _, err := mgr.Create(name); err != nil {
++		if _, err := mgr.Create(name, ""); err != nil {
+ 			t.Fatalf("creating tag %q: %v", name, err)
+ 		}
+ 	}
+@@ -54,7 +54,7 @@ func TestGetAllPagination(t *testing.T) {
+ func TestGetAllSearch(t *testing.T) {
+ 	mgr := newTestManager(t)
+ 	for _, name := range []string{"billing", "refund", "billing-dispute"} {
+-		if _, err := mgr.Create(name); err != nil {
++		if _, err := mgr.Create(name, ""); err != nil {
+ 			t.Fatalf("creating tag %q: %v", name, err)
+ 		}
+ 	}
+@@ -80,7 +80,7 @@ func TestGetByIDs(t *testing.T) {
+ 	mgr := newTestManager(t)
+ 	var ids []int
+ 	for _, name := range []string{"alpha", "bravo", "charlie"} {
+-		tag, err := mgr.Create(name)
++		tag, err := mgr.Create(name, "")
+ 		if err != nil {
+ 			t.Fatalf("creating tag %q: %v", name, err)
+ 		}
+diff --git a/schema.sql b/schema.sql
+index fcd0ea7c..987d2ea1 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -490,6 +490,7 @@ CREATE TABLE tags (
+ 	created_at TIMESTAMPTZ DEFAULT NOW(),
+ 	updated_at TIMESTAMPTZ DEFAULT NOW(),
+ 	"name" TEXT NOT NULL UNIQUE,
++	color TEXT NOT NULL DEFAULT '' CHECK (color = '' OR color ~ '^#[0-9a-f]{6}$'),
+ 	CONSTRAINT constraint_tags_on_name CHECK (length("name") <= 140)
+ );
+ 

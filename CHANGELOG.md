@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-17
+
+### Added
+
+- **Libredesk automations**: rule types, events, conditions and actions show icons, and each rule can have its own icon. Rules are listed in compact rows with an on/off switch, **Edit** and **Delete**.
+- **Libredesk tags**: a tag can have one of nine colours, shown as a dot on its chips. Tags without a colour look as before.
+- **Libredesk Account**: the user menu shows your photo next to **Account**, with **View photo**, **Change photo** and **Remove photo**.
+- **Libredesk Admin → General**: **Collapse activity events after** sets how many activity events in a row are shown before they start collapsed. The default is 2.
+
+### Changed
+
+- **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
+- **Libredesk patches**: the tag colour, rule icon and activity setting patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
+
+### Fixed
+
+- **Libredesk status icons**: inside buttons the icons follow the text size.
+
 ## [0.3.2] - 2026-11-16
 
 ### Fixed

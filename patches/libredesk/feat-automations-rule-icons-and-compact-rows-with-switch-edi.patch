@@ -1,0 +1,816 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:44:33 -0500
+Subject: [PATCH] feat(automations): rule icons and compact rows with switch,
+ edit and delete
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Missing-En: Automation rules have no icon, and the list uses tall cards with a status badge and a 3-dots menu instead of a direct switch, edit and delete.
+Kuraka-Missing-Es: Las automatizaciones no tienen ícono, y la lista usa tarjetas altas con una etiqueta de estado y un menú de 3 puntos en vez de un interruptor, editar y borrar directos.
+---
+ cmd/media.go                                  |   4 +-
+ .../apps/main/src/components/IconField.vue    | 152 ++++++++++++++++++
+ .../features/admin/automation/RuleList.vue    |  86 +++++-----
+ .../src/features/admin/automation/RuleTab.vue |  17 +-
+ .../features/admin/automation/formSchema.js   |   2 +
+ .../src/features/admin/status/StatusForm.vue  | 148 ++---------------
+ .../admin/automations/CreateOrEditRule.vue    |  15 ++
+ frontend/shared-ui/components/StatusIcon.vue  |  39 ++++-
+ internal/automation/automation.go             |   4 +-
+ internal/automation/kuraka.go                 |   4 +
+ internal/automation/models/models.go          |   1 +
+ internal/automation/queries.sql               |  13 +-
+ internal/kuraka/migrate.go                    |   9 ++
+ internal/media/models/models.go               |   4 +-
+ schema.sql                                    |   1 +
+ 15 files changed, 299 insertions(+), 200 deletions(-)
+ create mode 100644 frontend/apps/main/src/components/IconField.vue
+
+diff --git a/cmd/media.go b/cmd/media.go
+index a1787258..a0098994 100644
+--- a/cmd/media.go
++++ b/cmd/media.go
+@@ -86,6 +86,8 @@ func handleMediaUpload(r *fastglue.Request) error {
+ 		obj := "help_center"
+ 		if linkedModel == mmodels.ModelConversationStatuses {
+ 			obj = "status"
++		} else if linkedModel == mmodels.ModelAutomationRules {
++			obj = "automations"
+ 		}
+ 		allowed, err := app.authz.Enforce(agent, obj, "manage")
+ 		if err != nil {
+@@ -174,7 +176,7 @@ func handleMediaUpload(r *fastglue.Request) error {
+ 		app.lo.Error("error inserting metadata into database", "error", err)
+ 		return sendErrorEnvelope(r, err)
+ 	}
+-	if linkedModel == mmodels.ModelConversationStatuses {
++	if linkedModel == mmodels.ModelConversationStatuses || linkedModel == mmodels.ModelAutomationRules {
+ 		media.URL = mediautil.PublicURI + "/" + media.UUID
+ 	}
+ 	return r.SendEnvelope(media)
+diff --git a/frontend/apps/main/src/components/IconField.vue b/frontend/apps/main/src/components/IconField.vue
+new file mode 100644
+index 00000000..b90cc0f3
+--- /dev/null
++++ b/frontend/apps/main/src/components/IconField.vue
+@@ -0,0 +1,152 @@
++<template>
++  <div ref="emojiPickerContainer" class="relative flex flex-wrap items-center gap-2">
++    <Button
++      type="button"
++      variant="outline"
++      size="icon"
++      class="shrink-0 font-normal"
++      :aria-label="$t('status.icon')"
++      @click="isEmojiPickerVisible = !isEmojiPickerVisible"
++    >
++      <StatusIcon v-if="modelValue" :icon="modelValue" alone />
++      <SmilePlus v-else class="h-4 w-4" />
++    </Button>
++    <FormControl>
++      <Input
++        type="text"
++        class="min-w-0 flex-1"
++        maxlength="2048"
++        :placeholder="$t('status.iconPlaceholder')"
++        :model-value="modelValue"
++        @update:model-value="setIcon"
++      />
++    </FormControl>
++    <Button
++      type="button"
++      variant="outline"
++      class="shrink-0 gap-2"
++      :aria-label="$t('status.uploadImage')"
++      :title="$t('status.uploadImage')"
++      :disabled="isUploading"
++      @click="fileInput?.click()"
++    >
++      <Loader2 v-if="isUploading" class="h-4 w-4 animate-spin" />
++      <ImageUp v-else class="h-4 w-4" />
++      {{ $t('status.uploadImage') }}
++    </Button>
++    <Button
++      v-if="modelValue"
++      type="button"
++      variant="ghost"
++      size="icon"
++      class="shrink-0"
++      :aria-label="$t('status.clearIcon')"
++      :title="$t('status.clearIcon')"
++      @click="setIcon('')"
++    >
++      <X class="h-4 w-4" />
++    </Button>
++    <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onFileSelected" />
++    <div v-if="isEmojiPickerVisible" class="absolute left-0 top-full z-10 mt-2">
++      <EmojiPicker :native="true" class="w-[300px]" @select="onSelectEmoji" />
++    </div>
++  </div>
++  <div class="flex flex-wrap gap-1" role="group" :aria-label="$t('status.builtinIcons')">
++    <Button
++      v-for="key in builtinKeys"
++      :key="key"
++      type="button"
++      variant="outline"
++      size="icon"
++      class="size-8"
++      :class="{ 'ring-2 ring-ring': modelValue === key }"
++      :aria-label="key.slice(7)"
++      :title="key.slice(7)"
++      :aria-pressed="modelValue === key"
++      @click="setIcon(key)"
++    >
++      <StatusIcon :icon="key" alone />
++    </Button>
++  </div>
++</template>
++
++<script setup>
++// Kuraka: icon picker (emoji, built-in icon or uploaded image) shared by statuses and automation rules.
++import { ref, defineAsyncComponent } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { onClickOutside } from '@vueuse/core'
++import { ImageUp, Loader2, SmilePlus, X } from 'lucide-vue-next'
++import { FormControl } from '@shared-ui/components/ui/form'
++import { Input } from '@shared-ui/components/ui/input'
++import { Button } from '@shared-ui/components/ui/button'
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
++import { useEmitter } from '@main/composables/useEmitter.js'
++import { EMITTER_EVENTS } from '@main/constants/emitterEvents.js'
++import { handleHTTPError } from '@shared-ui/utils/http.js'
++import api from '@main/api/index.js'
++
++const EmojiPicker = defineAsyncComponent(async () => {
++  const [mod] = await Promise.all([import('vue3-emoji-picker'), import('vue3-emoji-picker/css')])
++  return mod.default
++})
++
++const props = defineProps({
++  modelValue: { type: String, default: '' },
++  builtinKeys: { type: Array, required: true },
++  // Media model the uploaded image is linked to, e.g. "conversation_statuses".
++  linkedModel: { type: String, required: true }
++})
++const emit = defineEmits(['update:modelValue', 'uploading'])
++
++const { t } = useI18n()
++const emitter = useEmitter()
++const isEmojiPickerVisible = ref(false)
++const emojiPickerContainer = ref(null)
++const fileInput = ref(null)
++const isUploading = ref(false)
++
++onClickOutside(emojiPickerContainer, () => {
++  isEmojiPickerVisible.value = false
++})
++
++const setIcon = (value) => emit('update:modelValue', value)
++
++const onSelectEmoji = (emoji) => {
++  setIcon(emoji.i || emoji)
++  isEmojiPickerVisible.value = false
++}
++
++const setUploading = (value) => {
++  isUploading.value = value
++  emit('uploading', value)
++}
++
++const onFileSelected = async (event) => {
++  const file = event.target.files?.[0]
++  event.target.value = ''
++  if (!file) return
++  if (!file.type.startsWith('image/')) {
++    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++      variant: 'destructive',
++      description: t('status.imageOnly')
++    })
++    return
++  }
++  setUploading(true)
++  try {
++    const resp = await api.uploadMedia({
++      files: file,
++      inline: false,
++      linked_model: props.linkedModel
++    })
++    setIcon(resp.data.data.url)
++  } catch (error) {
++    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++      variant: 'destructive',
++      description: handleHTTPError(error).message
++    })
++  } finally {
++    setUploading(false)
++  }
++}
++</script>
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleList.vue b/frontend/apps/main/src/features/admin/automation/RuleList.vue
+index 7228c7fa..ce9246a4 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleList.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleList.vue
+@@ -1,43 +1,40 @@
+ <template>
+-  <div class="flex flex-col box px-5 justify-center py-3">
+-    <div class="flex items-center justify-between gap-2">
+-      <div class="flex items-center gap-3">
+-        <router-link
+-          :to="{ name: 'edit-automation', params: { id: rule.id } }"
+-          class="text-base text-foreground font-medium hover:underline"
+-        >
+-          {{ rule.name }}
+-        </router-link>
+-        <Badge v-if="rule.enabled">{{ $t('globals.terms.enabled') }}</Badge>
+-        <Badge v-else variant="secondary">{{ $t('globals.terms.disabled') }}</Badge>
+-      </div>
+-      <DropdownMenu>
+-        <DataTableActionTrigger />
+-        <DropdownMenuContent>
+-          <DropdownMenuItem @click="navigateToEditRule(rule.id)">
+-            <Pencil class="mr-2 h-4 w-4" />
+-            <span>{{ $t('globals.messages.edit') }}</span>
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="$emit('toggle-rule', rule.id)" v-if="rule.enabled">
+-            <PowerOff class="mr-2 h-4 w-4" />
+-            <span>{{ $t('globals.messages.disable') }}</span>
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="$emit('toggle-rule', rule.id)" v-else>
+-            <Power class="mr-2 h-4 w-4" />
+-            <span>{{ $t('globals.messages.enable') }}</span>
+-          </DropdownMenuItem>
+-          <DropdownMenuSeparator />
+-          <DropdownMenuItem
+-            class="text-destructive focus:text-destructive"
+-            @click="() => (alertOpen = true)"
+-          >
+-            <Trash class="mr-2 h-4 w-4" />
+-            <span>{{ $t('globals.messages.delete') }}</span>
+-          </DropdownMenuItem>
+-        </DropdownMenuContent>
+-      </DropdownMenu>
++  <div class="flex items-center gap-3 rounded-lg border px-3 py-2">
++    <StatusIcon v-if="rule.icon" :icon="rule.icon" alone />
++    <div class="min-w-0 flex-1">
++      <router-link
++        :to="{ name: 'edit-automation', params: { id: rule.id } }"
++        class="block truncate font-medium text-foreground hover:underline"
++      >
++        {{ rule.name }}
++      </router-link>
++      <p v-if="rule.description" class="truncate text-xs text-muted-foreground">
++        {{ rule.description }}
++      </p>
+     </div>
+-    <p class="text-sm-muted">{{ rule.description }}</p>
++    <Switch
++      :checked="rule.enabled"
++      :aria-label="`${$t('globals.messages.enable')} ${rule.name}`"
++      @update:checked="$emit('toggle-rule', rule.id)"
++    />
++    <Button
++      variant="ghost"
++      size="icon"
++      :aria-label="$t('globals.messages.edit', { name: rule.name })"
++      :title="$t('globals.messages.edit', { name: rule.name })"
++      @click="navigateToEditRule(rule.id)"
++    >
++      <Pencil class="h-4 w-4" />
++    </Button>
++    <Button
++      variant="ghost"
++      size="icon"
++      :aria-label="$t('globals.messages.delete', { name: rule.name })"
++      :title="$t('globals.messages.delete', { name: rule.name })"
++      @click="alertOpen = true"
++    >
++      <Trash2 class="h-4 w-4" />
++    </Button>
+   </div>
+ 
+   <AlertDialog :open="alertOpen" @update:open="alertOpen = $event">
+@@ -59,14 +56,7 @@
+ </template>
+ 
+ <script setup>
+-import DataTableActionTrigger from '@main/components/datatable/DataTableActionTrigger.vue'
+ import { ref } from 'vue'
+-import {
+-  DropdownMenu,
+-  DropdownMenuContent,
+-  DropdownMenuItem,
+-  DropdownMenuSeparator
+-} from '@shared-ui/components/ui/dropdown-menu'
+ import {
+   AlertDialog,
+   AlertDialogAction,
+@@ -77,9 +67,11 @@ import {
+   AlertDialogHeader,
+   AlertDialogTitle
+ } from '@shared-ui/components/ui/alert-dialog'
+-import { Pencil, Power, PowerOff, Trash } from 'lucide-vue-next'
++import { Pencil, Trash2 } from 'lucide-vue-next'
+ import { useRouter } from 'vue-router'
+-import { Badge } from '@shared-ui/components/ui/badge'
++import { Button } from '@shared-ui/components/ui/button'
++import { Switch } from '@shared-ui/components/ui/switch'
++import StatusIcon from '@shared-ui/components/StatusIcon.vue'
+ 
+ const router = useRouter()
+ const alertOpen = ref(false)
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleTab.vue b/frontend/apps/main/src/features/admin/automation/RuleTab.vue
+index 0441bda3..b88535ab 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleTab.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleTab.vue
+@@ -44,7 +44,7 @@
+         <div v-if="type === 'new_conversation'">
+           <draggable
+             v-model="rules"
+-            class="space-y-6"
++            class="space-y-2"
+             item-key="id"
+             :animation="reducedMotion === 'reduce' ? 0 : 200"
+             :force-fallback="true"
+@@ -60,7 +60,7 @@
+             </template>
+           </draggable>
+         </div>
+-        <div v-else class="space-y-6">
++        <div v-else class="space-y-2">
+           <RuleList
+             v-for="rule in rules"
+             :key="rule.id"
+@@ -134,8 +134,17 @@ const deleteRule = async (id) => {
+ }
+ 
+ const toggleRule = async (id) => {
+-  await api.toggleAutomationRule(id)
+-  fetchRules()
++  const rule = rules.value.find((r) => r.id === id)
++  rule.enabled = !rule.enabled
++  try {
++    await api.toggleAutomationRule(id)
++  } catch (error) {
++    rule.enabled = !rule.enabled
++    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++      variant: 'destructive',
++      description: handleHTTPError(error).message
++    })
++  }
+ }
+ 
+ const onDragEnd = async () => {
+diff --git a/frontend/apps/main/src/features/admin/automation/formSchema.js b/frontend/apps/main/src/features/admin/automation/formSchema.js
+index 545f367b..734011cb 100644
+--- a/frontend/apps/main/src/features/admin/automation/formSchema.js
++++ b/frontend/apps/main/src/features/admin/automation/formSchema.js
+@@ -1,4 +1,5 @@
+ import * as z from 'zod';
++import { createFormSchema as createStatusFormSchema } from '../status/formSchema.js';
+ 
+ export const createFormSchema = (t) => z
+     .object({
+@@ -11,6 +12,7 @@ export const createFormSchema = (t) => z
+             required_error: t('globals.messages.required'),
+         }),
+         events: z.array(z.string()).optional(),
++        icon: createStatusFormSchema(t).shape.icon.default(''),
+     })
+     .superRefine((data, ctx) => {
+         if (data.type === 'conversation_update' && (!data.events || data.events.length === 0)) {
+diff --git a/frontend/apps/main/src/features/admin/status/StatusForm.vue b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+index 070ada96..f31d5158 100644
+--- a/frontend/apps/main/src/features/admin/status/StatusForm.vue
++++ b/frontend/apps/main/src/features/admin/status/StatusForm.vue
+@@ -43,87 +43,16 @@
+       </FormItem>
+     </FormField>
+ 
+-    <FormField v-slot="{ componentField, value, handleChange }" name="icon">
++    <FormField v-slot="{ value, handleChange }" name="icon">
+       <FormItem class="mt-4">
+         <FormLabel>{{ $t('status.icon') }}</FormLabel>
+-        <div ref="emojiPickerContainer" class="relative flex flex-wrap items-center gap-2">
+-          <Button
+-            type="button"
+-            variant="outline"
+-            size="icon"
+-            class="shrink-0 font-normal"
+-            :aria-label="$t('status.icon')"
+-            @click="isEmojiPickerVisible = !isEmojiPickerVisible"
+-          >
+-            <StatusIcon v-if="value" :icon="value" alone />
+-            <SmilePlus v-else class="h-4 w-4" />
+-          </Button>
+-          <FormControl>
+-            <Input
+-              type="text"
+-              class="min-w-0 flex-1"
+-              maxlength="2048"
+-              :placeholder="$t('status.iconPlaceholder')"
+-              v-bind="componentField"
+-            />
+-          </FormControl>
+-          <Button
+-            type="button"
+-            variant="outline"
+-            class="shrink-0 gap-2"
+-            :aria-label="$t('status.uploadImage')"
+-            :title="$t('status.uploadImage')"
+-            :disabled="isUploading"
+-            @click="fileInput?.click()"
+-          >
+-            <Loader2 v-if="isUploading" class="h-4 w-4 animate-spin" />
+-            <ImageUp v-else class="h-4 w-4" />
+-            {{ $t('status.uploadImage') }}
+-          </Button>
+-          <Button
+-            v-if="value"
+-            type="button"
+-            variant="ghost"
+-            size="icon"
+-            class="shrink-0"
+-            :aria-label="$t('status.clearIcon')"
+-            :title="$t('status.clearIcon')"
+-            @click="handleChange('')"
+-          >
+-            <X class="h-4 w-4" />
+-          </Button>
+-          <input
+-            ref="fileInput"
+-            type="file"
+-            accept="image/*"
+-            class="hidden"
+-            @change="(event) => onFileSelected(event, handleChange)"
+-          />
+-          <div v-if="isEmojiPickerVisible" class="absolute left-0 top-full z-10 mt-2">
+-            <EmojiPicker
+-              :native="true"
+-              class="w-[300px]"
+-              @select="(emoji) => onSelectEmoji(emoji, handleChange)"
+-            />
+-          </div>
+-        </div>
+-        <div class="flex flex-wrap gap-1" role="group" :aria-label="$t('status.builtinIcons')">
+-          <Button
+-            v-for="key in Object.keys(BUILTIN_STATUS_ICONS)"
+-            :key="key"
+-            type="button"
+-            variant="outline"
+-            size="icon"
+-            class="size-8"
+-            :class="{ 'ring-2 ring-ring': value === key }"
+-            :aria-label="key.slice(7)"
+-            :title="key.slice(7)"
+-            :aria-pressed="value === key"
+-            @click="handleChange(key)"
+-          >
+-            <StatusIcon :icon="key" alone />
+-          </Button>
+-        </div>
++        <IconField
++          :model-value="value"
++          :builtin-keys="Object.keys(BUILTIN_STATUS_ICONS)"
++          linked-model="conversation_statuses"
++          @update:model-value="handleChange"
++          @uploading="isUploading = $event"
++        />
+         <FormMessage />
+       </FormItem>
+     </FormField>
+@@ -133,10 +62,7 @@
+ </template>
+ 
+ <script setup>
+-import { ref, defineAsyncComponent } from 'vue'
+-import { useI18n } from 'vue-i18n'
+-import { onClickOutside } from '@vueuse/core'
+-import { ImageUp, Loader2, SmilePlus, X } from 'lucide-vue-next'
++import { ref } from 'vue'
+ import {
+   FormControl,
+   FormDescription,
+@@ -146,12 +72,8 @@ import {
+   FormMessage
+ } from '@shared-ui/components/ui/form'
+ import { Input } from '@shared-ui/components/ui/input'
+-import { Button } from '@shared-ui/components/ui/button'
+-import StatusIcon, { BUILTIN_STATUS_ICONS } from '@shared-ui/components/StatusIcon.vue'
+-import { useEmitter } from '@main/composables/useEmitter.js'
+-import { EMITTER_EVENTS } from '@main/constants/emitterEvents.js'
+-import { handleHTTPError } from '@shared-ui/utils/http.js'
+-import api from '@main/api/index.js'
++import { BUILTIN_STATUS_ICONS } from '@shared-ui/components/StatusIcon.vue'
++import IconField from '@main/components/IconField.vue'
+ import {
+   Select,
+   SelectContent,
+@@ -161,58 +83,10 @@ import {
+   SelectValue
+ } from '@shared-ui/components/ui/select'
+ 
+-const EmojiPicker = defineAsyncComponent(async () => {
+-  const [mod] = await Promise.all([import('vue3-emoji-picker'), import('vue3-emoji-picker/css')])
+-  return mod.default
+-})
+-
+ defineProps({
+   isDefault: { type: Boolean, default: false },
+   isEditing: { type: Boolean, default: false }
+ })
+ 
+-const { t } = useI18n()
+-const emitter = useEmitter()
+-const isEmojiPickerVisible = ref(false)
+-const emojiPickerContainer = ref(null)
+-const fileInput = ref(null)
+ const isUploading = ref(false)
+-
+-onClickOutside(emojiPickerContainer, () => {
+-  isEmojiPickerVisible.value = false
+-})
+-
+-const onSelectEmoji = (emoji, setIcon) => {
+-  setIcon(emoji.i || emoji)
+-  isEmojiPickerVisible.value = false
+-}
+-
+-const onFileSelected = async (event, setIcon) => {
+-  const file = event.target.files?.[0]
+-  event.target.value = ''
+-  if (!file) return
+-  if (!file.type.startsWith('image/')) {
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      variant: 'destructive',
+-      description: t('status.imageOnly')
+-    })
+-    return
+-  }
+-  isUploading.value = true
+-  try {
+-    const resp = await api.uploadMedia({
+-      files: file,
+-      inline: false,
+-      linked_model: 'conversation_statuses'
+-    })
+-    setIcon(resp.data.data.url)
+-  } catch (error) {
+-    emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
+-      variant: 'destructive',
+-      description: handleHTTPError(error).message
+-    })
+-  } finally {
+-    isUploading.value = false
+-  }
+-}
+ </script>
+diff --git a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+index 34471db6..056de126 100644
+--- a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
++++ b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+@@ -46,6 +46,19 @@
+               </FormField>
+             </FormGrid>
+ 
++            <FormField v-slot="{ value, handleChange }" name="icon">
++              <FormItem class="max-w-xl">
++                <FormLabel>{{ $t('status.icon') }}</FormLabel>
++                <IconField
++                  :model-value="value"
++                  :builtin-keys="Object.keys(BUILTIN_RULE_ICONS)"
++                  linked-model="automation_rules"
++                  @update:model-value="handleChange"
++                />
++                <FormMessage />
++              </FormItem>
++            </FormField>
++
+             <FormField v-slot="{ componentField, handleInput }" name="type">
+               <FormItem class="max-w-xl">
+                 <FormLabel>{{ $t('globals.terms.type') }}</FormLabel>
+@@ -165,6 +178,8 @@ import RuleBox from '@/features/admin/automation/RuleBox.vue'
+ import ActionBox from '@/features/admin/automation/ActionBox.vue'
+ import api from '@main/api'
+ import { Checkbox } from '@shared-ui/components/ui/checkbox'
++import IconField from '@main/components/IconField.vue'
++import { BUILTIN_RULE_ICONS } from '@shared-ui/components/StatusIcon.vue'
+ import { useForm } from 'vee-validate'
+ import { toTypedSchema } from '@vee-validate/zod'
+ import { createFormSchema } from '@main/features/admin/automation/formSchema.js'
+diff --git a/frontend/shared-ui/components/StatusIcon.vue b/frontend/shared-ui/components/StatusIcon.vue
+index 8a43d3c7..260bd74d 100644
+--- a/frontend/shared-ui/components/StatusIcon.vue
++++ b/frontend/shared-ui/components/StatusIcon.vue
+@@ -18,7 +18,26 @@
+ </template>
+ 
+ <script>
+-import { CircleDot, Moon, CircleCheck, CircleSlash, Hourglass, Ban } from 'lucide-vue-next'
++import {
++  CircleDot,
++  Moon,
++  CircleCheck,
++  CircleSlash,
++  Hourglass,
++  Ban,
++  Zap,
++  Bot,
++  Mail,
++  Tag,
++  Clock,
++  Bell,
++  ShieldAlert,
++  ShoppingCart,
++  Megaphone,
++  UserCheck,
++  Star,
++  Archive
++} from 'lucide-vue-next'
+ 
+ // Kuraka's built-in status icons, stored as "kuraka:<name>".
+ export const BUILTIN_STATUS_ICONS = {
+@@ -29,6 +48,22 @@ export const BUILTIN_STATUS_ICONS = {
+   'kuraka:waiting': { component: Hourglass, color: 'text-amber-500' },
+   'kuraka:spam': { component: Ban, color: 'text-rose-500' }
+ }
++
++// Kuraka's built-in automation rule icons, stored as "kuraka:<name>".
++export const BUILTIN_RULE_ICONS = {
++  'kuraka:zap': { component: Zap, color: 'text-amber-500' },
++  'kuraka:bot': { component: Bot, color: 'text-violet-500' },
++  'kuraka:mail': { component: Mail, color: 'text-sky-500' },
++  'kuraka:tag': { component: Tag, color: 'text-emerald-500' },
++  'kuraka:clock': { component: Clock, color: 'text-orange-500' },
++  'kuraka:bell': { component: Bell, color: 'text-yellow-500' },
++  'kuraka:shield': { component: ShieldAlert, color: 'text-rose-500' },
++  'kuraka:cart': { component: ShoppingCart, color: 'text-teal-500' },
++  'kuraka:megaphone': { component: Megaphone, color: 'text-fuchsia-500' },
++  'kuraka:user': { component: UserCheck, color: 'text-indigo-500' },
++  'kuraka:star': { component: Star, color: 'text-amber-400' },
++  'kuraka:archive': { component: Archive, color: 'text-muted-foreground' }
++}
+ </script>
+ 
+ <script setup>
+@@ -42,7 +77,7 @@ const props = defineProps({
+ 
+ // Icons follow the text size: !h/!w beat parents such as Button that force svgs to size-4.
+ const isURL = computed(() => props.icon.startsWith('https://') || props.icon.startsWith('/uploads/'))
+-const builtin = computed(() => BUILTIN_STATUS_ICONS[props.icon])
++const builtin = computed(() => BUILTIN_STATUS_ICONS[props.icon] || BUILTIN_RULE_ICONS[props.icon])
+ // A small gap before the status name that follows the icon.
+ const gap = computed(() => (props.alone ? '' : 'me-1.5'))
+ </script>
+diff --git a/internal/automation/automation.go b/internal/automation/automation.go
+index 8c94bd97..ca7484b8 100644
+--- a/internal/automation/automation.go
++++ b/internal/automation/automation.go
+@@ -232,7 +232,7 @@ func (e *Engine) UpdateRule(id int, rule models.RuleRecord) (models.RuleRecord,
+ 		rule.Events = pq.StringArray{}
+ 	}
+ 	var result models.RuleRecord
+-	if err := e.q.UpdateRule.Get(&result, id, rule.Name, rule.Description, rule.Type, rule.Events, rule.Rules, rule.Enabled); err != nil {
++	if err := e.q.UpdateRule.Get(&result, id, rule.Name, rule.Description, rule.Type, rule.Events, rule.Rules, rule.Enabled, rule.Icon); err != nil {
+ 		e.lo.Error("error updating rule", "error", err)
+ 		return models.RuleRecord{}, envelope.NewError(envelope.GeneralError, e.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+@@ -250,7 +250,7 @@ func (e *Engine) CreateRule(rule models.RuleRecord) (models.RuleRecord, error) {
+ 		rule.Events = pq.StringArray{}
+ 	}
+ 	var result models.RuleRecord
+-	if err := e.q.InsertRule.Get(&result, rule.Name, rule.Description, rule.Type, rule.Events, rule.Rules); err != nil {
++	if err := e.q.InsertRule.Get(&result, rule.Name, rule.Description, rule.Type, rule.Events, rule.Rules, rule.Icon); err != nil {
+ 		e.lo.Error("error creating rule", "error", err)
+ 		return models.RuleRecord{}, envelope.NewError(envelope.GeneralError, e.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/internal/automation/kuraka.go b/internal/automation/kuraka.go
+index c67cde92..fbe91702 100644
+--- a/internal/automation/kuraka.go
++++ b/internal/automation/kuraka.go
+@@ -9,6 +9,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/automation/models"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
++	"github.com/abhinavxd/libredesk/internal/kuraka"
+ )
+ 
+ // evaluateTagRule compares whole tag names, ignoring case. equals means exactly
+@@ -85,6 +86,9 @@ func validateRuleFields(record models.RuleRecord) error {
+ 	if !slices.Contains([]string{models.RuleTypeNewConversation, models.RuleTypeConversationUpdate, models.RuleTypeTimeTrigger}, record.Type) {
+ 		return invalid("invalid automation rule type")
+ 	}
++	if kuraka.ValidateIcon(record.Icon) != nil {
++		return invalid("invalid automation rule icon")
++	}
+ 	for _, event := range record.Events {
+ 		if !slices.Contains([]string{models.EventConversationUserAssigned, models.EventConversationTeamAssigned,
+ 			models.EventConversationStatusChange, models.EventConversationPriorityChange,
+diff --git a/internal/automation/models/models.go b/internal/automation/models/models.go
+index 9501f2bb..58483b48 100644
+--- a/internal/automation/models/models.go
++++ b/internal/automation/models/models.go
+@@ -111,6 +111,7 @@ type RuleRecord struct {
+ 	Weight        int             `db:"weight" json:"weight"`
+ 	ExecutionMode string          `db:"execution_mode" json:"execution_mode"`
+ 	Rules         json.RawMessage `db:"rules" json:"rules"`
++	Icon          string          `db:"icon" json:"icon"`
+ }
+ 
+ type Rule struct {
+diff --git a/internal/automation/queries.sql b/internal/automation/queries.sql
+index 32aac561..00b3d57b 100644
+--- a/internal/automation/queries.sql
++++ b/internal/automation/queries.sql
+@@ -7,14 +7,14 @@ select
+ from automation_rules where enabled is TRUE ORDER BY weight ASC;
+ 
+ -- name: get-all
+-SELECT id, created_at, updated_at, "name", description, "type", rules, events, enabled, weight, execution_mode from automation_rules where type = $1 ORDER BY weight ASC;
++SELECT id, created_at, updated_at, "name", description, "type", rules, events, enabled, weight, execution_mode, icon from automation_rules where type = $1 ORDER BY weight ASC;
+ 
+ -- name: get-rule
+-SELECT id, created_at, updated_at, "name", description, "type", rules, events, enabled, weight, execution_mode from automation_rules where id = $1;
++SELECT id, created_at, updated_at, "name", description, "type", rules, events, enabled, weight, execution_mode, icon from automation_rules where id = $1;
+ 
+ -- name: update-rule
+-INSERT INTO automation_rules(id, name, description, type, events, rules, enabled)
+-VALUES($1, $2, $3, $4, $5, $6, $7)
++INSERT INTO automation_rules(id, name, description, type, events, rules, enabled, icon)
++VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+ ON CONFLICT (id)
+ DO UPDATE SET
+     name = EXCLUDED.name,
+@@ -23,13 +23,14 @@ DO UPDATE SET
+     events = EXCLUDED.events,
+     rules = EXCLUDED.rules,
+     enabled = EXCLUDED.enabled,
++    icon = EXCLUDED.icon,
+     updated_at = now()
+ WHERE $1 > 0
+ RETURNING *;
+ 
+ -- name: insert-rule
+-INSERT into automation_rules (name, description, type, events, rules) 
+-values ($1, $2, $3, $4, $5)
++INSERT into automation_rules (name, description, type, events, rules, icon) 
++values ($1, $2, $3, $4, $5, $6)
+ RETURNING *;
+ 
+ -- name: delete-rule
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index cf88843e..b7e9c121 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -36,6 +36,15 @@ func Migrate(db *sqlx.DB) error {
+    WHERE table_schema = current_schema() AND table_name = 'tags' AND column_name = 'color') THEN
+    ALTER TABLE tags ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '' CHECK (color = '' OR color ~ '^#[0-9a-f]{6}$');
+   END IF;
++ END $$`)
++	if err != nil {
++		return err
++	}
++	_, err = tx.Exec(`DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
++   WHERE table_schema = current_schema() AND table_name = 'automation_rules' AND column_name = 'icon') THEN
++   ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048);
++  END IF;
+  END $$`)
+ 	if err != nil {
+ 		return err
+diff --git a/internal/media/models/models.go b/internal/media/models/models.go
+index e950b8ba..1841e8bb 100644
+--- a/internal/media/models/models.go
++++ b/internal/media/models/models.go
+@@ -17,6 +17,8 @@ const (
+ 	ModelHelpArticles = "help_articles"
+ 	// Kuraka: status icons.
+ 	ModelConversationStatuses = "conversation_statuses"
++	// Kuraka: automation rule icons.
++	ModelAutomationRules = "automation_rules"
+ 
+ 	DispositionInline     = "inline"
+ 	DispositionAttachment = "attachment"
+@@ -27,7 +29,7 @@ const (
+ 
+ // IsPublicModel reports whether media linked to the model type is served without authentication.
+ func IsPublicModel(modelType string) bool {
+-	return modelType == ModelHelpArticles || modelType == ModelConversationStatuses
++	return modelType == ModelHelpArticles || modelType == ModelConversationStatuses || modelType == ModelAutomationRules
+ }
+ 
+ // Media represents an uploaded object in DB and storage backend.
+diff --git a/schema.sql b/schema.sql
+index 987d2ea1..c6f350ef 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -358,6 +358,7 @@ CREATE TABLE automation_rules (
+     enabled BOOL DEFAULT TRUE NOT NULL,
+ 	weight INT DEFAULT 0 NOT NULL,
+ 	execution_mode automation_execution_mode DEFAULT 'all' NOT NULL,
++    icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048),
+     CONSTRAINT constraint_automation_rules_on_name CHECK (length("name") <= 140),
+     CONSTRAINT constraint_automation_rules_on_description CHECK (length(description) <= 300)
+ );

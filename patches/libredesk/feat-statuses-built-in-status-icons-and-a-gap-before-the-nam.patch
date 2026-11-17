@@ -12,13 +12,13 @@ Kuraka-Missing-En: Default statuses use emoji icons, and status icons sit right 
 Kuraka-Missing-Es: Los estados por defecto usan íconos emoji y el ícono queda pegado al nombre del estado.
 ---
  .../components/combobox/SelectCombobox.vue    |  4 +--
- .../src/features/admin/status/StatusForm.vue  | 21 ++++++++++--
+ .../src/features/admin/status/StatusForm.vue  | 21 +++++++++--
  .../features/admin/status/dataTableColumns.js |  2 +-
- frontend/shared-ui/components/StatusIcon.vue  | 33 +++++++++++++++++--
+ frontend/shared-ui/components/StatusIcon.vue  | 36 +++++++++++++++++--
  i18n/en-US.json                               |  1 +
  i18n/es-ES.json                               |  1 +
  internal/kuraka/migrate.go                    |  9 ++++-
- 7 files changed, 63 insertions(+), 8 deletions(-)
+ 7 files changed, 65 insertions(+), 9 deletions(-)
 
 diff --git a/frontend/apps/main/src/components/combobox/SelectCombobox.vue b/frontend/apps/main/src/components/combobox/SelectCombobox.vue
 index 33e931b7..514eb4a1 100644
@@ -102,20 +102,22 @@ index 50b9b10d..a401fd57 100644
    },
    {
 diff --git a/frontend/shared-ui/components/StatusIcon.vue b/frontend/shared-ui/components/StatusIcon.vue
-index 65399500..7c2d8a16 100644
+index 65399500..8a43d3c7 100644
 --- a/frontend/shared-ui/components/StatusIcon.vue
 +++ b/frontend/shared-ui/components/StatusIcon.vue
-@@ -4,16 +4,45 @@
+@@ -3,17 +3,47 @@
+     v-if="isURL"
      :src="icon"
      alt=""
-     class="inline-block h-[1em] w-[1em] rounded object-contain"
+-    class="inline-block h-[1em] w-[1em] rounded object-contain"
++    class="inline-block !h-[1em] !w-[1em] shrink-0 rounded object-contain"
 +    :class="gap"
    />
 -  <span v-else-if="icon" aria-hidden="true">{{ icon }}</span>
 +  <component
 +    :is="builtin.component"
 +    v-else-if="builtin"
-+    class="inline-block h-[1.1em] w-[1.1em] shrink-0 align-[-0.15em]"
++    class="inline-block !h-[1.1em] !w-[1.1em] shrink-0 align-[-0.15em]"
 +    :class="[builtin.color, gap]"
 +    :stroke-width="2.25"
 +    aria-hidden="true"
@@ -147,6 +149,7 @@ index 65399500..7c2d8a16 100644
 +  alone: { type: Boolean, default: false }
  })
  
++// Icons follow the text size: !h/!w beat parents such as Button that force svgs to size-4.
  const isURL = computed(() => props.icon.startsWith('https://') || props.icon.startsWith('/uploads/'))
 +const builtin = computed(() => BUILTIN_STATUS_ICONS[props.icon])
 +// A small gap before the status name that follows the icon.

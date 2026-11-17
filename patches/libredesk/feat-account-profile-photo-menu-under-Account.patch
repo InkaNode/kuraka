@@ -1,0 +1,219 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:49:24 -0500
+Subject: [PATCH] feat(account): profile photo menu under Account
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Agents cannot see, change or remove their profile photo, because the Profile page is gone.
+Kuraka-Missing-Es: Los agentes no pueden ver, cambiar ni borrar su foto de perfil, porque la página Perfil ya no existe.
+---
+ .../src/components/sidebar/SidebarNavUser.vue | 115 +++++++++++++++++-
+ .../components/ui/avatar/AvatarUpload.vue     |   2 +
+ i18n/en-US.json                               |   3 +
+ i18n/es-ES.json                               |   3 +
+ 4 files changed, 117 insertions(+), 6 deletions(-)
+
+diff --git a/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue b/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
+index 359b7760..6040595b 100644
+--- a/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
++++ b/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
+@@ -85,10 +85,39 @@
+       </DropdownMenuLabel>
+       <DropdownMenuSeparator />
+       <DropdownMenuGroup>
+-        <DropdownMenuItem @click.prevent="router.push({ name: 'account' })">
+-          <CircleUserRound size="18" class="mr-2" />
+-          {{ t('globals.terms.account') }}
+-        </DropdownMenuItem>
++        <DropdownMenuSub>
++          <DropdownMenuSubTrigger>
++            <Avatar class="mr-2 size-[18px]">
++              <AvatarImage :src="userStore.avatar" alt="" />
++              <AvatarFallback class="text-[9px]">{{ userStore.getInitials }}</AvatarFallback>
++            </Avatar>
++            {{ t('globals.terms.account') }}
++          </DropdownMenuSubTrigger>
++          <DropdownMenuSubContent class="min-w-44">
++            <DropdownMenuItem :disabled="!userStore.avatar" @click="showPhoto = true">
++              <Eye size="18" class="mr-2" />
++              {{ t('account.viewPhoto') }}
++            </DropdownMenuItem>
++            <DropdownMenuItem :disabled="isSaving" @click="avatarUpload?.pick()">
++              <ImageUp size="18" class="mr-2" />
++              {{ t('account.changePhoto') }}
++            </DropdownMenuItem>
++            <DropdownMenuItem
++              v-if="userStore.avatar"
++              :disabled="isSaving"
++              class="text-destructive focus:text-destructive"
++              @click="removeAvatar"
++            >
++              <Trash2 size="18" class="mr-2" />
++              {{ t('account.removePhoto') }}
++            </DropdownMenuItem>
++            <DropdownMenuSeparator />
++            <DropdownMenuItem @click="router.push({ name: 'account' })">
++              <Bell size="18" class="mr-2" />
++              {{ t('globals.terms.notification', 2) }}
++            </DropdownMenuItem>
++          </DropdownMenuSubContent>
++        </DropdownMenuSub>
+       </DropdownMenuGroup>
+       <DropdownMenuSeparator />
+       <DropdownMenuGroup>
+@@ -104,6 +133,29 @@
+       </DropdownMenuItem>
+     </DropdownMenuContent>
+   </DropdownMenu>
++
++  <AvatarUpload
++    ref="avatarUpload"
++    class="hidden"
++    :src="userStore.avatar"
++    :initials="userStore.getInitials"
++    :disabled="isSaving"
++    @upload="uploadAvatar"
++  />
++
++  <Dialog v-model:open="showPhoto">
++    <DialogContent class="sm:max-w-sm">
++      <DialogHeader>
++        <DialogTitle>{{ userStore.getFullName }}</DialogTitle>
++        <DialogDescription class="sr-only">{{ t('account.viewPhoto') }}</DialogDescription>
++      </DialogHeader>
++      <img
++        :src="userStore.avatar"
++        :alt="userStore.getFullName"
++        class="aspect-square w-full rounded-lg object-cover"
++      />
++    </DialogContent>
++  </Dialog>
+ </template>
+ 
+ <script setup>
+@@ -115,13 +167,23 @@ import {
+   DropdownMenuItem,
+   DropdownMenuLabel,
+   DropdownMenuSeparator,
++  DropdownMenuSub,
++  DropdownMenuSubContent,
++  DropdownMenuSubTrigger,
+   DropdownMenuTrigger
+ } from '@shared-ui/components/ui/dropdown-menu'
++import {
++  Dialog,
++  DialogContent,
++  DialogDescription,
++  DialogHeader,
++  DialogTitle
++} from '@shared-ui/components/ui/dialog'
+ import { SidebarMenuButton } from '@shared-ui/components/ui/sidebar'
+-import { Avatar, AvatarFallback, AvatarImage } from '@shared-ui/components/ui/avatar'
++import { Avatar, AvatarFallback, AvatarImage, AvatarUpload } from '@shared-ui/components/ui/avatar'
+ import StatusDot from '@shared-ui/components/StatusDot.vue'
+ import { Switch } from '@shared-ui/components/ui/switch'
+-import { ChevronsUpDown, CircleUserRound, Keyboard, LogOut } from 'lucide-vue-next'
++import { Bell, ChevronsUpDown, Eye, ImageUp, Keyboard, LogOut, Trash2 } from 'lucide-vue-next'
+ import { useUserStore } from '@main/stores/user'
+ import { useIsMobile } from '@shared-ui/composables'
+ import { useRouter } from 'vue-router'
+@@ -129,6 +191,11 @@ import { useKeyboardShortcutsDialog } from '@main/composables/useKeyboardShortcu
+ import { useLogout } from '@main/composables/useLogout'
+ 
+ import { useColorMode } from '@vueuse/core'
++import { ref } from 'vue'
++import { useEmitter } from '@main/composables/useEmitter'
++import { EMITTER_EVENTS } from '@main/constants/emitterEvents'
++import { handleHTTPError } from '@shared-ui/utils/http.js'
++import api from '@main/api'
+ 
+ const isMobile = useIsMobile()
+ const mode = useColorMode()
+@@ -137,4 +204,40 @@ const router = useRouter()
+ const { t } = useI18n()
+ const shortcutsDialog = useKeyboardShortcutsDialog()
+ const logout = useLogout()
++const emitter = useEmitter()
++const avatarUpload = ref(null)
++const showPhoto = ref(false)
++const isSaving = ref(false)
++
++const toast = (description, variant) =>
++  emitter.emit(EMITTER_EVENTS.SHOW_TOAST, { description, variant })
++
++const uploadAvatar = async (file) => {
++  const formData = new FormData()
++  formData.append('files', file, 'avatar.png')
++  isSaving.value = true
++  try {
++    await api.updateCurrentUser(formData)
++    userStore.setAvatar(URL.createObjectURL(file))
++    toast(t('globals.messages.savedSuccessfully'))
++  } catch (error) {
++    toast(handleHTTPError(error).message, 'destructive')
++  } finally {
++    isSaving.value = false
++  }
++}
++
++const removeAvatar = async () => {
++  isSaving.value = true
++  try {
++    await api.deleteUserAvatar()
++    userStore.clearAvatar()
++    showPhoto.value = false
++    toast(t('account.avatarRemoved'))
++  } catch (error) {
++    toast(handleHTTPError(error).message, 'destructive')
++  } finally {
++    isSaving.value = false
++  }
++}
+ </script>
+diff --git a/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue b/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
+index 73ece293..4fcf9223 100644
+--- a/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
++++ b/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
+@@ -107,6 +107,8 @@ function triggerFileInput() {
+   fileInput.value?.click()
+ }
+ 
++defineExpose({ pick: triggerFileInput })
++
+ function handleChange(e) {
+   const file = e.target.files[0]
+   if (!file) return
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 56946043..5d166641 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -2,9 +2,12 @@
+   "_.code": "en-US",
+   "_.name": "English (United States)",
+   "account.avatarRemoved": "Avatar removed",
++  "account.changePhoto": "Change photo",
+   "account.changeAvatar": "Change your avatar here.",
+   "account.cropAvatar": "Crop avatar",
+   "account.editProfile": "Edit profile",
++  "account.removePhoto": "Remove photo",
++  "account.viewPhoto": "View photo",
+   "account.publicAvatar": "Public avatar",
+   "actions.addAction": "Add action",
+   "actions.addCondition": "Add condition",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 5cbcba17..e23009bb 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -1,6 +1,9 @@
+ {
+   "_.code": "es-ES",
+   "_.name": "Español",
++  "account.changePhoto": "Cambiar foto",
++  "account.removePhoto": "Borrar foto",
++  "account.viewPhoto": "Ver foto",
+   "account.avatarRemoved": "Avatar eliminado",
+   "account.changeAvatar": "Cambia tu avatar aquí.",
+   "account.cropAvatar": "Recortar avatar",
