@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Wed, 18 Nov 2026 00:55:23 -0500
+Subject: [PATCH] feat(conversation): icons in the sort menu
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: The sort menu shows only text, without an icon for each order.
+Kuraka-Missing-Es: El menú de orden solo muestra texto, sin un icono para cada orden.
+---
+ .../conversation/list/ConversationList.vue    | 57 ++++++++++++-------
+ 1 file changed, 36 insertions(+), 21 deletions(-)
+
+diff --git a/frontend/apps/main/src/features/conversation/list/ConversationList.vue b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+index c3fa7bf9..2851b951 100644
+--- a/frontend/apps/main/src/features/conversation/list/ConversationList.vue
++++ b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+@@ -44,6 +44,11 @@
+       <DropdownMenu>
+         <DropdownMenuTrigger asChild>
+           <Button type="button" variant="ghost" size="sm" :class="FILTER_TRIGGER_CLASS">
++            <component
++              :is="SORT_ICONS[conversationStore.conversations.sortField]"
++              class="size-3.5 shrink-0 text-muted-foreground"
++              aria-hidden="true"
++            />
+             <span class="truncate" :title="conversationStore.getListSortField">{{
+               conversationStore.getListSortField
+             }}</span>
+@@ -51,26 +56,13 @@
+           </Button>
+         </DropdownMenuTrigger>
+         <DropdownMenuContent>
+-          <DropdownMenuItem @click="handleSortChange('oldest')">
+-            {{ $t('conversation.sort.oldestActivity') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('newest')">
+-            {{ $t('conversation.sort.newestActivity') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('started_first')">
+-            {{ $t('conversation.sort.startedFirst') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('started_last')">
+-            {{ $t('conversation.sort.startedLast') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('waiting_longest')">
+-            {{ $t('conversation.sort.waitingLongest') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('next_sla_target')">
+-            {{ $t('conversation.sort.nextSLATarget') }}
+-          </DropdownMenuItem>
+-          <DropdownMenuItem @click="handleSortChange('priority_first')">
+-            {{ $t('conversation.sort.priorityFirst') }}
++          <DropdownMenuItem
++            v-for="option in SORT_OPTIONS"
++            :key="option.value"
++            @click="handleSortChange(option.value)"
++          >
++            <component :is="option.icon" class="text-muted-foreground" aria-hidden="true" />
++            {{ $t(option.label) }}
+           </DropdownMenuItem>
+         </DropdownMenuContent>
+       </DropdownMenu>
+@@ -159,7 +151,19 @@ const FILTER_TRIGGER_CLASS = 'min-w-0 justify-start gap-1.5 px-2 text-xs'
+ import { computed, watch } from 'vue'
+ import { useRoute } from 'vue-router'
+ import { useI18n } from 'vue-i18n'
+-import { Inbox, MessageCircleWarning, ChevronDown, Loader2 } from 'lucide-vue-next'
++import {
++  Inbox,
++  MessageCircleWarning,
++  ChevronDown,
++  Loader2,
++  ClockArrowUp,
++  ClockArrowDown,
++  CalendarArrowUp,
++  CalendarArrowDown,
++  Hourglass,
++  Timer,
++  SignalHigh
++} from 'lucide-vue-next'
+ import { Button } from '@shared-ui/components/ui/button'
+ import {
+   DropdownMenu,
+@@ -176,6 +180,17 @@ import ConversationBulkActionToolbar from '@/features/conversation/list/Conversa
+ import ConversationListItem from '@/features/conversation/list/ConversationListItem.vue'
+ import ConversationListItemSkeleton from '@/features/conversation/list/ConversationListItemSkeleton.vue'
+ 
++const SORT_OPTIONS = [
++  { value: 'oldest', label: 'conversation.sort.oldestActivity', icon: ClockArrowUp },
++  { value: 'newest', label: 'conversation.sort.newestActivity', icon: ClockArrowDown },
++  { value: 'started_first', label: 'conversation.sort.startedFirst', icon: CalendarArrowUp },
++  { value: 'started_last', label: 'conversation.sort.startedLast', icon: CalendarArrowDown },
++  { value: 'waiting_longest', label: 'conversation.sort.waitingLongest', icon: Hourglass },
++  { value: 'next_sla_target', label: 'conversation.sort.nextSLATarget', icon: Timer },
++  { value: 'priority_first', label: 'conversation.sort.priorityFirst', icon: SignalHigh }
++]
++const SORT_ICONS = Object.fromEntries(SORT_OPTIONS.map((option) => [option.value, option.icon]))
++
+ const conversationStore = useConversationStore()
+ const teamStore = useTeamStore()
+ const { canBulkAct } = useBulkActionPermissions()
