@@ -1,0 +1,678 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 09:43:31 -0500
+Subject: [PATCH] feat(automations): hours since in business hours and since a
+ tag was added
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Hours since conditions cannot count business hours only, and there is no Hours since tag added condition.
+Kuraka-Missing-Es: Las condiciones de horas no pueden contar solo el horario laboral, y no existe la condición Horas desde que se agregó la etiqueta.
+---
+ cmd/main.go                                   |  1 +
+ .../src/composables/useConversationFilters.js |  6 ++
+ .../src/features/admin/automation/RuleBox.vue | 24 ++++++
+ .../admin/automations/CreateOrEditRule.vue    |  3 +
+ i18n/en-US.json                               |  3 +
+ i18n/es-ES.json                               |  3 +
+ internal/automation/automation.go             |  6 ++
+ internal/automation/evaluator.go              | 29 +++----
+ internal/automation/evaluator_test.go         |  6 ++
+ internal/automation/hours_since_test.go       | 83 +++++++++++++++++++
+ internal/automation/kuraka.go                 | 59 ++++++++++++-
+ internal/automation/models/models.go          |  5 ++
+ internal/conversation/conversation.go         |  1 +
+ internal/conversation/kuraka.go               | 12 +++
+ internal/conversation/queries.sql             |  8 ++
+ internal/sla/kuraka.go                        | 75 +++++++++++++++++
+ internal/sla/kuraka_test.go                   | 49 +++++++++++
+ 17 files changed, 354 insertions(+), 19 deletions(-)
+ create mode 100644 internal/automation/hours_since_test.go
+ create mode 100644 internal/sla/kuraka.go
+ create mode 100644 internal/sla/kuraka_test.go
+
+diff --git a/cmd/main.go b/cmd/main.go
+index 197c865c..3a43b63c 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -286,6 +286,7 @@ func main() {
+ 
+ 	wsHub.SetConversationStore(conversation)
+ 	automation.SetConversationStore(conversation)
++	automation.SetBusinessHoursStore(sla)
+ 	systemUser, err := user.GetSystemUser()
+ 	if err != nil {
+ 		log.Fatalf("error fetching system user: %v", err)
+diff --git a/frontend/apps/main/src/composables/useConversationFilters.js b/frontend/apps/main/src/composables/useConversationFilters.js
+index c612c7fd..1738e762 100644
+--- a/frontend/apps/main/src/composables/useConversationFilters.js
++++ b/frontend/apps/main/src/composables/useConversationFilters.js
+@@ -324,6 +324,12 @@ export function useConversationFilters () {
+             type: FIELD_TYPE.NUMBER,
+             operators: FIELD_OPERATORS.NUMBER
+         },
++        hours_since_tag_added: {
++            label: t('kuraka.hoursSinceTagAdded'),
++            icon: Tag,
++            type: FIELD_TYPE.NUMBER,
++            operators: FIELD_OPERATORS.NUMBER
++        },
+         inbox: {
+             label: t('globals.terms.inbox'),
+             icon: Inbox,
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleBox.vue b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+index 97cf35eb..469d3054 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+@@ -212,6 +212,23 @@
+             />
+             <label for="terms"> {{ $t('globals.messages.caseSensitiveMatch') }} </label>
+           </div>
++
++          <div v-if="rule.field?.startsWith('hours_since_') && (rule.field_type || 'conversation') === 'conversation'" class="flex flex-wrap items-center gap-x-4 gap-y-2">
++            <SelectTagCombobox
++              v-if="rule.field === 'hours_since_tag_added'"
++              class="w-auto min-w-48"
++              :modelValue="rule.tag"
++              @select="(value) => setRuleOption(index, 'tag', typeof value === 'object' ? value.value : value)"
++            />
++            <div class="flex items-center space-x-2">
++              <Checkbox
++                :id="`business-hours-${groupIndex}-${index}`"
++                :checked="!!rule.business_hours"
++                @update:checked="(value) => setRuleOption(index, 'business_hours', value)"
++              />
++              <label :for="`business-hours-${groupIndex}-${index}`">{{ $t('kuraka.businessHoursOnly') }}</label>
++            </div>
++          </div>
+         </div>
+       </div>
+       <div>
+@@ -335,6 +352,8 @@ const handleFieldChange = (value, ruleIndex) => {
+   ruleGroup.value.rules[ruleIndex].operator = ''
+   ruleGroup.value.rules[ruleIndex].value = ''
+   ruleGroup.value.rules[ruleIndex].case_sensitive_match = false
++  delete ruleGroup.value.rules[ruleIndex].business_hours
++  delete ruleGroup.value.rules[ruleIndex].tag
+   ruleGroup.value.rules[ruleIndex].field = value
+   ruleGroup.value.rules[ruleIndex].field_type = fieldType
+   emitUpdate()
+@@ -369,6 +388,11 @@ const handleCaseSensitiveCheck = (value, ruleIndex) => {
+   emitUpdate()
+ }
+ 
++const setRuleOption = (ruleIndex, key, value) => {
++  ruleGroup.value.rules[ruleIndex][key] = value
++  emitUpdate()
++}
++
+ const removeCondition = (index) => {
+   emit('remove-condition', props.groupIndex, index)
+ }
+diff --git a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+index 3f569145..abe402a1 100644
+--- a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
++++ b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+@@ -423,6 +423,9 @@ const getRulesValidationError = () => {
+       if (rule.operator !== OPERATOR.SET && rule.operator !== OPERATOR.NOT_SET && !rule.value) {
+         return t('admin.automation.validation.setConditionValue')
+       }
++      if (rule.field === 'hours_since_tag_added' && !rule.tag?.trim()) {
++        return t('kuraka.selectConditionTag')
++      }
+     }
+   }
+ 
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 4effe609..3d4e50ab 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1565,13 +1565,16 @@
+   "inbox.oauthNotFound": "No inbox found with this email to reconnect.",
+   "kuraka.actorAgent": "Agent who did the action",
+   "kuraka.allInboxes": "All inboxes",
++  "kuraka.businessHoursOnly": "Count business hours only",
+   "kuraka.collapseSidebar": "Collapse sidebar",
+   "kuraka.displayAs": "Display as",
+   "kuraka.expandSidebar": "Expand sidebar",
+   "kuraka.groupByWeight": "Group by weight",
++  "kuraka.hoursSinceTagAdded": "Hours since tag added",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
++  "kuraka.selectConditionTag": "Select the tag for the condition",
+   "kuraka.sortManual": "My order (drag)",
+   "kuraka.sortName": "Alphabetical",
+   "kuraka.sortTeamInboxes": "Sort team inboxes",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 2a81926a..8f827d94 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -832,13 +832,16 @@
+   "inbox.oauthNotFound": "No se encontró ninguna bandeja de entrada con este correo electrónico para reconectar.",
+   "kuraka.actorAgent": "Agente que hizo la acción",
+   "kuraka.allInboxes": "Todos los buzones",
++  "kuraka.businessHoursOnly": "Contar solo horario laboral",
+   "kuraka.collapseSidebar": "Contraer barra",
+   "kuraka.displayAs": "Mostrar como",
+   "kuraka.expandSidebar": "Expandir barra",
+   "kuraka.groupByWeight": "Agrupar por peso",
++  "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
++  "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
+   "kuraka.sortManual": "Mi orden (arrastrar)",
+   "kuraka.sortName": "Alfabético",
+   "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
+diff --git a/internal/automation/automation.go b/internal/automation/automation.go
+index 85ad713c..5738c76d 100644
+--- a/internal/automation/automation.go
++++ b/internal/automation/automation.go
+@@ -56,6 +56,7 @@ type Engine struct {
+ 	i18n                    *i18n.I18n
+ 	conversationStore       conversationStore
+ 	systemUserID            int
++	businessHours           businessHoursStore
+ 	taskQueue               chan ConversationTask
+ 	closed                  bool
+ 	closedMu                sync.RWMutex
+@@ -78,6 +79,11 @@ type conversationStore interface {
+ 	GetConversation(teamID int, uuid, refNum string) (cmodels.Conversation, error)
+ 	GetConversationsCreatedAfter(after time.Time, afterID, limit int) ([]cmodels.ConversationRef, error)
+ 	IsHumanAgent(id int) bool
++	TagAddedAt(conversationID int, tag string) (time.Time, error)
++}
++
++type businessHoursStore interface {
++	ElapsedBusinessMinutes(teamID int, start, end time.Time) (int, error)
+ }
+ 
+ type queries struct {
+diff --git a/internal/automation/evaluator.go b/internal/automation/evaluator.go
+index 62398a7a..2b7e2c11 100644
+--- a/internal/automation/evaluator.go
++++ b/internal/automation/evaluator.go
+@@ -5,7 +5,6 @@ import (
+ 	"fmt"
+ 	"strconv"
+ 	"strings"
+-	"time"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/automation/models"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
+@@ -154,24 +153,18 @@ func (e *Engine) evaluateRule(rule models.RuleDetail, conversation cmodels.Conve
+ 			if conversation.AssignedUserID.Valid {
+ 				valueToCompare = strconv.Itoa(conversation.AssignedUserID.Int)
+ 			}
+-		case models.ConversationHoursSinceCreated:
+-			valueToCompare = fmt.Sprintf("%.0f", (time.Since(conversation.CreatedAt).Hours()))
+-		case models.ConversationHoursSinceFirstReply:
+-			if !conversation.FirstReplyAt.IsZero() {
+-				valueToCompare = fmt.Sprintf("%.0f", (time.Since(conversation.FirstReplyAt.Time).Hours()))
+-			}
+-		case models.ConversationHoursSinceLastReply:
+-			if !conversation.LastReplyAt.IsZero() {
+-				valueToCompare = fmt.Sprintf("%.0f", (time.Since(conversation.LastReplyAt.Time).Hours()))
+-			}
+-		case models.ConversationHoursSinceResolved:
+-			if !conversation.ResolvedAt.IsZero() {
+-				valueToCompare = fmt.Sprintf("%.0f", (time.Since(conversation.ResolvedAt.Time).Hours()))
++		case models.ConversationHoursSinceCreated, models.ConversationHoursSinceFirstReply, models.ConversationHoursSinceLastReply,
++			models.ConversationHoursSinceResolved, models.ConversationHoursSinceLastResolved, models.ConversationHoursSinceTagAdded:
++			since, ok := e.hoursSinceStart(rule, conversation)
++			if !ok {
++				return false
+ 			}
+-		case models.ConversationHoursSinceLastResolved:
+-			if !conversation.LastResolvedAt.IsZero() {
+-				valueToCompare = fmt.Sprintf("%.0f", time.Since(conversation.LastResolvedAt.Time).Hours())
+-			} else if rule.Operator != models.RuleOperatorSet && rule.Operator != models.RuleOperatorNotSet {
++			if !since.IsZero() {
++				if valueToCompare, ok = e.hoursSince(since, rule, conversation); !ok {
++					return false
++				}
++			} else if (rule.Field == models.ConversationHoursSinceLastResolved || rule.Field == models.ConversationHoursSinceTagAdded) &&
++				rule.Operator != models.RuleOperatorSet && rule.Operator != models.RuleOperatorNotSet {
+ 				return false
+ 			}
+ 		case models.ConversationInbox:
+diff --git a/internal/automation/evaluator_test.go b/internal/automation/evaluator_test.go
+index 5d15f7e0..642f8bbc 100644
+--- a/internal/automation/evaluator_test.go
++++ b/internal/automation/evaluator_test.go
+@@ -2,6 +2,7 @@ package automation
+ 
+ import (
+ 	"encoding/json"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+@@ -20,6 +21,7 @@ type mockConversationStore struct {
+ 	appliedActions []models.RuleAction
+ 	callCount      int
+ 	nonAgents      map[int]bool
++	tagsAddedAt    map[string]time.Time
+ }
+ 
+ func (m *mockConversationStore) ApplyAction(action models.RuleAction, conversation cmodels.Conversation, user umodels.User) error {
+@@ -29,6 +31,10 @@ func (m *mockConversationStore) ApplyAction(action models.RuleAction, conversati
+ 	return args.Error(0)
+ }
+ 
++func (m *mockConversationStore) TagAddedAt(conversationID int, tag string) (time.Time, error) {
++	return m.tagsAddedAt[strings.ToLower(tag)], nil
++}
++
+ func (m *mockConversationStore) IsHumanAgent(id int) bool {
+ 	return id > 0 && !m.nonAgents[id]
+ }
+diff --git a/internal/automation/hours_since_test.go b/internal/automation/hours_since_test.go
+new file mode 100644
+index 00000000..9f7e1eb8
+--- /dev/null
++++ b/internal/automation/hours_since_test.go
+@@ -0,0 +1,83 @@
++package automation
++
++import (
++	"encoding/json"
++	"errors"
++	"testing"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/automation/models"
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/stretchr/testify/assert"
++	"github.com/volatiletech/null/v9"
++)
++
++type fakeBusinessHours struct {
++	minutes int
++	err     error
++	teamID  int
++}
++
++func (f *fakeBusinessHours) ElapsedBusinessMinutes(teamID int, start, end time.Time) (int, error) {
++	f.teamID = teamID
++	return f.minutes, f.err
++}
++
++func TestHoursSinceBusinessHours(t *testing.T) {
++	conversation := cmodels.Conversation{CreatedAt: time.Now().Add(-48 * time.Hour), AssignedTeamID: null.IntFrom(7)}
++	rule := models.RuleDetail{Field: models.ConversationHoursSinceCreated, Operator: models.RuleOperatorLessThan, Value: "10", BusinessHours: true}
++
++	engine := createTestEngine(new(mockConversationStore))
++	assert.False(t, engine.evaluateRule(rule, conversation, nil), "no business hours store")
++
++	hours := &fakeBusinessHours{minutes: 9 * 60}
++	engine.SetBusinessHoursStore(hours)
++	assert.True(t, engine.evaluateRule(rule, conversation, nil), "9 business hours < 10")
++	assert.Equal(t, 7, hours.teamID)
++
++	rule.BusinessHours = false
++	assert.False(t, engine.evaluateRule(rule, conversation, nil), "48 calendar hours")
++
++	rule.BusinessHours = true
++	hours.err = errors.New("business hours not configured")
++	assert.False(t, engine.evaluateRule(rule, conversation, nil), "error never matches")
++}
++
++func TestHoursSinceTagAdded(t *testing.T) {
++	store := &mockConversationStore{tagsAddedAt: map[string]time.Time{"waiting": time.Now().Add(-30 * time.Hour)}}
++	engine := createTestEngine(store)
++	conversation := cmodels.Conversation{ID: 1}
++	for _, tc := range []struct {
++		tag, operator, value string
++		want                 bool
++	}{
++		{"Waiting", models.RuleOperatorGreaterThan, "24", true},
++		{"waiting", models.RuleOperatorLessThan, "24", false},
++		{"waiting", models.RuleOperatorSet, "", true},
++		{"other", models.RuleOperatorNotSet, "", true},
++		{"other", models.RuleOperatorSet, "", false},
++		{"other", models.RuleOperatorLessThan, "24", false},
++		{"other", models.RuleOperatorGreaterThan, "-1", false},
++	} {
++		rule := models.RuleDetail{Field: models.ConversationHoursSinceTagAdded, Operator: tc.operator, Value: tc.value, Tag: tc.tag}
++		assert.Equal(t, tc.want, engine.evaluateRule(rule, conversation, nil), "%+v", tc)
++	}
++}
++
++func TestHoursSinceValidation(t *testing.T) {
++	for _, tc := range []struct {
++		detail models.RuleDetail
++		valid  bool
++	}{
++		{models.RuleDetail{Field: models.ConversationHoursSinceTagAdded, Operator: "greater than", Value: "4", Tag: "vip"}, true},
++		{models.RuleDetail{Field: models.ConversationHoursSinceTagAdded, Operator: "greater than", Value: "4", Tag: " "}, false},
++		{models.RuleDetail{Field: models.ConversationHoursSinceLastReply, Operator: "greater than", Value: "4", BusinessHours: true}, true},
++		{models.RuleDetail{Field: models.ConversationSubject, Operator: "equals", Value: "x", BusinessHours: true}, false},
++		{models.RuleDetail{Field: models.ConversationHoursSinceCreated, FieldType: models.FieldTypeContactCustomAttribute, Operator: "equals", BusinessHours: true}, false},
++	} {
++		rules, err := json.Marshal([]models.Rule{{Groups: []models.RuleGroup{{Rules: []models.RuleDetail{tc.detail}}}}})
++		assert.NoError(t, err)
++		record := models.RuleRecord{Type: models.RuleTypeTimeTrigger, Rules: rules}
++		assert.Equal(t, tc.valid, validateRuleFields(record) == nil, "%+v", tc.detail)
++	}
++}
+diff --git a/internal/automation/kuraka.go b/internal/automation/kuraka.go
+index c8337afa..13654a0a 100644
+--- a/internal/automation/kuraka.go
++++ b/internal/automation/kuraka.go
+@@ -6,6 +6,7 @@ import (
+ 	"slices"
+ 	"strconv"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/automation/models"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
+@@ -14,6 +15,56 @@ import (
+ 	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ )
+ 
++var hoursSinceFields = []string{models.ConversationHoursSinceCreated, models.ConversationHoursSinceFirstReply,
++	models.ConversationHoursSinceLastReply, models.ConversationHoursSinceResolved,
++	models.ConversationHoursSinceLastResolved, models.ConversationHoursSinceTagAdded}
++
++// SetBusinessHoursStore sets where conditions in business hours read the working time.
++func (e *Engine) SetBusinessHoursStore(store businessHoursStore) {
++	e.businessHours = store
++}
++
++// hoursSinceStart is when an hours_since_* condition starts counting, zero if that has not happened.
++func (e *Engine) hoursSinceStart(rule models.RuleDetail, conversation cmodels.Conversation) (time.Time, bool) {
++	switch rule.Field {
++	case models.ConversationHoursSinceCreated:
++		return conversation.CreatedAt, true
++	case models.ConversationHoursSinceFirstReply:
++		return conversation.FirstReplyAt.Time, true
++	case models.ConversationHoursSinceLastReply:
++		return conversation.LastReplyAt.Time, true
++	case models.ConversationHoursSinceResolved:
++		return conversation.ResolvedAt.Time, true
++	case models.ConversationHoursSinceLastResolved:
++		return conversation.LastResolvedAt.Time, true
++	case models.ConversationHoursSinceTagAdded:
++		addedAt, err := e.conversationStore.TagAddedAt(conversation.ID, strings.TrimSpace(rule.Tag))
++		if err != nil {
++			e.lo.Error("error fetching when the tag was added", "tag", rule.Tag, "conversation_uuid", conversation.UUID, "error", err)
++			return time.Time{}, false
++		}
++		return addedAt, true
++	}
++	return time.Time{}, false
++}
++
++// hoursSince is the whole hours from start to now, counting only open time when the condition asks for business hours.
++func (e *Engine) hoursSince(start time.Time, rule models.RuleDetail, conversation cmodels.Conversation) (string, bool) {
++	hours := time.Since(start).Hours()
++	if rule.BusinessHours {
++		if e.businessHours == nil {
++			return "", false
++		}
++		minutes, err := e.businessHours.ElapsedBusinessMinutes(conversation.AssignedTeamID.Int, start, time.Now())
++		if err != nil {
++			e.lo.Error("error counting business hours", "field", rule.Field, "conversation_uuid", conversation.UUID, "error", err)
++			return "", false
++		}
++		hours = float64(minutes) / 60
++	}
++	return fmt.Sprintf("%.0f", hours), true
++}
++
+ func isActorField(field string) bool {
+ 	return field == models.ConversationAssignedUser || field == models.ConversationPreviousAssignedUser
+ }
+@@ -175,7 +226,7 @@ func validateRuleFields(record models.RuleRecord) error {
+ 						models.ConversationPreviousAssignedUser, models.ConversationPreviousAssignedTeam,
+ 						models.ConversationHoursSinceCreated, models.ConversationHoursSinceFirstReply,
+ 						models.ConversationHoursSinceLastReply, models.ConversationHoursSinceResolved,
+-						models.ConversationHoursSinceLastResolved}, condition.Field) {
++						models.ConversationHoursSinceLastResolved, models.ConversationHoursSinceTagAdded}, condition.Field) {
+ 						return invalid(fmt.Sprintf("invalid automation field %q", condition.Field))
+ 					}
+ 					if condition.Field == models.ConversationTagsAdded || condition.Field == models.ConversationTagsRemoved {
+@@ -188,6 +239,9 @@ func validateRuleFields(record models.RuleRecord) error {
+ 							return invalid("invalid tag operator")
+ 						}
+ 					}
++					if condition.Field == models.ConversationHoursSinceTagAdded && strings.TrimSpace(condition.Tag) == "" {
++						return invalid("hours since tag added requires a tag")
++					}
+ 					if condition.Field == models.ConversationChannel {
+ 						if condition.Operator != models.RuleOperatorEquals && condition.Operator != models.RuleOperatorNotEqual {
+ 							return invalid("invalid channel operator")
+@@ -200,6 +254,9 @@ func validateRuleFields(record models.RuleRecord) error {
+ 				default:
+ 					return invalid(fmt.Sprintf("invalid automation field type %q", condition.FieldType))
+ 				}
++				if condition.BusinessHours && (condition.FieldType != "" && condition.FieldType != models.FieldTypeConversationField || !slices.Contains(hoursSinceFields, condition.Field)) {
++					return invalid("business hours only apply to hours since conditions")
++				}
+ 				if isActorField(condition.Field) && condition.Value == models.ValueActor && record.Type != models.RuleTypeConversationUpdate {
+ 					return invalid("the agent who did the action requires a conversation_update rule")
+ 				}
+diff --git a/internal/automation/models/models.go b/internal/automation/models/models.go
+index 58483b48..223163de 100644
+--- a/internal/automation/models/models.go
++++ b/internal/automation/models/models.go
+@@ -54,6 +54,7 @@ const (
+ 	ConversationHoursSinceLastReply    = "hours_since_last_reply"
+ 	ConversationHoursSinceResolved     = "hours_since_resolved"
+ 	ConversationHoursSinceLastResolved = "hours_since_last_resolved"
++	ConversationHoursSinceTagAdded     = "hours_since_tag_added"
+ 	ConversationInbox                  = "inbox"
+ 	ConversationIncomingTo             = "to"
+ 	ContactEmail                       = "contact_email"
+@@ -135,6 +136,10 @@ type RuleDetail struct {
+ 	Operator           string `json:"operator" db:"operator"`
+ 	Value              string `json:"value" db:"value"`
+ 	CaseSensitiveMatch bool   `json:"case_sensitive_match" db:"case_sensitive_match"`
++	// BusinessHours counts hours_since_* in the business hours of the assigned team or the default ones.
++	BusinessHours bool `json:"business_hours,omitempty" db:"-"`
++	// Tag is the tag name for hours_since_tag_added.
++	Tag string `json:"tag,omitempty" db:"-"`
+ }
+ 
+ type RuleAction struct {
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index 45e69031..93c5e59e 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -375,6 +375,7 @@ type queries struct {
+ 	SetConversationTags                 *sqlx.Stmt `query:"set-conversation-tags"`
+ 	RemoveConversationTags              *sqlx.Stmt `query:"remove-conversation-tags"`
+ 	GetConversationTags                 *sqlx.Stmt `query:"get-conversation-tags"`
++	GetTagAddedAt                       *sqlx.Stmt `query:"get-tag-added-at"`
+ 	UnassignOpenConversations           *sqlx.Stmt `query:"unassign-open-conversations"`
+ 	ReOpenConversation                  *sqlx.Stmt `query:"re-open-conversation"`
+ 	UnsnoozeAll                         *sqlx.Stmt `query:"unsnooze-all"`
+diff --git a/internal/conversation/kuraka.go b/internal/conversation/kuraka.go
+index 1ded00a7..ac7368e7 100644
+--- a/internal/conversation/kuraka.go
++++ b/internal/conversation/kuraka.go
+@@ -1,8 +1,11 @@
+ package conversation
+ 
+ import (
++	"database/sql"
++	"errors"
+ 	"slices"
+ 	"strings"
++	"time"
+ 
+ 	amodels "github.com/abhinavxd/libredesk/internal/automation/models"
+ 	"github.com/abhinavxd/libredesk/internal/conversation/models"
+@@ -42,3 +45,12 @@ func (c *Manager) IsHumanAgent(id int) bool {
+ 	user, err := c.userStore.GetAgentCachedOrLoad(id)
+ 	return err == nil && user.Type == umodels.UserTypeAgent && user.Enabled
+ }
++
++// TagAddedAt is when the tag, matched ignoring case, was added to the conversation, or zero if it does not have it.
++func (c *Manager) TagAddedAt(conversationID int, tag string) (time.Time, error) {
++	var addedAt time.Time
++	if err := c.q.GetTagAddedAt.Get(&addedAt, conversationID, tag); err != nil && !errors.Is(err, sql.ErrNoRows) {
++		return time.Time{}, err
++	}
++	return addedAt, nil
++}
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 77aa2822..944ca409 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -749,6 +749,14 @@ FROM conversation_tags ct
+ JOIN tags t ON ct.tag_id = t.id
+ WHERE ct.conversation_id = (SELECT id FROM conversations WHERE uuid = $1);
+ 
++-- name: get-tag-added-at
++SELECT ct.created_at
++FROM conversation_tags ct
++JOIN tags t ON ct.tag_id = t.id
++WHERE ct.conversation_id = $1 AND LOWER(t.name) = LOWER($2) AND ct.created_at IS NOT NULL
++ORDER BY ct.created_at DESC
++LIMIT 1;
++
+ -- name: get-conversation-uuid-from-message-uuid
+ SELECT c.uuid AS conversation_uuid
+ FROM conversation_messages m
+diff --git a/internal/sla/kuraka.go b/internal/sla/kuraka.go
+new file mode 100644
+index 00000000..200991db
+--- /dev/null
++++ b/internal/sla/kuraka.go
+@@ -0,0 +1,75 @@
++package sla
++
++import (
++	"encoding/json"
++	"fmt"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/business_hours/models"
++)
++
++// ElapsedBusinessMinutes counts the working minutes between start and end in the business hours
++// of the team, or the default ones when the team has none.
++// frugal: one business hours lookup per call; cache it per time trigger run if many conversations use it.
++func (m *Manager) ElapsedBusinessMinutes(teamID int, start, end time.Time) (int, error) {
++	businessHours, timeZone, err := m.getBusinessHoursAndTimezone(teamID)
++	if err != nil {
++		return 0, err
++	}
++	return businessMinutesBetween(start, end, businessHours, timeZone)
++}
++
++// businessMinutesBetween is the working time between start and end, skipping holidays and closed days.
++func businessMinutesBetween(start, end time.Time, businessHours models.BusinessHours, timeZone string) (int, error) {
++	if !end.After(start) {
++		return 0, nil
++	}
++	if businessHours.IsAlwaysOpen {
++		return int(end.Sub(start).Minutes()), nil
++	}
++	loc, err := time.LoadLocation(timeZone)
++	if err != nil {
++		return 0, fmt.Errorf("invalid time zone %s: %v", timeZone, err)
++	}
++	var workingHours map[string]models.WorkingHours
++	if err := json.Unmarshal(businessHours.Hours, &workingHours); err != nil {
++		return 0, fmt.Errorf("could not unmarshal working hours: %v", err)
++	}
++	var holidays []models.Holiday
++	if len(businessHours.Holidays) > 0 {
++		if err := json.Unmarshal(businessHours.Holidays, &holidays); err != nil {
++			return 0, fmt.Errorf("could not unmarshal holidays: %v", err)
++		}
++	}
++	isHoliday := make(map[string]bool, len(holidays))
++	for _, holiday := range holidays {
++		isHoliday[holiday.Date] = true
++	}
++
++	start, end = start.In(loc), end.In(loc)
++	var elapsed time.Duration
++	for day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc); day.Before(end); day = nextDay(day, loc) {
++		hours, open := workingHours[day.Weekday().String()]
++		if !open || isHoliday[day.Format(time.DateOnly)] {
++			continue
++		}
++		opensAt, err := parseTime(day, hours.Open, loc)
++		if err != nil {
++			return 0, fmt.Errorf("invalid open time %s: %v", hours.Open, err)
++		}
++		closesAt, err := parseTime(day, hours.Close, loc)
++		if err != nil {
++			return 0, fmt.Errorf("invalid close time %s: %v", hours.Close, err)
++		}
++		if opensAt.Before(start) {
++			opensAt = start
++		}
++		if closesAt.After(end) {
++			closesAt = end
++		}
++		if closesAt.After(opensAt) {
++			elapsed += closesAt.Sub(opensAt)
++		}
++	}
++	return int(elapsed.Minutes()), nil
++}
+diff --git a/internal/sla/kuraka_test.go b/internal/sla/kuraka_test.go
+new file mode 100644
+index 00000000..934d9789
+--- /dev/null
++++ b/internal/sla/kuraka_test.go
+@@ -0,0 +1,49 @@
++package sla
++
++import (
++	"testing"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/business_hours/models"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestBusinessMinutesBetween(t *testing.T) {
++	weekdays := models.BusinessHours{
++		Hours: mustMarshalJSON(map[string]models.WorkingHours{
++			"Monday": {Open: "09:00", Close: "17:00"}, "Tuesday": {Open: "09:00", Close: "17:00"},
++			"Wednesday": {Open: "09:00", Close: "17:00"}, "Thursday": {Open: "09:00", Close: "17:00"},
++			"Friday": {Open: "09:00", Close: "17:00"},
++		}),
++		Holidays: mustMarshalJSON([]models.Holiday{{Date: "2023-10-11"}}),
++	}
++	at := func(day, hour, minute int) time.Time { return time.Date(2023, 10, day, hour, minute, 0, 0, time.UTC) }
++
++	tests := []struct {
++		name       string
++		start, end time.Time
++		hours      models.BusinessHours
++		want       int
++	}{
++		{"always open", at(10, 20, 0), at(11, 2, 0), models.BusinessHours{IsAlwaysOpen: true}, 360},
++		{"same working day", at(9, 10, 0), at(9, 12, 30), weekdays, 150},
++		{"before opening to after closing", at(9, 6, 0), at(9, 20, 0), weekdays, 480},
++		{"overnight counts only open time", at(9, 16, 0), at(10, 10, 0), weekdays, 120},
++		{"holiday skipped", at(10, 16, 0), at(12, 10, 0), weekdays, 120},
++		{"weekend skipped", at(13, 16, 0), at(16, 10, 0), weekdays, 120},
++		{"closed the whole time", at(14, 8, 0), at(15, 20, 0), weekdays, 0},
++		{"end before start", at(10, 12, 0), at(9, 12, 0), weekdays, 0},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, err := businessMinutesBetween(tt.start, tt.end, tt.hours, "UTC")
++			assert.NoError(t, err)
++			assert.Equal(t, tt.want, got)
++		})
++	}
++
++	// Working hours are read in the business time zone.
++	got, err := businessMinutesBetween(at(9, 15, 0), at(9, 20, 0), weekdays, "America/Lima")
++	assert.NoError(t, err)
++	assert.Equal(t, 300, got) // 15:00 to 20:00 UTC is 10:00 to 15:00 in Lima.
++}

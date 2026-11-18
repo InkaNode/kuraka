@@ -14,3 +14,4 @@ feat-conversation-list-or-status-groups-view.patch
 feat-sidebar-collapse-the-inbox-sidebar-to-icons.patch
 feat-sidebar-order-team-inboxes-by-hand-name-or-team-weight.patch
 feat-automations-the-agent-who-did-the-action.patch
+feat-automations-hours-since-in-business-hours-and-since-a-t.patch

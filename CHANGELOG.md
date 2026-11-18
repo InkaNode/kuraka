@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk sidebar**: a button next to the inbox title shrinks the sidebar to icons, with each name shown on hover, and opens it again. Team inboxes and views come back when it is opened again.
 - **Libredesk team inboxes**: each team has a **Weight** from 0 to 1000. Agents sort their team inboxes as **My order** (drag, or Alt + arrow keys), **Alphabetical** or **By weight**, where higher weights go first and teams with the same weight stay together, in the agent's order or by name. Teams the agent never moved go last. **Group by weight** adds a heading per weight. The choice is saved to the agent's account.
 - **Libredesk automations**: update rules can assign the conversation to the **Agent who did the action**, and **Assigned user** conditions can compare with that agent. The system, the contact and AI assistants never count as that agent.
+- **Libredesk automations**: **Hours since** conditions can **Count business hours only**, using the business hours of the assigned team or the default ones from General; nights, closed days and holidays do not count. Without business hours set up, those conditions never match. A new **Hours since tag added** condition counts from when the chosen tag was added.
 - **Libredesk Admin → General**: **Collapse activity events after** sets how many activity events in a row are shown before they start collapsed. The default is 2.
 
 ### Changed
