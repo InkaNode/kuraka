@@ -17,7 +17,7 @@ Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar su
  .../src/features/admin/teams/TeamForm.vue     |  11 ++
  .../features/admin/teams/teamFormSchema.js    |   1 +
  frontend/apps/main/src/stores/user.js         |  23 +++
- .../apps/main/src/utils/teamInboxOrder.js     |  30 ++++
+ .../apps/main/src/utils/teamInboxOrder.js     |  31 ++++
  .../main/src/utils/teamInboxOrder.test.js     |  29 ++++
  i18n/en-US.json                               |  11 +-
  i18n/es-ES.json                               |  11 +-
@@ -28,7 +28,7 @@ Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar su
  internal/user/models/models.go                |   2 +
  internal/user/queries.sql                     |  12 +-
  internal/user/user.go                         |  10 ++
- 20 files changed, 355 insertions(+), 48 deletions(-)
+ 20 files changed, 356 insertions(+), 48 deletions(-)
  create mode 100644 frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
  create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.js
  create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.test.js
@@ -425,13 +425,14 @@ index 719bec59..2b1151ee 100644
 \ No newline at end of file
 diff --git a/frontend/apps/main/src/utils/teamInboxOrder.js b/frontend/apps/main/src/utils/teamInboxOrder.js
 new file mode 100644
-index 00000000..32c38191
+index 00000000..feaaac85
 --- /dev/null
 +++ b/frontend/apps/main/src/utils/teamInboxOrder.js
-@@ -0,0 +1,30 @@
-+// Kuraka: how an agent orders their team inboxes. position is the agent's own order (0 = never moved).
+@@ -0,0 +1,31 @@
++// Kuraka: how an agent orders their team inboxes. position is the agent's own order; 0 (never moved, e.g. a team joined later) goes last.
 +const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-+const byPosition = (a, b) => (a.position || 0) - (b.position || 0) || byName(a, b)
++const slot = (team) => team.position || Infinity
++const byPosition = (a, b) => slot(a) - slot(b) || byName(a, b)
 +const byWeight = (a, b) => (b.weight || 0) - (a.weight || 0) || byPosition(a, b)
 +
 +export const sortTeamInboxes = (teams, sort) =>
@@ -461,7 +462,7 @@ index 00000000..32c38191
 +}
 diff --git a/frontend/apps/main/src/utils/teamInboxOrder.test.js b/frontend/apps/main/src/utils/teamInboxOrder.test.js
 new file mode 100644
-index 00000000..d9456f7c
+index 00000000..0f348ac4
 --- /dev/null
 +++ b/frontend/apps/main/src/utils/teamInboxOrder.test.js
 @@ -0,0 +1,29 @@
@@ -479,7 +480,7 @@ index 00000000..d9456f7c
 +describe('team inbox order', () => {
 +  it('sorts by name, by own position and by weight', () => {
 +    expect(ids(sortTeamInboxes(teams, 'name'))).toEqual([2, 4, 3, 1])
-+    expect(ids(sortTeamInboxes(teams, 'manual'))).toEqual([2, 4, 3, 1])
++    expect(ids(sortTeamInboxes(teams, 'manual'))).toEqual([3, 1, 2, 4])
 +    expect(ids(sortTeamInboxes(teams, 'weight'))).toEqual([3, 1, 2, 4])
 +  })
 +

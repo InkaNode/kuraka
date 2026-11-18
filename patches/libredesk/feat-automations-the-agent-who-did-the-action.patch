@@ -1,0 +1,881 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 02:36:44 -0500
+Subject: [PATCH] feat(automations): the agent who did the action
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Update rules cannot assign the conversation to the agent who did the action, or check whether it is assigned to that agent.
+Kuraka-Missing-Es: Las reglas de actualización no pueden asignar la conversación al agente que hizo la acción ni comprobar si está asignada a ese agente.
+---
+ .../features/admin/automation/ActionBox.vue   |  8 +-
+ .../src/features/admin/automation/RuleBox.vue |  5 +
+ .../admin/automations/CreateOrEditRule.vue    |  1 +
+ i18n/en-US.json                               |  1 +
+ i18n/es-ES.json                               |  1 +
+ internal/automation/actor_test.go             | 54 +++++++++++
+ internal/automation/automation.go             | 13 ++-
+ internal/automation/evaluator.go              |  9 +-
+ internal/automation/evaluator_test.go         | 97 ++++++++++---------
+ internal/automation/kuraka.go                 | 66 +++++++++++++
+ internal/automation/kuraka_test.go            |  3 +-
+ internal/automation/last_resolved_test.go     |  2 +-
+ internal/automation/models/kuraka.go          |  2 +
+ internal/automation/suppress_test.go          |  4 +-
+ internal/conversation/kuraka.go               |  6 ++
+ 15 files changed, 215 insertions(+), 57 deletions(-)
+ create mode 100644 internal/automation/actor_test.go
+
+diff --git a/frontend/apps/main/src/features/admin/automation/ActionBox.vue b/frontend/apps/main/src/features/admin/automation/ActionBox.vue
+index ff1c03d3..9e027b25 100644
+--- a/frontend/apps/main/src/features/admin/automation/ActionBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/ActionBox.vue
+@@ -79,6 +79,7 @@
+                 <SelectAgentCombobox
+                   v-if="action.type === 'assign_user'"
+                   v-model="action.value[0]"
++                  :prepend-items="actorItems"
+                   @select="handleValueChange($event, index)"
+                 />
+                 <SelectTeamCombobox
+@@ -190,7 +191,8 @@ const props = defineProps({
+   actions: {
+     type: Array,
+     required: true
+-  }
++  },
++  type: { type: String, default: '' }
+ })
+ 
+ const fieldClass = 'flex-1 min-w-0 max-w-xs'
+@@ -209,6 +211,10 @@ const MESSAGE_VARIABLES = [
+ 
+ const { actions } = toRefs(props)
+ const { t } = useI18n()
++// Kuraka: only update rules know who did the action.
++const actorItems = computed(() =>
++  props.type === 'conversation_update' ? [{ value: 'actor', label: t('kuraka.actorAgent') }] : []
++)
+ const emit = defineEmits(['update-actions', 'add-action', 'remove-action'])
+ const webhookStore = useWebhookStore()
+ const uStore = useUsersStore()
+diff --git a/frontend/apps/main/src/features/admin/automation/RuleBox.vue b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+index f728b4f9..97cf35eb 100644
+--- a/frontend/apps/main/src/features/admin/automation/RuleBox.vue
++++ b/frontend/apps/main/src/features/admin/automation/RuleBox.vue
+@@ -123,6 +123,11 @@
+                   <SelectAgentCombobox
+                     v-if="getFieldEntity(rule.field, rule.field_type) === 'agent'"
+                     v-model="rule.value"
++                    :prepend-items="
++                      type === 'conversation_update' && ['assigned_user', 'previous_assigned_user'].includes(rule.field)
++                        ? [{ value: 'actor', label: t('kuraka.actorAgent') }]
++                        : []
++                    "
+                     @select="handleValueChange($event, index)"
+                   />
+                   <SelectTeamCombobox
+diff --git a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+index 056de126..3f569145 100644
+--- a/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
++++ b/frontend/apps/main/src/views/admin/automations/CreateOrEditRule.vue
+@@ -156,6 +156,7 @@
+ 
+           <ActionBox
+             :actions="getActions()"
++            :type="form.values.type"
+             :update-actions="handleUpdateActions"
+             @add-action="handleAddAction"
+             @remove-action="handleRemoveAction"
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 342ea2df..4effe609 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1563,6 +1563,7 @@
+   "inbox.oauthAlreadyExists": "An inbox with this email already exists. Use Reconnect to update credentials.",
+   "inbox.oauthEmailMismatch": "The authorized email doesn't match this inbox. Please authorize with the correct account.",
+   "inbox.oauthNotFound": "No inbox found with this email to reconnect.",
++  "kuraka.actorAgent": "Agent who did the action",
+   "kuraka.allInboxes": "All inboxes",
+   "kuraka.collapseSidebar": "Collapse sidebar",
+   "kuraka.displayAs": "Display as",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 76e5e472..2a81926a 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -830,6 +830,7 @@
+   "inbox.oauthAlreadyExists": "Ya existe una bandeja de entrada con este correo electrónico. Usa Reconectar para actualizar las credenciales.",
+   "inbox.oauthEmailMismatch": "El correo electrónico autorizado no coincide con esta bandeja de entrada. Por favor autoriza con la cuenta correcta.",
+   "inbox.oauthNotFound": "No se encontró ninguna bandeja de entrada con este correo electrónico para reconectar.",
++  "kuraka.actorAgent": "Agente que hizo la acción",
+   "kuraka.allInboxes": "Todos los buzones",
+   "kuraka.collapseSidebar": "Contraer barra",
+   "kuraka.displayAs": "Mostrar como",
+diff --git a/internal/automation/actor_test.go b/internal/automation/actor_test.go
+new file mode 100644
+index 00000000..2323c2b4
+--- /dev/null
++++ b/internal/automation/actor_test.go
+@@ -0,0 +1,54 @@
++package automation
++
++import (
++	"testing"
++
++	"github.com/abhinavxd/libredesk/internal/automation/models"
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/mock"
++	"github.com/volatiletech/null/v9"
++)
++
++func TestActorRules(t *testing.T) {
++	assignActor := []models.RuleAction{{Type: models.ActionAssignUser, Value: []string{models.ValueActor}}, {Type: models.ActionAddTags, Value: []string{"x"}}}
++	unassigned := []models.RuleGroup{{LogicalOp: models.OperatorAnd, Rules: []models.RuleDetail{{Field: models.ConversationAssignedUser, FieldType: models.FieldTypeConversationField, Operator: models.RuleOperatorNotSet}}}}
++	assignedToActor := []models.RuleGroup{{LogicalOp: models.OperatorAnd, Rules: []models.RuleDetail{{Field: models.ConversationAssignedUser, FieldType: models.FieldTypeConversationField, Operator: models.RuleOperatorEquals, Value: models.ValueActor}}}}
++	tag := []models.RuleAction{{Type: models.ActionAddTags, Value: []string{"x"}}}
++
++	for _, tc := range []struct {
++		name     string
++		groups   []models.RuleGroup
++		actions  []models.RuleAction
++		assigned int
++		actor    umodels.User
++		want     []models.RuleAction
++	}{
++		{"agent reply assigns the agent", unassigned, assignActor, 0, umodels.User{ID: 7}, []models.RuleAction{{Type: models.ActionAssignUser, Value: []string{"7"}}, tag[0]}},
++		{"contact is never assigned", unassigned, assignActor, 0, umodels.User{ID: 5}, tag},
++		{"system is never assigned", unassigned, assignActor, 0, umodels.User{ID: testSystemUserID}, tag},
++		{"AI assistant is never assigned", unassigned, assignActor, 0, umodels.User{ID: 8}, tag},
++		{"assigned to the actor matches", assignedToActor, tag, 7, umodels.User{ID: 7}, tag},
++		{"assigned to someone else does not match", assignedToActor, tag, 3, umodels.User{ID: 7}, nil},
++		{"no actor never matches", assignedToActor, tag, 0, umodels.User{}, nil},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			store := &mockConversationStore{nonAgents: map[int]bool{8: true}}
++			store.On("ApplyAction", mock.Anything, mock.Anything, mock.Anything).Return(nil)
++			engine := createTestEngine(store)
++			engine.systemUserID = testSystemUserID
++			conv := createTestConversation(func(c *cmodels.Conversation) {
++				c.ContactID = 5
++				if tc.assigned > 0 {
++					c.AssignedUserID = null.IntFrom(tc.assigned)
++				}
++			})
++			rule := createTestRule(tc.groups, tc.actions, models.OperatorAnd)
++			engine.evalConversationRules([]models.Rule{rule}, conv, nil, tc.actor)
++			assert.Equal(t, tc.want, store.appliedActions)
++			assert.Equal(t, models.ValueActor, assignActor[0].Value[0], "cached rule must not change")
++			assert.Equal(t, models.ValueActor, assignedToActor[0].Rules[0].Value, "cached rule must not change")
++		})
++	}
++}
+diff --git a/internal/automation/automation.go b/internal/automation/automation.go
+index ca7484b8..85ad713c 100644
+--- a/internal/automation/automation.go
++++ b/internal/automation/automation.go
+@@ -45,6 +45,7 @@ type ConversationTask struct {
+ 	eventType      string
+ 	conversation   cmodels.Conversation
+ 	previousValues map[string]string
++	actor          umodels.User
+ }
+ 
+ type Engine struct {
+@@ -76,6 +77,7 @@ type conversationStore interface {
+ 	ApplyAction(action models.RuleAction, conversation cmodels.Conversation, user umodels.User) error
+ 	GetConversation(teamID int, uuid, refNum string) (cmodels.Conversation, error)
+ 	GetConversationsCreatedAfter(after time.Time, afterID, limit int) ([]cmodels.ConversationRef, error)
++	IsHumanAgent(id int) bool
+ }
+ 
+ type queries struct {
+@@ -167,7 +169,7 @@ func (e *Engine) worker(ctx context.Context) {
+ 			case NewConversation:
+ 				e.handleNewConversation(task.conversation)
+ 			case UpdateConversation:
+-				e.handleUpdateConversation(task.conversation, task.eventType, task.previousValues)
++				e.handleUpdateConversation(task.conversation, task.eventType, task.previousValues, task.actor)
+ 			case TimeTrigger:
+ 				e.handleTimeTrigger()
+ 			}
+@@ -334,6 +336,7 @@ func (e *Engine) EvaluateConversationUpdateRules(conversation cmodels.Conversati
+ 		eventType:      eventType,
+ 		conversation:   conversation,
+ 		previousValues: previousValues,
++		actor:          actor,
+ 	}:
+ 	default:
+ 		e.lo.Error("EvaluateConversationUpdateRules: updateConversationQ is full, unable to enqueue conversation", "conversation_uuid", conversation.UUID, "event_type", eventType)
+@@ -358,18 +361,18 @@ func (e *Engine) handleNewConversation(conversation cmodels.Conversation) {
+ 		e.lo.Debug("no rules to evaluate for new conversation rule evaluation", "uuid", conversation.UUID)
+ 		return
+ 	}
+-	e.evalConversationRules(rules, conversation, nil)
++	e.evalConversationRules(rules, conversation, nil, umodels.User{})
+ }
+ 
+ // handleUpdateConversation handles update conversation events with specific eventType.
+-func (e *Engine) handleUpdateConversation(conversation cmodels.Conversation, eventType string, previousValues map[string]string) {
++func (e *Engine) handleUpdateConversation(conversation cmodels.Conversation, eventType string, previousValues map[string]string, actor umodels.User) {
+ 	e.lo.Debug("handling update conversation for automation rule evaluation", "uuid", conversation.UUID, "event_type", eventType)
+ 	rules := e.filterRulesByType(models.RuleTypeConversationUpdate, eventType)
+ 	if len(rules) == 0 {
+ 		e.lo.Debug("no rules to evaluate for conversation update", "uuid", conversation.UUID, "event_type", eventType)
+ 		return
+ 	}
+-	e.evalConversationRules(rules, conversation, previousValues)
++	e.evalConversationRules(rules, conversation, previousValues, actor)
+ }
+ 
+ // handleTimeTrigger handles time trigger events.
+@@ -407,7 +410,7 @@ func (e *Engine) handleTimeTrigger() {
+ 				e.lo.Error("error fetching conversation for time trigger", "uuid", ref.UUID, "error", err)
+ 				continue
+ 			}
+-			e.evalConversationRules(rules, conversation, nil)
++			e.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 		}
+ 		afterID = refs[len(refs)-1].ID
+ 		total += len(refs)
+diff --git a/internal/automation/evaluator.go b/internal/automation/evaluator.go
+index 1e847882..62398a7a 100644
+--- a/internal/automation/evaluator.go
++++ b/internal/automation/evaluator.go
+@@ -13,8 +13,15 @@ import (
+ )
+ 
+ // evalConversationRules evaluates a list of rules against a given conversation.
+-func (e *Engine) evalConversationRules(rules []models.Rule, conversation cmodels.Conversation, previousValues map[string]string) {
++func (e *Engine) evalConversationRules(rules []models.Rule, conversation cmodels.Conversation, previousValues map[string]string, actor umodels.User) {
++	actorID := -1
+ 	for _, rule := range rules {
++		if usesActor(rule) {
++			if actorID < 0 {
++				actorID = e.agentActorID(conversation, actor)
++			}
++			rule = withActor(rule, actorID)
++		}
+ 		e.lo.Debug("evaluating rules for conversation", "rule", rule, "conversation_id", conversation.ID)
+ 
+ 		if len(rule.Groups) > 2 {
+diff --git a/internal/automation/evaluator_test.go b/internal/automation/evaluator_test.go
+index 9ff70378..5d15f7e0 100644
+--- a/internal/automation/evaluator_test.go
++++ b/internal/automation/evaluator_test.go
+@@ -19,6 +19,7 @@ type mockConversationStore struct {
+ 	mock.Mock
+ 	appliedActions []models.RuleAction
+ 	callCount      int
++	nonAgents      map[int]bool
+ }
+ 
+ func (m *mockConversationStore) ApplyAction(action models.RuleAction, conversation cmodels.Conversation, user umodels.User) error {
+@@ -28,6 +29,10 @@ func (m *mockConversationStore) ApplyAction(action models.RuleAction, conversati
+ 	return args.Error(0)
+ }
+ 
++func (m *mockConversationStore) IsHumanAgent(id int) bool {
++	return id > 0 && !m.nonAgents[id]
++}
++
+ func (m *mockConversationStore) GetConversation(teamID int, uuid, refNum string) (cmodels.Conversation, error) {
+ 	args := m.Called(teamID, uuid, refNum)
+ 	return args.Get(0).(cmodels.Conversation), args.Error(1)
+@@ -107,7 +112,7 @@ func TestEvaluateGroup_AND_AllTrue(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "ApplyAction should be called once")
+ 	assert.Equal(t, models.ActionSetStatus, mockStore.appliedActions[0].Type)
+@@ -141,7 +146,7 @@ func TestEvaluateGroup_AND_ShortCircuit(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 0, mockStore.callCount, "ApplyAction should not be called when AND conditions fail")
+ }
+@@ -175,7 +180,7 @@ func TestEvaluateGroup_OR_OnlyOneTrue(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "ApplyAction should be called once for OR condition")
+ }
+@@ -216,7 +221,7 @@ func TestTwoGroups_AND_BothMustPass(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "ApplyAction should be called when both groups pass")
+ }
+@@ -253,7 +258,7 @@ func TestEmptyGroup_Skipped(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "ApplyAction should be called, empty group is skipped")
+ }
+@@ -301,7 +306,7 @@ func TestExecutionMode_FirstMatch(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Only first matching rule should execute in first_match mode")
+ 	assert.Equal(t, models.ActionSetStatus, mockStore.appliedActions[0].Type)
+@@ -350,7 +355,7 @@ func TestExecutionMode_All(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 2, mockStore.callCount, "All matching rules should execute in 'all' mode")
+ }
+@@ -385,7 +390,7 @@ func TestNullFields_SetNotSet(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Should handle null fields with set/not set operators")
+ }
+@@ -425,7 +430,7 @@ func TestCustomAttributes_StringComparison(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Custom attributes should be compared correctly")
+ 	assert.Equal(t, models.ActionSendCSAT, mockStore.appliedActions[0].Type)
+@@ -463,7 +468,7 @@ func TestCustomAttributes_MissingField(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 0, mockStore.callCount, "Missing custom attribute should fail the rule")
+ }
+@@ -508,7 +513,7 @@ func TestCustomAttributes_SetNotSet(t *testing.T) {
+ 				},
+ 			}
+ 
+-			engine.evalConversationRules(rules, conversation, nil)
++			engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 			assert.Equal(t, tt.wantMatch, mockStore.callCount == 1)
+ 		})
+@@ -543,7 +548,7 @@ func TestContainsOperator_MultipleValues(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Contains operator should match with comma-separated values")
+ }
+@@ -576,7 +581,7 @@ func TestNotContainsOperator(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Not contains operator should pass when values are not present")
+ }
+@@ -609,7 +614,7 @@ func TestNumericComparisons(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Greater than operator should work with numeric comparisons")
+ }
+@@ -657,7 +662,7 @@ func TestRealWorld_CSATAutomation(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "CSAT should be sent when status is resolved and client_id matches")
+ 	assert.Equal(t, models.ActionSendCSAT, mockStore.appliedActions[0].Type)
+@@ -693,7 +698,7 @@ func TestRealWorld_NewTicketAutomation(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 2, mockStore.callCount, "Both actions should be executed for new ticket")
+ 	assert.Equal(t, models.ActionSendPrivateNote, mockStore.appliedActions[0].Type)
+@@ -780,7 +785,7 @@ func TestCaseSensitivity_ContainsOperators(t *testing.T) {
+ 				},
+ 			}
+ 
+-			engine.evalConversationRules(rules, conversation, nil)
++			engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 			
+ 			if tc.shouldMatch {
+ 				assert.Equal(t, 1, mockStore.callCount, "Expected action to be triggered")
+@@ -825,7 +830,7 @@ func TestCaseSensitivity_Equals(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Case insensitive comparison should match")
+ }
+@@ -855,7 +860,7 @@ func TestInvalidOperator(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 0, mockStore.callCount, "Invalid operator should not trigger action")
+ }
+@@ -888,7 +893,7 @@ func TestContradictoryConditions(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 0, mockStore.callCount, "Contradictory conditions should never match")
+ }
+@@ -922,7 +927,7 @@ func TestTautologyCondition(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Tautology condition should always match")
+ }
+@@ -965,7 +970,7 @@ func TestCustomAttributeTypes(t *testing.T) {
+ 		}
+ 		mockStore.appliedActions = nil
+ 		mockStore.callCount = 0
+-		engine.evalConversationRules(rules, conversation, nil)
++		engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 		assert.Equal(t, 1, mockStore.callCount, "Integer custom attribute should be compared correctly")
+ 	})
+ 
+@@ -989,7 +994,7 @@ func TestCustomAttributeTypes(t *testing.T) {
+ 		}
+ 		mockStore.appliedActions = nil
+ 		mockStore.callCount = 0
+-		engine.evalConversationRules(rules, conversation, nil)
++		engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 		assert.Equal(t, 1, mockStore.callCount, "Float custom attribute should be converted to int for comparison")
+ 	})
+ 
+@@ -1013,7 +1018,7 @@ func TestCustomAttributeTypes(t *testing.T) {
+ 		}
+ 		mockStore.appliedActions = nil
+ 		mockStore.callCount = 0
+-		engine.evalConversationRules(rules, conversation, nil)
++		engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 		assert.Equal(t, 1, mockStore.callCount, "Boolean custom attribute should be compared correctly")
+ 	})
+ }
+@@ -1045,7 +1050,7 @@ func TestHoursSinceFields_NullHandling(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 0, mockStore.callCount, "Should not trigger action when time field is null")
+ }
+@@ -1081,7 +1086,7 @@ func TestMultipleActions(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 4, mockStore.callCount, "All actions should be executed")
+ 	assert.Equal(t, models.ActionSetStatus, mockStore.appliedActions[0].Type)
+@@ -1146,7 +1151,7 @@ func TestContainsOperator_TextNormalization(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	assert.Equal(t, 1, mockStore.callCount, "Contains should normalize whitespace and match")
+ }
+@@ -1185,7 +1190,7 @@ func TestMockVerificationPrecision(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 	
+ 	// This will verify the exact parameters were passed
+ 	mockStore.AssertExpectations(t)
+@@ -1240,7 +1245,7 @@ func TestComplexRealWorldScenario(t *testing.T) {
+ 		},
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 2, mockStore.callCount, "Complex conditions met, both actions should trigger")
+ 	assert.Equal(t, models.ActionSendCSAT, mockStore.appliedActions[0].Type)
+@@ -1271,7 +1276,7 @@ func TestPreviousStatus_Equals(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "Status transition 1→2 should fire action")
+ }
+@@ -1298,7 +1303,7 @@ func TestPreviousStatus_NotEqual(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 0, mockStore.callCount, "previous_status != 1 should not match when previous was 1")
+ }
+@@ -1327,7 +1332,7 @@ func TestStatusTransition_OpenToResolved(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "Open→Resolved transition should fire CSAT")
+ }
+@@ -1355,7 +1360,7 @@ func TestPreviousPriority_Equals(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "Previous priority filter should fire")
+ }
+@@ -1384,7 +1389,7 @@ func TestPreviousAssignedUser_Equals(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "Previous assigned user filter should fire on reassignment")
+ }
+@@ -1412,7 +1417,7 @@ func TestPreviousAssignedTeam_Equals(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, previousValues)
++	engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "Previous assigned team filter should fire")
+ }
+@@ -1440,7 +1445,7 @@ func TestPreviousValue_NotSet(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, map[string]string{models.ConversationPreviousAssignedUser: ""})
++	engine.evalConversationRules(rules, conversation, map[string]string{models.ConversationPreviousAssignedUser: ""}, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "First assignment (unassigned→assigned) should match")
+ }
+@@ -1466,7 +1471,7 @@ func TestPreviousValue_MissingKeyReturnsFalse(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 0, mockStore.callCount, "Missing previousValues key should not match equals comparison")
+ }
+@@ -1493,7 +1498,7 @@ func TestPreviousAssignedUser_PreviouslyNull(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, map[string]string{models.ConversationPreviousAssignedUser: ""})
++	engine.evalConversationRules(rules, conversation, map[string]string{models.ConversationPreviousAssignedUser: ""}, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "previous_assigned_user not_set matches when it was empty")
+ }
+@@ -1520,7 +1525,7 @@ func TestStartsWithOperator(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "starts_with should match prefix case-insensitively by default")
+ }
+@@ -1548,7 +1553,7 @@ func TestNotifyAction_PassedThrough(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	mockStore.AssertExpectations(t)
+ 	assert.Equal(t, 1, mockStore.callCount)
+@@ -1580,7 +1585,7 @@ func TestMultipleNotifyActions(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 2, mockStore.callCount, "Both notify actions should dispatch")
+ }
+@@ -1608,7 +1613,7 @@ func TestSnoozeAction_PassedThrough(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	mockStore.AssertExpectations(t)
+ 	assert.Equal(t, 1, mockStore.callCount)
+@@ -1637,7 +1642,7 @@ func TestTriggerWebhookAction_PassedThrough(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, conversation, nil)
++	engine.evalConversationRules(rules, conversation, nil, umodels.User{})
+ 
+ 	mockStore.AssertExpectations(t)
+ 	assert.Equal(t, 1, mockStore.callCount)
+@@ -1657,7 +1662,7 @@ func runSingleRule(t *testing.T, conv cmodels.Conversation, detail models.RuleDe
+ 	mockStore := new(mockConversationStore)
+ 	mockStore.On("ApplyAction", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+ 	engine := createTestEngine(mockStore)
+-	engine.evalConversationRules(singleRule(detail), conv, nil)
++	engine.evalConversationRules(singleRule(detail), conv, nil, umodels.User{})
+ 	return mockStore.callCount
+ }
+ 
+@@ -1808,7 +1813,7 @@ func TestInvalidGroupOperator_NoMatch(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, createTestConversation(), nil)
++	engine.evalConversationRules(rules, createTestConversation(), nil, umodels.User{})
+ 
+ 	assert.Equal(t, 0, mockStore.callCount, "invalid group logical operator must not run actions")
+ }
+@@ -1829,7 +1834,7 @@ func TestMoreThanTwoGroups_RuleSkipped(t *testing.T) {
+ 		),
+ 	}
+ 
+-	engine.evalConversationRules(rules, createTestConversation(), nil)
++	engine.evalConversationRules(rules, createTestConversation(), nil, umodels.User{})
+ 
+ 	assert.Equal(t, 0, mockStore.callCount, "rules with more than 2 groups must be skipped entirely")
+ }
+diff --git a/internal/automation/kuraka.go b/internal/automation/kuraka.go
+index fbe91702..c8337afa 100644
+--- a/internal/automation/kuraka.go
++++ b/internal/automation/kuraka.go
+@@ -4,14 +4,74 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"slices"
++	"strconv"
+ 	"strings"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/automation/models"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
+ 	"github.com/abhinavxd/libredesk/internal/kuraka"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ )
+ 
++func isActorField(field string) bool {
++	return field == models.ConversationAssignedUser || field == models.ConversationPreviousAssignedUser
++}
++
++func isActorAction(action models.RuleAction) bool {
++	return action.Type == models.ActionAssignUser && len(action.Value) > 0 && action.Value[0] == models.ValueActor
++}
++
++// usesActor reports whether a rule refers to the agent whose action fired the event.
++func usesActor(rule models.Rule) bool {
++	for _, group := range rule.Groups {
++		for _, condition := range group.Rules {
++			if isActorField(condition.Field) && condition.Value == models.ValueActor {
++				return true
++			}
++		}
++	}
++	return slices.ContainsFunc(rule.Actions, isActorAction)
++}
++
++// agentActorID is the human agent who fired the event, or 0 for the system, the contact, an AI assistant or no one.
++func (e *Engine) agentActorID(conversation cmodels.Conversation, actor umodels.User) int {
++	if actor.ID <= 0 || actor.ID == e.systemUserID || actor.ID == conversation.ContactID || !e.conversationStore.IsHumanAgent(actor.ID) {
++		return 0
++	}
++	return actor.ID
++}
++
++// withActor copies the rule with the actor in place of "actor". Without an agent, conditions on it
++// never match and assigning to it is dropped.
++func withActor(rule models.Rule, actorID int) models.Rule {
++	value := "-1"
++	if actorID > 0 {
++		value = strconv.Itoa(actorID)
++	}
++	groups := make([]models.RuleGroup, len(rule.Groups))
++	for i, group := range rule.Groups {
++		groups[i] = models.RuleGroup{LogicalOp: group.LogicalOp, Rules: slices.Clone(group.Rules)}
++		for j, condition := range groups[i].Rules {
++			if isActorField(condition.Field) && condition.Value == models.ValueActor {
++				groups[i].Rules[j].Value = value
++			}
++		}
++	}
++	actions := make([]models.RuleAction, 0, len(rule.Actions))
++	for _, action := range rule.Actions {
++		if isActorAction(action) {
++			if actorID <= 0 {
++				continue
++			}
++			action.Value = []string{value}
++		}
++		actions = append(actions, action)
++	}
++	rule.Groups, rule.Actions = groups, actions
++	return rule
++}
++
+ // evaluateTagRule compares whole tag names, ignoring case. equals means exactly
+ // the requested tags, no more and no fewer.
+ func evaluateTagRule(tags []string, rule models.RuleDetail) bool {
+@@ -140,6 +200,9 @@ func validateRuleFields(record models.RuleRecord) error {
+ 				default:
+ 					return invalid(fmt.Sprintf("invalid automation field type %q", condition.FieldType))
+ 				}
++				if isActorField(condition.Field) && condition.Value == models.ValueActor && record.Type != models.RuleTypeConversationUpdate {
++					return invalid("the agent who did the action requires a conversation_update rule")
++				}
+ 				if !slices.Contains([]string{models.RuleOperatorContains, models.RuleOperatorNotContains,
+ 					models.RuleOperatorEquals, models.RuleOperatorNotEqual, models.RuleOperatorSet,
+ 					models.RuleOperatorNotSet, models.RuleOperatorGreaterThan, models.RuleOperatorLessThan,
+@@ -148,6 +211,9 @@ func validateRuleFields(record models.RuleRecord) error {
+ 				}
+ 			}
+ 		}
++		if slices.ContainsFunc(rule.Actions, isActorAction) && record.Type != models.RuleTypeConversationUpdate {
++			return invalid("the agent who did the action requires a conversation_update rule")
++		}
+ 	}
+ 	return nil
+ }
+diff --git a/internal/automation/kuraka_test.go b/internal/automation/kuraka_test.go
+index 9636e367..a1bef6f1 100644
+--- a/internal/automation/kuraka_test.go
++++ b/internal/automation/kuraka_test.go
+@@ -6,6 +6,7 @@ import (
+ 
+ 	"github.com/abhinavxd/libredesk/internal/automation/models"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/mock"
+ 	"github.com/volatiletech/null/v9"
+@@ -105,7 +106,7 @@ func TestTagActionsDoNotRequeue(t *testing.T) {
+ 				engine.EvaluateConversationUpdateRules(conv, models.EventConversationTagsChange, map[string]string{models.ConversationTagsAdded: "VIP"}, systemActor())
+ 				engine.EvaluateConversationUpdateRules(conv, models.EventConversationTagsChange, nil, agentActor())
+ 			}).Return(nil)
+-			engine.evalConversationRules([]models.Rule{rule}, conv, nil)
++			engine.evalConversationRules([]models.Rule{rule}, conv, nil, umodels.User{})
+ 			assert.Equal(t, 1, store.callCount)
+ 			assert.Len(t, engine.taskQueue, 1, "only the concurrent agent event survives suppression")
+ 			assert.False(t, engine.isSuppressed(conv.UUID))
+diff --git a/internal/automation/last_resolved_test.go b/internal/automation/last_resolved_test.go
+index 9127d1fb..502f2704 100644
+--- a/internal/automation/last_resolved_test.go
++++ b/internal/automation/last_resolved_test.go
+@@ -106,7 +106,7 @@ func TestLastResolvedRuleActions(t *testing.T) {
+ 				store.On("ApplyAction", action, conversation, umodels.User{}).Return(nil).Once()
+ 			}
+ 			previousValues := map[string]string{}
+-			engine.evalConversationRules(rules, conversation, previousValues)
++			engine.evalConversationRules(rules, conversation, previousValues, umodels.User{})
+ 			if store.callCount != wantCalls {
+ 				t.Fatalf("got %d actions, want %d", store.callCount, wantCalls)
+ 			}
+diff --git a/internal/automation/models/kuraka.go b/internal/automation/models/kuraka.go
+index 3a588f1e..91dbc896 100644
+--- a/internal/automation/models/kuraka.go
++++ b/internal/automation/models/kuraka.go
+@@ -9,4 +9,6 @@ const (
+ 	ContactPhone                         = "contact_phone"
+ 	ConversationChannel                  = "channel"
+ 	FieldTypeConversationCustomAttribute = "conversation_custom_attribute"
++	// ValueActor stands for the agent whose action fired a conversation_update rule.
++	ValueActor = "actor"
+ )
+diff --git a/internal/automation/suppress_test.go b/internal/automation/suppress_test.go
+index 888a8b0f..4b365c64 100644
+--- a/internal/automation/suppress_test.go
++++ b/internal/automation/suppress_test.go
+@@ -120,7 +120,7 @@ func TestActionEcho_DoesNotRequeue(t *testing.T) {
+ 		engine.EvaluateConversationUpdateRules(conv, models.EventConversationStatusChange, nil, systemActor())
+ 	}).Return(nil)
+ 
+-	engine.evalConversationRules(rules, conv, nil)
++	engine.evalConversationRules(rules, conv, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 1, mockStore.callCount, "action must run exactly once")
+ 	assert.Equal(t, 0, len(engine.taskQueue), "the action's own echo must not re-enter the queue")
+@@ -166,7 +166,7 @@ func TestActionEcho_PingPongRulesDoNotLoop(t *testing.T) {
+ 		}
+ 	}).Return(nil)
+ 
+-	engine.evalConversationRules([]models.Rule{ruleSetPriority, ruleSetStatus}, conv, nil)
++	engine.evalConversationRules([]models.Rule{ruleSetPriority, ruleSetStatus}, conv, nil, umodels.User{})
+ 
+ 	assert.Equal(t, 2, mockStore.callCount, "each rule's action runs once")
+ 	assert.Equal(t, 0, len(engine.taskQueue), "no echo may re-enter the queue, so no ping-pong is possible")
+diff --git a/internal/conversation/kuraka.go b/internal/conversation/kuraka.go
+index 3fa7bb6a..1ded00a7 100644
+--- a/internal/conversation/kuraka.go
++++ b/internal/conversation/kuraka.go
+@@ -36,3 +36,9 @@ func (c *Manager) evaluateTagChanges(conversation models.Conversation, previous,
+ 		c.automation.EvaluateConversationUpdateRules(conversation, amodels.EventConversationTagsChange, changes, actor)
+ 	}
+ }
++
++// IsHumanAgent reports whether the user is an enabled agent, not an AI assistant or a contact.
++func (c *Manager) IsHumanAgent(id int) bool {
++	user, err := c.userStore.GetAgentCachedOrLoad(id)
++	return err == nil && user.Type == umodels.UserTypeAgent && user.Enabled
++}
