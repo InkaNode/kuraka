@@ -8,27 +8,27 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 Kuraka-Severity: normal
-Kuraka-Missing-En: Hours since conditions cannot count business hours only, and there is no Hours since tag added condition.
-Kuraka-Missing-Es: Las condiciones de horas no pueden contar solo el horario laboral, y no existe la condición Horas desde que se agregó la etiqueta.
+Kuraka-Missing-En: Hours since conditions cannot count business hours only, there is no Hours since tag added condition, and Hours since first reply, last reply or resolved can match conversations where that has not happened yet.
+Kuraka-Missing-Es: Las condiciones de horas no pueden contar solo el horario laboral, no existe la condición Horas desde que se agregó la etiqueta, y Horas desde la primera respuesta, la última respuesta o la resolución pueden cumplirse en conversaciones donde eso todavía no pasó.
 ---
  cmd/main.go                                   |  1 +
  .../src/composables/useConversationFilters.js |  6 ++
- .../src/features/admin/automation/RuleBox.vue | 24 ++++++
+ .../src/features/admin/automation/RuleBox.vue | 24 +++++
  .../admin/automations/CreateOrEditRule.vue    |  3 +
  i18n/en-US.json                               |  3 +
  i18n/es-ES.json                               |  3 +
  internal/automation/automation.go             |  6 ++
- internal/automation/evaluator.go              | 29 +++----
+ internal/automation/evaluator.go              | 27 ++----
  internal/automation/evaluator_test.go         |  6 ++
- internal/automation/hours_since_test.go       | 83 +++++++++++++++++++
- internal/automation/kuraka.go                 | 59 ++++++++++++-
- internal/automation/models/models.go          |  5 ++
+ internal/automation/hours_since_test.go       | 94 +++++++++++++++++++
+ internal/automation/kuraka.go                 | 59 +++++++++++-
+ internal/automation/models/models.go          |  5 +
  internal/conversation/conversation.go         |  1 +
  internal/conversation/kuraka.go               | 12 +++
  internal/conversation/queries.sql             |  8 ++
- internal/sla/kuraka.go                        | 75 +++++++++++++++++
- internal/sla/kuraka_test.go                   | 49 +++++++++++
- 17 files changed, 354 insertions(+), 19 deletions(-)
+ internal/sla/kuraka.go                        | 75 +++++++++++++++
+ internal/sla/kuraka_test.go                   | 49 ++++++++++
+ 17 files changed, 364 insertions(+), 18 deletions(-)
  create mode 100644 internal/automation/hours_since_test.go
  create mode 100644 internal/sla/kuraka.go
  create mode 100644 internal/sla/kuraka_test.go
@@ -192,7 +192,7 @@ index 85ad713c..5738c76d 100644
  
  type queries struct {
 diff --git a/internal/automation/evaluator.go b/internal/automation/evaluator.go
-index 62398a7a..2b7e2c11 100644
+index 62398a7a..e14fc624 100644
 --- a/internal/automation/evaluator.go
 +++ b/internal/automation/evaluator.go
 @@ -5,7 +5,6 @@ import (
@@ -229,13 +229,12 @@ index 62398a7a..2b7e2c11 100644
 -		case models.ConversationHoursSinceLastResolved:
 -			if !conversation.LastResolvedAt.IsZero() {
 -				valueToCompare = fmt.Sprintf("%.0f", time.Since(conversation.LastResolvedAt.Time).Hours())
--			} else if rule.Operator != models.RuleOperatorSet && rule.Operator != models.RuleOperatorNotSet {
 +			if !since.IsZero() {
 +				if valueToCompare, ok = e.hoursSince(since, rule, conversation); !ok {
 +					return false
 +				}
-+			} else if (rule.Field == models.ConversationHoursSinceLastResolved || rule.Field == models.ConversationHoursSinceTagAdded) &&
-+				rule.Operator != models.RuleOperatorSet && rule.Operator != models.RuleOperatorNotSet {
+ 			} else if rule.Operator != models.RuleOperatorSet && rule.Operator != models.RuleOperatorNotSet {
++				// A moment that has not happened yet is not 0 hours ago.
  				return false
  			}
  		case models.ConversationInbox:
@@ -272,10 +271,10 @@ index 5d15f7e0..642f8bbc 100644
  }
 diff --git a/internal/automation/hours_since_test.go b/internal/automation/hours_since_test.go
 new file mode 100644
-index 00000000..9f7e1eb8
+index 00000000..87b781ba
 --- /dev/null
 +++ b/internal/automation/hours_since_test.go
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,94 @@
 +package automation
 +
 +import (
@@ -357,6 +356,17 @@ index 00000000..9f7e1eb8
 +		assert.NoError(t, err)
 +		record := models.RuleRecord{Type: models.RuleTypeTimeTrigger, Rules: rules}
 +		assert.Equal(t, tc.valid, validateRuleFields(record) == nil, "%+v", tc.detail)
++	}
++}
++
++func TestHoursSinceMissingMoment(t *testing.T) {
++	engine := createTestEngine(new(mockConversationStore))
++	conversation := cmodels.Conversation{CreatedAt: time.Now()}
++	for _, field := range []string{models.ConversationHoursSinceFirstReply, models.ConversationHoursSinceLastReply, models.ConversationHoursSinceResolved} {
++		for operator, want := range map[string]bool{models.RuleOperatorLessThan: false, models.RuleOperatorEquals: false, models.RuleOperatorNotSet: true, models.RuleOperatorSet: false} {
++			rule := models.RuleDetail{Field: field, Operator: operator, Value: "24"}
++			assert.Equal(t, want, engine.evaluateRule(rule, conversation, nil), "%s %s", field, operator)
++		}
 +	}
 +}
 diff --git a/internal/automation/kuraka.go b/internal/automation/kuraka.go

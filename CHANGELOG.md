@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **Libredesk status icons**: inside buttons the icons follow the text size.
+- **Libredesk automations**: **Hours since** conditions no longer match when that moment has not happened yet. Before, **Hours since resolved** less than 24 also matched conversations that were never resolved.
 
 ## [0.3.2] - 2026-11-16
 
