@@ -10,11 +10,11 @@ Kuraka-Severity: normal
 Kuraka-Missing-En: The sort menu shows only text, without an icon for each order.
 Kuraka-Missing-Es: El menú de orden solo muestra texto, sin un icono para cada orden.
 ---
- .../conversation/list/ConversationList.vue    | 57 ++++++++++++-------
- 1 file changed, 36 insertions(+), 21 deletions(-)
+ .../conversation/list/ConversationList.vue    | 58 ++++++++++++-------
+ 1 file changed, 37 insertions(+), 21 deletions(-)
 
 diff --git a/frontend/apps/main/src/features/conversation/list/ConversationList.vue b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
-index c3fa7bf9..2851b951 100644
+index c3fa7bf9..ff073c11 100644
 --- a/frontend/apps/main/src/features/conversation/list/ConversationList.vue
 +++ b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
 @@ -44,6 +44,11 @@
@@ -29,7 +29,7 @@ index c3fa7bf9..2851b951 100644
              <span class="truncate" :title="conversationStore.getListSortField">{{
                conversationStore.getListSortField
              }}</span>
-@@ -51,26 +56,13 @@
+@@ -51,26 +56,14 @@
            </Button>
          </DropdownMenuTrigger>
          <DropdownMenuContent>
@@ -56,14 +56,15 @@ index c3fa7bf9..2851b951 100644
 +          <DropdownMenuItem
 +            v-for="option in SORT_OPTIONS"
 +            :key="option.value"
++            class="gap-2"
 +            @click="handleSortChange(option.value)"
 +          >
-+            <component :is="option.icon" class="text-muted-foreground" aria-hidden="true" />
++            <component :is="option.icon" class="size-[1.1em] shrink-0 text-muted-foreground" aria-hidden="true" />
 +            {{ $t(option.label) }}
            </DropdownMenuItem>
          </DropdownMenuContent>
        </DropdownMenu>
-@@ -159,7 +151,19 @@ const FILTER_TRIGGER_CLASS = 'min-w-0 justify-start gap-1.5 px-2 text-xs'
+@@ -159,7 +152,19 @@ const FILTER_TRIGGER_CLASS = 'min-w-0 justify-start gap-1.5 px-2 text-xs'
  import { computed, watch } from 'vue'
  import { useRoute } from 'vue-router'
  import { useI18n } from 'vue-i18n'
@@ -84,7 +85,7 @@ index c3fa7bf9..2851b951 100644
  import { Button } from '@shared-ui/components/ui/button'
  import {
    DropdownMenu,
-@@ -176,6 +180,17 @@ import ConversationBulkActionToolbar from '@/features/conversation/list/Conversa
+@@ -176,6 +181,17 @@ import ConversationBulkActionToolbar from '@/features/conversation/list/Conversa
  import ConversationListItem from '@/features/conversation/list/ConversationListItem.vue'
  import ConversationListItemSkeleton from '@/features/conversation/list/ConversationListItemSkeleton.vue'
  

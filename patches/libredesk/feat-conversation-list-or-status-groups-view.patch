@@ -15,7 +15,7 @@ Kuraka-Missing-Es: Los agentes no pueden ver sus conversaciones agrupadas por es
  5 files changed, 254 insertions(+), 26 deletions(-)
 
 diff --git a/frontend/apps/main/src/features/conversation/list/ConversationList.vue b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
-index 2851b951..0b1c8d88 100644
+index ff073c11..3f114d01 100644
 --- a/frontend/apps/main/src/features/conversation/list/ConversationList.vue
 +++ b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
 @@ -12,7 +12,7 @@
@@ -70,7 +70,7 @@ index 2851b951..0b1c8d88 100644
        <!-- Sort dropdown-menu -->
        <DropdownMenu>
          <DropdownMenuTrigger asChild>
-@@ -66,6 +102,7 @@
+@@ -67,6 +103,7 @@
            </DropdownMenuItem>
          </DropdownMenuContent>
        </DropdownMenu>
@@ -78,7 +78,7 @@ index 2851b951..0b1c8d88 100644
      </div>
  
      <!-- Content -->
-@@ -88,8 +125,57 @@
+@@ -89,8 +126,57 @@
          :icon="MessageCircleWarning"
        />
  
@@ -137,7 +137,7 @@ index 2851b951..0b1c8d88 100644
          class="divide-y divide-border"
          :class="{ 'border-b border-border': hasConversations }"
        >
-@@ -109,7 +195,11 @@
+@@ -110,7 +196,11 @@
  
        <!-- Load More -->
        <div
@@ -150,7 +150,7 @@ index 2851b951..0b1c8d88 100644
          class="flex justify-center items-center p-5"
        >
          <Button
-@@ -162,8 +252,15 @@ import {
+@@ -163,8 +253,15 @@ import {
    CalendarArrowDown,
    Hourglass,
    Timer,
@@ -167,7 +167,7 @@ index 2851b951..0b1c8d88 100644
  import { Button } from '@shared-ui/components/ui/button'
  import {
    DropdownMenu,
-@@ -190,6 +287,17 @@ const SORT_OPTIONS = [
+@@ -191,6 +288,17 @@ const SORT_OPTIONS = [
    { value: 'priority_first', label: 'conversation.sort.priorityFirst', icon: SignalHigh }
  ]
  const SORT_ICONS = Object.fromEntries(SORT_OPTIONS.map((option) => [option.value, option.icon]))
@@ -185,7 +185,7 @@ index 2851b951..0b1c8d88 100644
  
  const conversationStore = useConversationStore()
  const teamStore = useTeamStore()
-@@ -231,6 +339,7 @@ const showEmpty = computed(
+@@ -232,6 +340,7 @@ const showEmpty = computed(
    () =>
      !hasConversations.value &&
      !hasErrored.value &&
