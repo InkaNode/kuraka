@@ -1,0 +1,494 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Wed, 18 Nov 2026 01:02:10 -0500
+Subject: [PATCH] feat(conversation): list or status groups view
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Agents cannot see their conversations grouped by status; the list shows one status at a time.
+Kuraka-Missing-Es: Los agentes no pueden ver sus conversaciones agrupadas por estado; la lista muestra un estado a la vez.
+---
+ .../conversation/list/ConversationList.vue    | 117 +++++++++++++++-
+ frontend/apps/main/src/stores/conversation.js | 128 +++++++++++++++---
+ .../apps/main/src/stores/conversation.test.js |  29 ++++
+ i18n/en-US.json                               |   3 +
+ i18n/es-ES.json                               |   3 +
+ 5 files changed, 254 insertions(+), 26 deletions(-)
+
+diff --git a/frontend/apps/main/src/features/conversation/list/ConversationList.vue b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+index 2851b951..0b1c8d88 100644
+--- a/frontend/apps/main/src/features/conversation/list/ConversationList.vue
++++ b/frontend/apps/main/src/features/conversation/list/ConversationList.vue
+@@ -12,7 +12,7 @@
+     <!-- Filters (hidden when bulk selecting) -->
+     <div v-else class="flex shrink-0 items-center justify-between gap-2 border-b border-border p-2">
+       <!-- Status dropdown-menu, hidden when a view is selected as views are pre-filtered -->
+-      <DropdownMenu v-if="!route.params.viewID">
++      <DropdownMenu v-if="!route.params.viewID && !conversationStore.isGrouped">
+         <DropdownMenuTrigger asChild>
+           <Button type="button" variant="ghost" size="sm" :class="FILTER_TRIGGER_CLASS">
+             <div class="min-w-0 truncate">
+@@ -40,6 +40,42 @@
+         </Button>
+       </div>
+ 
++      <div class="flex min-w-0 items-center gap-1">
++      <!-- Kuraka: list or status groups (views stay a list) -->
++      <Popover v-if="!route.params.viewID">
++        <PopoverTrigger as-child>
++          <Button
++            type="button"
++            variant="ghost"
++            size="icon"
++            class="size-8 shrink-0 text-muted-foreground"
++            :aria-label="t('kuraka.displayAs')"
++          >
++            <component :is="conversationStore.isGrouped ? Rows3 : List" class="size-4" aria-hidden="true" />
++          </Button>
++        </PopoverTrigger>
++        <PopoverContent align="end" class="w-auto p-3">
++          <div class="flex items-center gap-4">
++            <span id="list-layout-label" class="text-sm text-muted-foreground">{{ t('kuraka.displayAs') }}</span>
++            <div role="group" aria-labelledby="list-layout-label" class="flex gap-0.5 rounded-md border border-border p-0.5">
++              <Button
++                v-for="option in LAYOUT_OPTIONS"
++                :key="option.value"
++                type="button"
++                size="sm"
++                :variant="conversationStore.listLayout === option.value ? 'secondary' : 'ghost'"
++                :aria-pressed="conversationStore.listLayout === option.value"
++                class="h-7 gap-1.5 px-2 text-xs"
++                @click="conversationStore.setListLayout(option.value)"
++              >
++                <component :is="option.icon" class="size-3.5" aria-hidden="true" />
++                {{ t(option.label) }}
++              </Button>
++            </div>
++          </div>
++        </PopoverContent>
++      </Popover>
++
+       <!-- Sort dropdown-menu -->
+       <DropdownMenu>
+         <DropdownMenuTrigger asChild>
+@@ -66,6 +102,7 @@
+           </DropdownMenuItem>
+         </DropdownMenuContent>
+       </DropdownMenu>
++      </div>
+     </div>
+ 
+     <!-- Content -->
+@@ -88,8 +125,57 @@
+         :icon="MessageCircleWarning"
+       />
+ 
++      <!-- Kuraka: one collapsible section per status, Pylon style -->
++      <template v-if="conversationStore.isGrouped && !hasErrored && !conversationStore.conversations.loading">
++        <Collapsible
++          v-for="group in conversationStore.conversationGroups"
++          :key="group.name"
++          class="group/status border-b border-border"
++          :open="!collapsedGroups.includes(group.name)"
++          @update:open="(open) => toggleGroup(group.name, open)"
++        >
++          <CollapsibleTrigger
++            class="sticky top-0 z-10 flex h-9 w-full items-center gap-2 bg-muted px-3 text-left text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
++          >
++            <StatusIcon :icon="group.icon" />
++            <span class="truncate">{{ group.label }}</span>
++            <span class="tabular-nums text-muted-foreground">{{ group.total }}</span>
++            <ChevronRight
++              class="ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]/status:rotate-90 motion-reduce:transition-none"
++              aria-hidden="true"
++            />
++          </CollapsibleTrigger>
++          <CollapsibleContent>
++            <div v-if="group.conversations.length" class="divide-y divide-border border-t border-border">
++              <ConversationListItem
++                v-for="conversation in group.conversations"
++                :key="conversation.uuid"
++                :conversation="conversation"
++                :currentConversation="conversationStore.current"
++                :contactFullName="conversationStore.getContactFullName(conversation.uuid)"
++                class="transition-colors duration-200"
++              />
++            </div>
++            <div v-if="group.hasMore" class="flex justify-center border-t border-border p-2">
++              <Button
++                type="button"
++                variant="ghost"
++                size="sm"
++                @click="conversationStore.fetchNextGroupConversations(group.name)"
++                :disabled="group.fetching"
++                :aria-busy="group.fetching || undefined"
++                class="text-muted-foreground max-md:h-11 [&_svg]:size-3.5"
++              >
++                <Loader2 v-if="group.fetching" class="animate-spin" aria-hidden="true" />
++                {{ group.fetching ? t('globals.terms.loading') : t('globals.terms.loadMore') }}
++              </Button>
++            </div>
++          </CollapsibleContent>
++        </Collapsible>
++      </template>
++
+       <div
+-        v-if="!hasErrored && !conversationStore.conversations.loading"
++        v-else-if="!hasErrored && !conversationStore.conversations.loading"
+         class="divide-y divide-border"
+         :class="{ 'border-b border-border': hasConversations }"
+       >
+@@ -109,7 +195,11 @@
+ 
+       <!-- Load More -->
+       <div
+-        v-if="!hasErrored && (conversationStore.conversations.hasMore || hasConversations)"
++        v-if="
++          !conversationStore.isGrouped &&
++          !hasErrored &&
++          (conversationStore.conversations.hasMore || hasConversations)
++        "
+         class="flex justify-center items-center p-5"
+       >
+         <Button
+@@ -162,8 +252,15 @@ import {
+   CalendarArrowDown,
+   Hourglass,
+   Timer,
+-  SignalHigh
++  SignalHigh,
++  ChevronRight,
++  List,
++  Rows3
+ } from 'lucide-vue-next'
++import { useStorage } from '@vueuse/core'
++import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@shared-ui/components/ui/collapsible'
++import { Popover, PopoverContent, PopoverTrigger } from '@shared-ui/components/ui/popover'
++import { CONVERSATION_DEFAULT_STATUSES } from '@/constants/conversation'
+ import { Button } from '@shared-ui/components/ui/button'
+ import {
+   DropdownMenu,
+@@ -190,6 +287,17 @@ const SORT_OPTIONS = [
+   { value: 'priority_first', label: 'conversation.sort.priorityFirst', icon: SignalHigh }
+ ]
+ const SORT_ICONS = Object.fromEntries(SORT_OPTIONS.map((option) => [option.value, option.icon]))
++const LAYOUT_OPTIONS = [
++  { value: 'list', label: 'kuraka.layoutList', icon: List },
++  { value: 'groups', label: 'kuraka.layoutGroups', icon: Rows3 }
++]
++
++const collapsedGroups = useStorage('kurakaCollapsedGroups', [CONVERSATION_DEFAULT_STATUSES.CLOSED])
++const toggleGroup = (name, open) => {
++  collapsedGroups.value = open
++    ? collapsedGroups.value.filter((n) => n !== name)
++    : [...collapsedGroups.value, name]
++}
+ 
+ const conversationStore = useConversationStore()
+ const teamStore = useTeamStore()
+@@ -231,6 +339,7 @@ const showEmpty = computed(
+   () =>
+     !hasConversations.value &&
+     !hasErrored.value &&
++    !conversationStore.isGrouped &&
+     !conversationStore.conversations.loading &&
+     conversationStore.conversations.initialized
+ )
+diff --git a/frontend/apps/main/src/stores/conversation.js b/frontend/apps/main/src/stores/conversation.js
+index 278d68a4..728a3ba1 100644
+--- a/frontend/apps/main/src/stores/conversation.js
++++ b/frontend/apps/main/src/stores/conversation.js
+@@ -309,6 +309,34 @@ export const useConversationStore = defineStore('conversation', () => {
+     return conversations.status
+   })
+ 
++  // Kuraka: 'list' or 'groups' (one section per status, each paged on its own). Views keep the list.
++  const listLayout = useStorage('kurakaConversationListLayout', 'list')
++  const groupPages = reactive({})
++  const isGrouped = computed(() => listLayout.value === 'groups' && conversations.listType !== CONVERSATION_LIST_TYPE.VIEW)
++  const listStatus = computed(() => isGrouped.value ? '' : conversations.status)
++  const statusFilter = (name) => ({ model: 'conversation_statuses', field: 'name', operator: 'equals', value: name })
++
++  function setListLayout (layout) {
++    if (listLayout.value === layout) return
++    listLayout.value = layout
++    resetConversations()
++    reFetchConversationsList()
++  }
++
++  function bumpGroupTotal (status, n) {
++    const group = groupPages[status]
++    if (group) group.total = Math.max(0, group.total + n)
++  }
++
++  const conversationGroups = computed(() => statuses.value.map(s => ({
++    ...toStatusOption(s),
++    total: 0,
++    hasMore: false,
++    fetching: false,
++    ...groupPages[s.name],
++    conversations: conversationsList.value.filter(conv => conv.status === s.name)
++  })))
++
+   function setListSortField (field) {
+     if (conversations.sortField === field) return
+     conversations.sortField = field
+@@ -393,12 +421,18 @@ export const useConversationStore = defineStore('conversation', () => {
+   const conversationsList = computed(() => {
+     if (!conversations.data) return []
+     let filteredConversations = conversations.data
+-    if (conversations.status !== "") {
+-      filteredConversations = filteredConversations.filter(conv => conv.status === conversations.status)
++    if (listStatus.value !== "") {
++      filteredConversations = filteredConversations.filter(conv => conv.status === listStatus.value)
+     }
+     filteredConversations = filteredConversations.filter(belongsToList)
++    const statusIndex = (conv) => statuses.value.findIndex(s => s.name === conv.status)
+ 
+     return [...filteredConversations].sort((a, b) => {
++      // Grouped: keyboard navigation follows the on-screen section order.
++      if (isGrouped.value) {
++        const byStatus = statusIndex(a) - statusIndex(b)
++        if (byStatus) return byStatus
++      }
+       const field = sortFieldMap[conversations.sortField]?.field
+       if (!a[field] && !b[field]) return 0
+       if (!a[field]) return 1       // null goes last
+@@ -700,15 +734,8 @@ export const useConversationStore = defineStore('conversation', () => {
+     conversations.listType = listType
+     if (teamID) conversations.teamID = teamID
+     if (viewID) conversations.viewID = viewID
+-    if (conversations.status) {
+-      filters = filters.filter(f => f.model !== 'conversation_statuses')
+-      filters.push({
+-        model: 'conversation_statuses',
+-        field: 'name',
+-        operator: 'equals',
+-        value: conversations.status
+-      })
+-    }
++    filters = filters.filter(f => f.model !== 'conversation_statuses')
++    if (listStatus.value) filters.push(statusFilter(listStatus.value))
+     conversations.listFilters = filters
+     const guard = showLoader ? delayedLoading(conversations, 'loading') : null
+     conversations.fetching = true
+@@ -717,9 +744,13 @@ export const useConversationStore = defineStore('conversation', () => {
+     const isStale = () => seq !== contextSeq
+     try {
+       conversations.errorMessage = ''
+-      const response = await makeConversationListRequest(listType, teamID, viewID, filters, page)
+-      if (isStale()) return
+-      processConversationListResponse(response)
++      if (isGrouped.value) {
++        await fetchGroups(listType, teamID, viewID, filters, isStale)
++      } else {
++        const response = await makeConversationListRequest(listType, teamID, viewID, filters, page)
++        if (isStale()) return
++        processConversationListResponse(response)
++      }
+     } catch (error) {
+       if (isStale()) return
+       if (conversations.data.length === 0) {
+@@ -738,6 +769,38 @@ export const useConversationStore = defineStore('conversation', () => {
+     }
+   }
+ 
++  // Refreshes the first page of every status section.
++  async function fetchGroups (listType, teamID, viewID, filters, isStale) {
++    await fetchStatuses()
++    const names = statuses.value.map(s => s.name)
++    const results = await Promise.allSettled(names.map(name =>
++      makeConversationListRequest(listType, teamID, viewID, [...filters, statusFilter(name)], 1)))
++    if (isStale()) return
++    results.forEach((result, i) => {
++      if (result.status === 'fulfilled') processConversationListResponse(result.value, names[i])
++    })
++    const failed = results.find(result => result.status === 'rejected')
++    if (failed && results.every(result => result.status === 'rejected')) throw failed.reason
++  }
++
++  async function fetchNextGroupConversations (status) {
++    const group = groupPages[status]
++    if (!group || group.fetching || !group.hasMore) return
++    group.fetching = true
++    const seq = contextSeq
++    try {
++      const response = await makeConversationListRequest(conversations.listType, conversations.teamID, conversations.viewID,
++        [...conversations.listFilters, statusFilter(status)], group.page + 1)
++      if (seq === contextSeq) processConversationListResponse(response, status)
++    } catch (error) {
++      if (seq === contextSeq) {
++        emitter.emit(EMITTER_EVENTS.SHOW_TOAST, { variant: 'destructive', description: handleHTTPError(error).message })
++      }
++    } finally {
++      group.fetching = false
++    }
++  }
++
+   async function makeConversationListRequest (listType, teamID, viewID, filters, page) {
+     if (activeInboxID.value) {
+       filters = [...filters, { model: 'conversations', field: 'inbox_id', operator: 'equals', value: activeInboxID.value }]
+@@ -809,24 +872,33 @@ export const useConversationStore = defineStore('conversation', () => {
+     return existing
+   }
+ 
+-  function processConversationListResponse (response) {
++  function processConversationListResponse (response, groupStatus = '') {
+     const apiResponse = response.data.data
+     const newConversations = []
+     for (const conv of apiResponse.results) {
+       rememberAssignee(conv)
+       if (!mergeIntoList(conv.uuid, conv)) newConversations.push(conv)
+     }
+-    conversations.page = Math.max(conversations.page, apiResponse.page)
+-    conversations.hasMore = apiResponse.total_pages > conversations.page
+     if (!conversations.data) conversations.data = []
+     if (apiResponse.page === 1) {
+       conversations.data.unshift(...newConversations)
+     } else {
+       conversations.data.push(...newConversations)
+     }
+-    conversations.total = apiResponse.total
+ 
+-    trimListToCurrentPage()
++    if (groupStatus) {
++      // Grouped lists keep every loaded row; each section pages on its own.
++      const group = groupPages[groupStatus] ??= { page: 0, total: 0, hasMore: false, fetching: false }
++      group.page = Math.max(group.page, apiResponse.page)
++      group.hasMore = apiResponse.total_pages > group.page
++      group.total = apiResponse.total
++      conversations.total = Object.values(groupPages).reduce((sum, g) => sum + g.total, 0)
++    } else {
++      conversations.page = Math.max(conversations.page, apiResponse.page)
++      conversations.hasMore = apiResponse.total_pages > conversations.page
++      conversations.total = apiResponse.total
++      trimListToCurrentPage()
++    }
+ 
+     // Re-check document.hidden in case the user returned while the refresh was in flight.
+     if (pendingNotificationUUIDs.size > 0) {
+@@ -1125,7 +1197,7 @@ export const useConversationStore = defineStore('conversation', () => {
+   }
+ 
+   function isInCurrentList (conv) {
+-    return (conversations.status === '' || conv.status === conversations.status) && belongsToList(conv)
++    return (listStatus.value === '' || conv.status === listStatus.value) && belongsToList(conv)
+   }
+ 
+   // Keeps the list total in step when a live update moves a loaded row into or out of the current list.
+@@ -1133,11 +1205,16 @@ export const useConversationStore = defineStore('conversation', () => {
+     const existing = conversations.data?.find(c => c.uuid === uuid)
+     if (!existing) return null
+     const wasListed = isInCurrentList(existing)
++    const previousStatus = existing.status
+     deepMerge(existing, payload)
+     const isListed = isInCurrentList(existing)
+     if (wasListed !== isListed) {
+       conversations.total = Math.max(0, conversations.total + (isListed ? 1 : -1))
+     }
++    if (isGrouped.value) {
++      if (wasListed) bumpGroupTotal(previousStatus, -1)
++      if (isListed) bumpGroupTotal(existing.status, 1)
++    }
+     return existing
+   }
+ 
+@@ -1151,11 +1228,12 @@ export const useConversationStore = defineStore('conversation', () => {
+       return
+     }
+     if (!canPushInsert(payload) || !inInboxScope(payload)) return
+-    if (conversations.status !== '' && payload.status !== conversations.status) return
++    if (listStatus.value !== '' && payload.status !== listStatus.value) return
+     if (!conversations.data) conversations.data = []
+     conversations.data.unshift(payload)
+     conversations.total += 1
+-    trimListToCurrentPage()
++    if (isGrouped.value) bumpGroupTotal(payload.status, 1)
++    else trimListToCurrentPage()
+   }
+ 
+   function mergeConversationUpdate (update) {
+@@ -1185,6 +1263,7 @@ export const useConversationStore = defineStore('conversation', () => {
+     conversations.initialized = false
+     conversations.hasMore = false
+     conversations.total = 0
++    for (const status of Object.keys(groupPages)) delete groupPages[status]
+     contextSeq++
+     pendingNotificationUUIDs.clear()
+     clearSelection()
+@@ -1383,6 +1462,11 @@ export const useConversationStore = defineStore('conversation', () => {
+     fetchPriorities,
+     setListSortField,
+     setListStatus,
++    listLayout,
++    isGrouped,
++    conversationGroups,
++    setListLayout,
++    fetchNextGroupConversations,
+     removeMacroAction,
+     getMacro,
+     setMacro,
+diff --git a/frontend/apps/main/src/stores/conversation.test.js b/frontend/apps/main/src/stores/conversation.test.js
+index d3cbf674..a06a660d 100644
+--- a/frontend/apps/main/src/stores/conversation.test.js
++++ b/frontend/apps/main/src/stores/conversation.test.js
+@@ -428,3 +428,32 @@ describe('status display names', () => {
+     expect(store.getStatusLabel('Open')).toBe('globals.terms.open')
+   })
+ })
++
++describe('status groups', () => {
++  it('pages each status on its own and moves totals with live updates', async () => {
++    localStorage.clear()
++    const store = useConversationStore()
++    store.statuses = [{ id: '1', name: 'Open' }, { id: '2', name: 'Closed' }]
++    store.listLayout = 'groups'
++    const page = (results, total, totalPages, p = 1) => ({ data: { data: { results, page: p, total_pages: totalPages, total } } })
++    api.getAllConversations.mockImplementation(({ filters, page: p }) => {
++      const status = JSON.parse(filters).find(f => f.model === 'conversation_statuses').value
++      if (status === 'Closed') return Promise.resolve(page([{ uuid: 'c', status: 'Closed' }], 1, 1))
++      return Promise.resolve(p === 1 ? page([{ uuid: 'a', status: 'Open' }], 2, 2) : page([{ uuid: 'b', status: 'Open' }], 2, 2, 2))
++    })
++
++    await store.fetchConversationsList(false, 'all')
++    expect(api.getAllConversations).toHaveBeenCalledTimes(2)
++    expect(store.conversations.total).toBe(3)
++    expect(store.conversationGroups.map(g => [g.name, g.total, g.hasMore, g.conversations.length]))
++      .toEqual([['Open', 2, true, 1], ['Closed', 1, false, 1]])
++
++    await store.fetchNextGroupConversations('Open')
++    expect(store.conversationGroups[0].conversations.map(c => c.uuid).sort()).toEqual(['a', 'b'])
++    expect(store.conversationGroups[0].hasMore).toBe(false)
++
++    store.mergeConversationUpdate({ uuid: 'a', status: 'Closed' })
++    expect(store.conversationGroups.map(g => g.total)).toEqual([1, 2])
++    localStorage.clear()
++  })
++})
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 5d166641..923c1809 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1564,6 +1564,9 @@
+   "inbox.oauthEmailMismatch": "The authorized email doesn't match this inbox. Please authorize with the correct account.",
+   "inbox.oauthNotFound": "No inbox found with this email to reconnect.",
+   "kuraka.allInboxes": "All inboxes",
++  "kuraka.displayAs": "Display as",
++  "kuraka.layoutGroups": "Groups",
++  "kuraka.layoutList": "List",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
+   "kuraka.switchInbox": "Switch inbox",
+   "macro.actionNotAllowed": "{name} action not allowed",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index e23009bb..853de730 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -831,6 +831,9 @@
+   "inbox.oauthEmailMismatch": "El correo electrónico autorizado no coincide con esta bandeja de entrada. Por favor autoriza con la cuenta correcta.",
+   "inbox.oauthNotFound": "No se encontró ninguna bandeja de entrada con este correo electrónico para reconectar.",
+   "kuraka.allInboxes": "Todos los buzones",
++  "kuraka.displayAs": "Mostrar como",
++  "kuraka.layoutGroups": "Grupos",
++  "kuraka.layoutList": "Lista",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
+   "kuraka.switchInbox": "Cambiar de buzón",
+   "macro.actionNotAllowed": "Acción {name} no permitida",
