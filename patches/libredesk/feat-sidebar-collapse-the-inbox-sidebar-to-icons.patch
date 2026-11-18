@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Wed, 18 Nov 2026 01:02:10 -0500
+Subject: [PATCH] feat(sidebar): collapse the inbox sidebar to icons
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Hiding the inbox sidebar removes it completely instead of leaving its icons.
+Kuraka-Missing-Es: Al ocultar la barra lateral de la bandeja desaparece por completo en vez de quedar solo con iconos.
+---
+ .../components/sidebar/KurakaInboxSwitcher.vue    | 14 +++++++-------
+ .../apps/main/src/components/sidebar/Sidebar.vue  | 15 ++++++++++-----
+ .../src/components/sidebar/SidebarCountBadge.vue  |  2 +-
+ .../components/sidebar/SidebarSectionHeader.vue   |  4 ++--
+ 4 files changed, 20 insertions(+), 15 deletions(-)
+
+diff --git a/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue b/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
+index e5d334b6..7056060f 100644
+--- a/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
++++ b/frontend/apps/main/src/components/sidebar/KurakaInboxSwitcher.vue
+@@ -5,11 +5,11 @@
+         <div
+           tabindex="0"
+           aria-disabled="true"
+-          class="flex h-10 w-full cursor-default items-center gap-2 rounded-md border border-border px-2 text-left text-sm opacity-80"
++          class="flex h-10 w-full cursor-default items-center gap-2 rounded-md border border-border px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 text-left text-sm opacity-80"
+         >
+           <Mail class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+-          <span class="min-w-0 flex-1 truncate">{{ inboxes[0]?.name ?? t('kuraka.allInboxes') }}</span>
+-          <ChevronsUpDown class="size-3.5 shrink-0 opacity-30" aria-hidden="true" />
++          <span class="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{{ inboxes[0]?.name ?? t('kuraka.allInboxes') }}</span>
++          <ChevronsUpDown class="size-3.5 shrink-0 opacity-30 group-data-[collapsible=icon]:hidden" aria-hidden="true" />
+         </div>
+       </TooltipTrigger>
+       <TooltipContent side="right" class="max-w-60">
+@@ -22,12 +22,12 @@
+         <button
+           type="button"
+           :aria-label="t('kuraka.switchInbox')"
+-          class="flex h-10 w-full items-center gap-2 rounded-md border border-border px-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
++          class="flex h-10 w-full items-center gap-2 rounded-md border border-border px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+         >
+           <Mail class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+-          <span class="min-w-0 flex-1 truncate">{{ active?.name ?? t('kuraka.allInboxes') }}</span>
+-          <span v-if="!active" class="text-xs tabular-nums text-muted-foreground">{{ inboxes.length }}</span>
+-          <ChevronsUpDown class="size-3.5 shrink-0 opacity-50" aria-hidden="true" />
++          <span class="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{{ active?.name ?? t('kuraka.allInboxes') }}</span>
++          <span v-if="!active" class="text-xs tabular-nums text-muted-foreground group-data-[collapsible=icon]:hidden">{{ inboxes.length }}</span>
++          <ChevronsUpDown class="size-3.5 shrink-0 opacity-50 group-data-[collapsible=icon]:hidden" aria-hidden="true" />
+         </button>
+       </DropdownMenuTrigger>
+       <DropdownMenuContent align="start" class="max-h-[70vh] w-64 overflow-y-auto">
+diff --git a/frontend/apps/main/src/components/sidebar/Sidebar.vue b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+index 29cbbe6f..95ee3874 100644
+--- a/frontend/apps/main/src/components/sidebar/Sidebar.vue
++++ b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+@@ -314,7 +314,7 @@ onMounted(() => {
+ 
+     <!-- Inbox sidebar -->
+     <template v-if="route.path && isInboxRoute(route.path)">
+-      <Sidebar collapsible="offcanvas" class="sidebar-secondary">
++      <Sidebar collapsible="icon" class="sidebar-secondary">
+         <SidebarSectionHeader :title="t('globals.terms.inbox')">
+           <template #actions>
+             <Button variant="ghost" size="icon" as-child class="size-8 text-muted-foreground">
+@@ -331,7 +331,8 @@ onMounted(() => {
+           <SidebarGroup>
+             <SidebarMenu>
+               <SidebarMenuItem>
+-                <SidebarMenuButton @click="emit('createConversation')">
++                <SidebarMenuButton @click="emit('createConversation')"
++ :tooltip="t('conversation.newConversation')">
+                   <Plus />
+                   <span>{{ t('conversation.newConversation') }}</span>
+                 </SidebarMenuButton>
+@@ -340,6 +341,7 @@ onMounted(() => {
+                 <SidebarMenuButton
+                   :isActive="isActiveParent('/inboxes/assigned')"
+                   @click="navigateToInbox('assigned')"
++                  :tooltip="t('globals.terms.myInbox')"
+                 >
+                   <User />
+                   <span class="flex-1 truncate">{{ t('globals.terms.myInbox') }}</span>
+@@ -359,6 +361,7 @@ onMounted(() => {
+                 <SidebarMenuButton
+                   :isActive="isActiveParent('/inboxes/mentioned')"
+                   @click="navigateToInbox('mentioned')"
++                  :tooltip="t('globals.terms.mention', 2)"
+                 >
+                   <AtSign />
+                   <span class="flex-1 truncate">
+@@ -380,6 +383,7 @@ onMounted(() => {
+                 <SidebarMenuButton
+                   :isActive="isActiveParent('/inboxes/unassigned')"
+                   @click="navigateToInbox('unassigned')"
++                  :tooltip="t('globals.terms.unassigned')"
+                 >
+                   <UserRoundX />
+                   <span class="flex-1 truncate">
+@@ -401,6 +405,7 @@ onMounted(() => {
+                 <SidebarMenuButton
+                   :isActive="isActiveParent('/inboxes/all')"
+                   @click="navigateToInbox('all')"
++                  :tooltip="t('globals.messages.all')"
+                 >
+                   <Inbox />
+                   <span class="flex-1 truncate">
+@@ -418,7 +423,7 @@ onMounted(() => {
+               <!-- Team Inboxes -->
+               <Collapsible
+                 defaultOpen
+-                class="group/collapsible"
++                class="group/collapsible group-data-[collapsible=icon]:hidden"
+                 v-if="userTeams.length"
+                 v-model:open="teamInboxOpen"
+               >
+@@ -452,7 +457,7 @@ onMounted(() => {
+ 
+               <!-- Views -->
+               <Collapsible
+-                class="group/collapsible"
++                class="group/collapsible group-data-[collapsible=icon]:hidden"
+                 defaultOpen
+                 v-model:open="viewInboxOpen"
+                 v-if="userStore.can(permissions.VIEW_MANAGE)"
+@@ -524,7 +529,7 @@ onMounted(() => {
+ 
+               <!-- Shared Views -->
+               <Collapsible
+-                class="group/collapsible"
++                class="group/collapsible group-data-[collapsible=icon]:hidden"
+                 defaultOpen
+                 v-model:open="sharedViewInboxOpen"
+                 v-if="sharedViews.length"
+diff --git a/frontend/apps/main/src/components/sidebar/SidebarCountBadge.vue b/frontend/apps/main/src/components/sidebar/SidebarCountBadge.vue
+index a2b65383..4665eef8 100644
+--- a/frontend/apps/main/src/components/sidebar/SidebarCountBadge.vue
++++ b/frontend/apps/main/src/components/sidebar/SidebarCountBadge.vue
+@@ -11,7 +11,7 @@ defineProps({
+   <Badge
+     v-if="count > 0"
+     variant="outline"
+-    class="ml-auto shrink-0 tabular-nums bg-background px-1.5 py-0 font-medium"
++    class="ml-auto shrink-0 tabular-nums group-data-[collapsible=icon]:hidden bg-background px-1.5 py-0 font-medium"
+     :aria-label="ariaLabel"
+   >
+     {{ count > 99 ? '99+' : String(count) }}
+diff --git a/frontend/apps/main/src/components/sidebar/SidebarSectionHeader.vue b/frontend/apps/main/src/components/sidebar/SidebarSectionHeader.vue
+index 2362ff57..c2a24131 100644
+--- a/frontend/apps/main/src/components/sidebar/SidebarSectionHeader.vue
++++ b/frontend/apps/main/src/components/sidebar/SidebarSectionHeader.vue
+@@ -1,6 +1,6 @@
+ <template>
+-  <SidebarHeader class="h-14 shrink-0 flex-row items-center justify-between gap-2 px-3">
+-    <div class="flex min-w-0 items-baseline gap-1.5">
++  <SidebarHeader class="h-14 shrink-0 flex-row items-center justify-between gap-2 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2">
++    <div class="flex min-w-0 items-baseline gap-1.5 group-data-[collapsible=icon]:hidden">
+       <h2 class="ui-heading truncate">{{ title }}</h2>
+       <div v-if="$slots.suffix" class="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+         <slot name="suffix" />
