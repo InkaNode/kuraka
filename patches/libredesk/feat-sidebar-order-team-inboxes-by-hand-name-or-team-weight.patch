@@ -1,0 +1,736 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 02:30:10 -0500
+Subject: [PATCH] feat(sidebar): order team inboxes by hand, name or team
+ weight
+
+Kuraka-Severity: required
+Kuraka-Missing-En: Teams have no weight, and agents cannot sort their team inboxes by hand, by name or by weight; the order is not saved to their account.
+Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar sus bandejas de equipo a mano, por nombre ni por peso; el orden no se guarda en su cuenta.
+---
+ cmd/handlers.go                               |   1 +
+ cmd/teams.go                                  |  10 +-
+ cmd/users.go                                  |  31 ++++
+ frontend/apps/main/src/api/index.js           |   2 +
+ .../components/sidebar/KurakaTeamInboxes.vue  | 144 ++++++++++++++++++
+ .../main/src/components/sidebar/Sidebar.vue   |  37 +----
+ .../src/features/admin/teams/TeamForm.vue     |  11 ++
+ .../features/admin/teams/teamFormSchema.js    |   1 +
+ frontend/apps/main/src/stores/user.js         |  23 +++
+ .../apps/main/src/utils/teamInboxOrder.js     |  30 ++++
+ .../main/src/utils/teamInboxOrder.test.js     |  29 ++++
+ i18n/en-US.json                               |  11 +-
+ i18n/es-ES.json                               |  11 +-
+ internal/kuraka/migrate.go                    |  16 ++
+ internal/team/models/models.go                |   4 +
+ internal/team/queries.sql                     |  10 +-
+ internal/team/team.go                         |   8 +-
+ internal/user/models/models.go                |   2 +
+ internal/user/queries.sql                     |  12 +-
+ internal/user/user.go                         |  10 ++
+ 20 files changed, 355 insertions(+), 48 deletions(-)
+ create mode 100644 frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
+ create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.js
+ create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.test.js
+
+diff --git a/cmd/handlers.go b/cmd/handlers.go
+index 482b95f9..95541f57 100644
+--- a/cmd/handlers.go
++++ b/cmd/handlers.go
+@@ -141,6 +141,7 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
+ 	g.PUT("/api/v1/agents/me", auth(clearsHCCache(handleUpdateCurrentAgent)))
+ 	g.GET("/api/v1/agents/me/teams", auth(handleGetCurrentAgentTeams))
+ 	g.PUT("/api/v1/agents/me/availability", auth(handleUpdateAgentAvailability))
++	g.PUT("/api/v1/agents/me/team-inboxes", auth(handleUpdateTeamInboxOrder))
+ 	g.DELETE("/api/v1/agents/me/avatar", auth(clearsHCCache(handleDeleteCurrentAgentAvatar)))
+ 
+ 	g.GET("/api/v1/agents/compact", auth(handleGetAgentsCompact))
+diff --git a/cmd/teams.go b/cmd/teams.go
+index ef4e0346..f86b29df 100644
+--- a/cmd/teams.go
++++ b/cmd/teams.go
+@@ -69,7 +69,10 @@ func handleCreateTeam(r *fastglue.Request) error {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("errors.parsingRequest"), nil))
+ 	}
+ 
+-	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations)
++	if req.Weight < 0 || req.Weight > 1000 {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
++	}
++	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -92,7 +95,10 @@ func handleUpdateTeam(r *fastglue.Request) error {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("errors.parsingRequest"), nil))
+ 	}
+ 
+-	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations)
++	if req.Weight < 0 || req.Weight > 1000 {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
++	}
++	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/cmd/users.go b/cmd/users.go
+index 57e0c8f1..45d54528 100644
+--- a/cmd/users.go
++++ b/cmd/users.go
+@@ -371,6 +371,37 @@ func handleDeleteAgent(r *fastglue.Request) error {
+ 	return r.SendEnvelope(true)
+ }
+ 
++// teamInboxOrderRequest is how an agent sorts their team inboxes; Order lists team IDs top to bottom.
++type teamInboxOrderRequest struct {
++	Sort  string `json:"sort"`
++	Group bool   `json:"group"`
++	Order []int  `json:"order"`
++}
++
++// handleUpdateTeamInboxOrder saves the current agent's team inbox order.
++func handleUpdateTeamInboxOrder(r *fastglue.Request) error {
++	var (
++		app   = r.Context.(*App)
++		auser = r.RequestCtx.UserValue("user").(amodels.User)
++		req   teamInboxOrderRequest
++	)
++	if err := r.Decode(&req, "json"); err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("errors.parsingRequest"), nil, envelope.InputError)
++	}
++	if !slices.Contains([]string{"manual", "name", "weight"}, req.Sort) || len(req.Order) > 1000 {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("errors.parsingRequest"), nil, envelope.InputError)
++	}
++	if err := app.user.UpdateTeamInboxOrder(auser.ID, req.Sort, req.Group, req.Order); err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++	app.user.InvalidateAgentCache(auser.ID)
++	u, err := app.user.GetAgentCachedOrLoad(auser.ID)
++	if err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++	return r.SendEnvelope(u)
++}
++
+ // handleGetCurrentAgent returns the current logged in agent.
+ func handleGetCurrentAgent(r *fastglue.Request) error {
+ 	var (
+diff --git a/frontend/apps/main/src/api/index.js b/frontend/apps/main/src/api/index.js
+index 8b154f2b..597a7a82 100644
+--- a/frontend/apps/main/src/api/index.js
++++ b/frontend/apps/main/src/api/index.js
+@@ -237,6 +237,7 @@ const createTeam = (data) => http.post('/api/v1/teams', data, {
+   }
+ })
+ const getTeamsCompact = (params) => http.get('/api/v1/teams/compact', { params })
++const updateCurrentUserTeamInboxes = (data) => http.put('/api/v1/agents/me/team-inboxes', data)
+ const deleteTeam = (id) => http.delete(`/api/v1/teams/${id}`)
+ const updateUser = (id, data) =>
+   http.put(`/api/v1/agents/${id}`, data, {
+@@ -786,6 +787,7 @@ export default {
+   updateStatus,
+   deleteStatus,
+   getTeamsCompact,
++  updateCurrentUserTeamInboxes,
+   getUsersCompact,
+   getEmailNotificationSettings,
+   updateEmailNotificationSettings,
+diff --git a/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue b/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
+new file mode 100644
+index 00000000..7e476180
+--- /dev/null
++++ b/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
+@@ -0,0 +1,144 @@
++<template>
++  <Collapsible v-model:open="open" class="group/collapsible group-data-[collapsible=icon]:hidden">
++    <SidebarMenuItem>
++      <CollapsibleTrigger as-child>
++        <SidebarMenuButton>
++          <span class="sidebar-section-label">{{ t('globals.terms.teamInbox', 2) }}</span>
++          <ChevronRight
++            class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
++          />
++        </SidebarMenuButton>
++      </CollapsibleTrigger>
++      <DropdownMenu>
++        <DropdownMenuTrigger as-child>
++          <SidebarMenuAction
++            show-on-hover
++            class="right-8 top-1.5 translate-y-0 text-muted-foreground"
++            :aria-label="t('kuraka.sortTeamInboxes')"
++            :title="t('kuraka.sortTeamInboxes')"
++          >
++            <ArrowDownUp aria-hidden="true" />
++          </SidebarMenuAction>
++        </DropdownMenuTrigger>
++        <DropdownMenuContent align="start" class="w-52">
++          <DropdownMenuLabel>{{ t('kuraka.sortTeamInboxes') }}</DropdownMenuLabel>
++          <DropdownMenuRadioGroup :model-value="sort" @update:model-value="(value) => save({ sort: value })">
++            <DropdownMenuRadioItem v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value" class="gap-2">
++              <component :is="option.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
++              {{ t(option.label) }}
++            </DropdownMenuRadioItem>
++          </DropdownMenuRadioGroup>
++          <DropdownMenuSeparator />
++          <DropdownMenuCheckboxItem
++            :checked="group"
++            :disabled="sort !== 'weight'"
++            @update:checked="(value) => save({ group: value })"
++          >
++            {{ t('kuraka.groupByWeight') }}
++          </DropdownMenuCheckboxItem>
++        </DropdownMenuContent>
++      </DropdownMenu>
++      <CollapsibleContent>
++        <div v-for="section in sections" :key="section.key">
++          <p v-if="showHeaders" class="ml-6 mt-2 px-2 text-xs tabular-nums text-muted-foreground">
++            {{ t('kuraka.weightGroup', { weight: section.weight }) }}
++          </p>
++          <draggable
++            :model-value="section.teams"
++            tag="ul"
++            item-key="id"
++            :disabled="!canMove"
++            :animation="reducedMotion === 'reduce' ? 0 : 150"
++            :force-fallback="true"
++            fallback-on-body
++            :fallback-tolerance="3"
++            ghost-class="opacity-40"
++            class="ml-3 flex min-w-0 flex-col gap-1 border-l border-sidebar-border py-0.5 pl-3"
++            @update:model-value="(teams) => reorder(section, teams)"
++          >
++            <template #item="{ element: team, index }">
++              <SidebarMenuSubItem :class="{ 'cursor-grab active:cursor-grabbing': canMove }">
++                <SidebarMenuButton
++                  size="sm"
++                  :data-team-inbox="team.id"
++                  :is-active="route.params.teamID == team.id"
++                  :aria-keyshortcuts="canMove ? 'Alt+ArrowUp Alt+ArrowDown' : undefined"
++                  @click="navigateToTeamInbox(team.id)"
++                  @keydown.alt.up.prevent="move(section, index, -1)"
++                  @keydown.alt.down.prevent="move(section, index, 1)"
++                >
++                  {{ team.emoji }}<span class="flex-1 truncate" :title="team.name">{{ team.name }}</span>
++                </SidebarMenuButton>
++              </SidebarMenuSubItem>
++            </template>
++          </draggable>
++        </div>
++      </CollapsibleContent>
++    </SidebarMenuItem>
++  </Collapsible>
++</template>
++
++<script setup>
++import { computed, nextTick } from 'vue'
++import { useRoute } from 'vue-router'
++import { useI18n } from 'vue-i18n'
++import { usePreferredReducedMotion } from '@vueuse/core'
++import draggable from 'vuedraggable'
++import { ArrowDownAZ, ArrowDownUp, ChevronRight, GripVertical, Weight } from 'lucide-vue-next'
++import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@shared-ui/components/ui/collapsible'
++import {
++  DropdownMenu,
++  DropdownMenuCheckboxItem,
++  DropdownMenuContent,
++  DropdownMenuLabel,
++  DropdownMenuRadioGroup,
++  DropdownMenuRadioItem,
++  DropdownMenuSeparator,
++  DropdownMenuTrigger
++} from '@shared-ui/components/ui/dropdown-menu'
++import {
++  SidebarMenuAction,
++  SidebarMenuButton,
++  SidebarMenuItem,
++  SidebarMenuSubItem
++} from '@shared-ui/components/ui/sidebar'
++import { useUserStore } from '@main/stores/user'
++import { useInboxNavigation } from '@main/composables/useInboxNavigation'
++import { reorderTeamInboxes, sortTeamInboxes, teamInboxSections } from '@main/utils/teamInboxOrder'
++
++const SORT_OPTIONS = [
++  { value: 'manual', label: 'kuraka.sortManual', icon: GripVertical },
++  { value: 'name', label: 'kuraka.sortName', icon: ArrowDownAZ },
++  { value: 'weight', label: 'kuraka.sortWeight', icon: Weight }
++]
++
++const open = defineModel('open', { type: Boolean, default: true })
++const route = useRoute()
++const { t } = useI18n()
++const reducedMotion = usePreferredReducedMotion()
++const userStore = useUserStore()
++const { navigateToTeamInbox } = useInboxNavigation()
++
++const sort = computed(() => userStore.user.team_inbox_sort || 'manual')
++const group = computed(() => !!userStore.user.team_inbox_group)
++const canMove = computed(() => sort.value !== 'name')
++const showHeaders = computed(() => sort.value === 'weight' && group.value)
++const sections = computed(() => teamInboxSections(userStore.teams, sort.value))
++const manualOrder = computed(() => sortTeamInboxes(userStore.teams, 'manual').map((team) => team.id))
++
++const save = (change) =>
++  userStore.saveTeamInboxOrder({ sort: sort.value, group: group.value, order: manualOrder.value, ...change })
++
++const reorder = (section, teams) =>
++  save({ order: reorderTeamInboxes(manualOrder.value, section.teams, teams) })
++
++const move = async (section, index, delta) => {
++  const target = index + delta
++  if (!canMove.value || target < 0 || target >= section.teams.length) return
++  const teams = [...section.teams]
++  ;[teams[index], teams[target]] = [teams[target], teams[index]]
++  reorder(section, teams)
++  await nextTick()
++  document.querySelector(`[data-team-inbox="${teams[target].id}"]`)?.focus()
++}
++</script>
+diff --git a/frontend/apps/main/src/components/sidebar/Sidebar.vue b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+index 0766bb8f..4d3a1e5a 100644
+--- a/frontend/apps/main/src/components/sidebar/Sidebar.vue
++++ b/frontend/apps/main/src/components/sidebar/Sidebar.vue
+@@ -60,6 +60,7 @@ import MobileDrawerFooter from './MobileDrawerFooter.vue'
+ import SidebarCountBadge from './SidebarCountBadge.vue'
+ import KurakaInboxSwitcher from './KurakaInboxSwitcher.vue'
+ import KurakaSidebarToggle from './KurakaSidebarToggle.vue'
++import KurakaTeamInboxes from './KurakaTeamInboxes.vue'
+ import { filterNavItems } from '@main/utils/nav-permissions'
+ import { permissions } from '@main/constants/permissions'
+ import { useStorage } from '@vueuse/core'
+@@ -118,7 +119,7 @@ const handleDeleteView = () => {
+   }
+ }
+ 
+-const { navigateToInbox, navigateToTeamInbox, navigateToViewInbox } = useInboxNavigation()
++const { navigateToInbox, navigateToViewInbox } = useInboxNavigation()
+ 
+ const filteredAdminNavItems = computed(() => filterNavItems(adminNavItems, userStore.can))
+ const filteredReportsNavItems = computed(() => filterNavItems(reportsNavItems, userStore.can))
+@@ -423,39 +424,7 @@ onMounted(() => {
+               </SidebarMenuItem>
+ 
+               <!-- Team Inboxes -->
+-              <Collapsible
+-                defaultOpen
+-                class="group/collapsible group-data-[collapsible=icon]:hidden"
+-                v-if="userTeams.length"
+-                v-model:open="teamInboxOpen"
+-              >
+-                <SidebarMenuItem>
+-                  <CollapsibleTrigger as-child>
+-                    <SidebarMenuButton>
+-                      <span class="sidebar-section-label">
+-                        {{ t('globals.terms.teamInbox', 2) }}
+-                      </span>
+-                      <ChevronRight
+-                        class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+-                      />
+-                    </SidebarMenuButton>
+-                  </CollapsibleTrigger>
+-                  <CollapsibleContent>
+-                    <SidebarMenuSub>
+-                      <SidebarMenuSubItem v-for="team in userTeams" :key="team.id">
+-                        <SidebarMenuButton
+-                          size="sm"
+-                          :is-active="route.params.teamID == team.id"
+-                          @click="navigateToTeamInbox(team.id)"
+-                        >
+-                          {{ team.emoji
+-                          }}<span class="flex-1 truncate" :title="team.name">{{ team.name }}</span>
+-                        </SidebarMenuButton>
+-                      </SidebarMenuSubItem>
+-                    </SidebarMenuSub>
+-                  </CollapsibleContent>
+-                </SidebarMenuItem>
+-              </Collapsible>
++              <KurakaTeamInboxes v-if="userTeams.length" v-model:open="teamInboxOpen" />
+ 
+               <!-- Views -->
+               <Collapsible
+diff --git a/frontend/apps/main/src/features/admin/teams/TeamForm.vue b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+index 5f6b1fa3..e35e03c7 100644
+--- a/frontend/apps/main/src/features/admin/teams/TeamForm.vue
++++ b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+@@ -61,6 +61,17 @@
+           <FormMessage />
+         </FormItem>
+       </FormField>
++
++      <FormField v-slot="{ componentField }" name="weight">
++        <FormItem>
++          <FormLabel>{{ $t('kuraka.teamWeight') }}</FormLabel>
++          <FormControl>
++            <Input type="number" inputmode="numeric" min="0" max="1000" step="1" placeholder="0" v-bind="componentField" />
++          </FormControl>
++          <FormDescription>{{ $t('kuraka.teamWeightHelp') }}</FormDescription>
++          <FormMessage />
++        </FormItem>
++      </FormField>
+       <FormField v-slot="{ componentField }" name="timezone">
+         <FormItem>
+           <FormLabel>{{ $t('globals.terms.timezone', 1) }}</FormLabel>
+diff --git a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+index fb175193..a4a76bbc 100644
+--- a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
++++ b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+@@ -12,6 +12,7 @@ export const createTeamFormSchema = (t) => z.object({
+     .trim().min(1, { message: t('globals.messages.required') }),
+   conversation_assignment_type: z.string({ required_error: t('globals.messages.required') }),
+   max_auto_assigned_conversations: z.coerce.number().default(0),
++  weight: z.coerce.number().int().min(0).max(1000).default(0),
+   timezone: z.string({ required_error: t('globals.messages.required') }),
+   business_hours_id: z.number().optional().nullable(),
+   sla_policy_id: z.number().optional().nullable(),
+diff --git a/frontend/apps/main/src/stores/user.js b/frontend/apps/main/src/stores/user.js
+index 719bec59..2b1151ee 100644
+--- a/frontend/apps/main/src/stores/user.js
++++ b/frontend/apps/main/src/stores/user.js
+@@ -109,6 +109,28 @@ export const useUserStore = defineStore('user', () => {
+     }
+   }
+ 
++  // Kuraka: team inbox order, saved to the agent's account.
++  const saveTeamInboxOrder = async ({ sort, group, order }) => {
++    const previous = user.value
++    const position = new Map(order.map((id, i) => [id, i + 1]))
++    user.value = {
++      ...user.value,
++      team_inbox_sort: sort,
++      team_inbox_group: group,
++      teams: teams.value.map((team) => ({ ...team, position: position.get(team.id) ?? team.position }))
++    }
++    try {
++      const response = await api.updateCurrentUserTeamInboxes({ sort, group, order })
++      if (response?.data?.data) user.value = response.data.data
++    } catch (error) {
++      user.value = previous
++      emitter.emit(EMITTER_EVENTS.SHOW_TOAST, {
++        variant: 'destructive',
++        description: handleHTTPError(error).message
++      })
++    }
++  }
++
+   const hasAdminRole = computed(() => {
+     return hasRole('Admin')
+   })
+@@ -138,6 +160,7 @@ export const useUserStore = defineStore('user', () => {
+     clearAvatar,
+     setAvatar,
+     updateUserAvailability,
++    saveTeamInboxOrder,
+     can
+   }
+ })
+\ No newline at end of file
+diff --git a/frontend/apps/main/src/utils/teamInboxOrder.js b/frontend/apps/main/src/utils/teamInboxOrder.js
+new file mode 100644
+index 00000000..32c38191
+--- /dev/null
++++ b/frontend/apps/main/src/utils/teamInboxOrder.js
+@@ -0,0 +1,30 @@
++// Kuraka: how an agent orders their team inboxes. position is the agent's own order (0 = never moved).
++const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
++const byPosition = (a, b) => (a.position || 0) - (b.position || 0) || byName(a, b)
++const byWeight = (a, b) => (b.weight || 0) - (a.weight || 0) || byPosition(a, b)
++
++export const sortTeamInboxes = (teams, sort) =>
++  [...teams].sort(sort === 'name' ? byName : sort === 'weight' ? byWeight : byPosition)
++
++// By weight, teams with the same weight form one section and only move inside it.
++export const teamInboxSections = (teams, sort) => {
++  const sorted = sortTeamInboxes(teams, sort)
++  if (sort !== 'weight') return [{ key: 'all', teams: sorted }]
++  const sections = []
++  for (const team of sorted) {
++    const weight = team.weight || 0
++    if (sections.at(-1)?.weight !== weight) sections.push({ key: `w${weight}`, weight, teams: [] })
++    sections.at(-1).teams.push(team)
++  }
++  return sections
++}
++
++// New manual order after a section is rearranged: the section's teams swap among the slots they held.
++export const reorderTeamInboxes = (manualOrder, sectionTeams, newTeams) => {
++  const order = [...manualOrder]
++  const slots = sectionTeams.map((team) => order.indexOf(team.id)).sort((a, b) => a - b)
++  newTeams.forEach((team, i) => {
++    order[slots[i]] = team.id
++  })
++  return order
++}
+diff --git a/frontend/apps/main/src/utils/teamInboxOrder.test.js b/frontend/apps/main/src/utils/teamInboxOrder.test.js
+new file mode 100644
+index 00000000..d9456f7c
+--- /dev/null
++++ b/frontend/apps/main/src/utils/teamInboxOrder.test.js
+@@ -0,0 +1,29 @@
++import { describe, expect, it } from 'vitest'
++import { reorderTeamInboxes, sortTeamInboxes, teamInboxSections } from './teamInboxOrder'
++
++const teams = [
++  { id: 1, name: 'Ventas', weight: 5, position: 2 },
++  { id: 2, name: 'general', weight: 0, position: 0 },
++  { id: 3, name: 'Reclamos', weight: 5, position: 1 },
++  { id: 4, name: 'Meta', position: 0 }
++]
++const ids = (list) => list.map((team) => team.id)
++
++describe('team inbox order', () => {
++  it('sorts by name, by own position and by weight', () => {
++    expect(ids(sortTeamInboxes(teams, 'name'))).toEqual([2, 4, 3, 1])
++    expect(ids(sortTeamInboxes(teams, 'manual'))).toEqual([2, 4, 3, 1])
++    expect(ids(sortTeamInboxes(teams, 'weight'))).toEqual([3, 1, 2, 4])
++  })
++
++  it('groups the same weight, missing weight counts as 0', () => {
++    const sections = teamInboxSections(teams, 'weight')
++    expect(sections.map((s) => [s.weight, ids(s.teams)])).toEqual([[5, [3, 1]], [0, [2, 4]]])
++    expect(teamInboxSections(teams, 'name')).toHaveLength(1)
++  })
++
++  it('moves teams only among the slots their section held', () => {
++    const section = [teams[2], teams[0]]
++    expect(reorderTeamInboxes([2, 3, 4, 1], section, [teams[0], teams[2]])).toEqual([2, 1, 4, 3])
++  })
++})
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 1aad2b73..342ea2df 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1565,12 +1565,21 @@
+   "inbox.oauthNotFound": "No inbox found with this email to reconnect.",
+   "kuraka.allInboxes": "All inboxes",
+   "kuraka.collapseSidebar": "Collapse sidebar",
+-  "kuraka.expandSidebar": "Expand sidebar",
+   "kuraka.displayAs": "Display as",
++  "kuraka.expandSidebar": "Expand sidebar",
++  "kuraka.groupByWeight": "Group by weight",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
++  "kuraka.sortManual": "My order (drag)",
++  "kuraka.sortName": "Alphabetical",
++  "kuraka.sortTeamInboxes": "Sort team inboxes",
++  "kuraka.sortWeight": "By weight",
+   "kuraka.switchInbox": "Switch inbox",
++  "kuraka.teamWeight": "Weight",
++  "kuraka.teamWeightHelp": "When agents sort their team inboxes by weight, higher weights go first. Teams with the same weight stay together.",
++  "kuraka.teamWeightRange": "Weight must be a whole number from 0 to 1000.",
++  "kuraka.weightGroup": "Weight {weight}",
+   "macro.actionNotAllowed": "{name} action not allowed",
+   "macro.actionType": "Action type",
+   "macro.applied": "Macro applied",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 9eea7aab..76e5e472 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -832,12 +832,21 @@
+   "inbox.oauthNotFound": "No se encontró ninguna bandeja de entrada con este correo electrónico para reconectar.",
+   "kuraka.allInboxes": "Todos los buzones",
+   "kuraka.collapseSidebar": "Contraer barra",
+-  "kuraka.expandSidebar": "Expandir barra",
+   "kuraka.displayAs": "Mostrar como",
++  "kuraka.expandSidebar": "Expandir barra",
++  "kuraka.groupByWeight": "Agrupar por peso",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
++  "kuraka.sortManual": "Mi orden (arrastrar)",
++  "kuraka.sortName": "Alfabético",
++  "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
++  "kuraka.sortWeight": "Por peso",
+   "kuraka.switchInbox": "Cambiar de buzón",
++  "kuraka.teamWeight": "Peso",
++  "kuraka.teamWeightHelp": "Cuando los agentes ordenan sus bandejas de equipo por peso, los pesos más altos van primero. Los equipos con el mismo peso quedan juntos.",
++  "kuraka.teamWeightRange": "El peso debe ser un número entero de 0 a 1000.",
++  "kuraka.weightGroup": "Peso {weight}",
+   "macro.actionNotAllowed": "Acción {name} no permitida",
+   "macro.actionType": "Tipo de acción",
+   "macro.applied": "Macro aplicada",
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index bb917cff..fb88ae5e 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -45,6 +45,22 @@ func Migrate(db *sqlx.DB) error {
+    WHERE table_schema = current_schema() AND table_name = 'automation_rules' AND column_name = 'icon') THEN
+    ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '' CHECK (length(icon) <= 2048);
+   END IF;
++ END $$`)
++	if err != nil {
++		return err
++	}
++	_, err = tx.Exec(`DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
++   WHERE table_schema = current_schema() AND table_name = 'teams' AND column_name = 'weight') THEN
++   ALTER TABLE teams ADD COLUMN IF NOT EXISTS weight INT NOT NULL DEFAULT 0 CHECK (weight BETWEEN 0 AND 1000);
++  END IF;
++  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
++   WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'team_inbox_sort') THEN
++   ALTER TABLE users
++    ADD COLUMN IF NOT EXISTS team_inbox_sort TEXT NOT NULL DEFAULT 'manual' CHECK (team_inbox_sort IN ('manual', 'name', 'weight')),
++    ADD COLUMN IF NOT EXISTS team_inbox_group BOOLEAN NOT NULL DEFAULT false;
++  END IF;
++  ALTER TABLE team_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;
+  END $$`)
+ 	if err != nil {
+ 		return err
+diff --git a/internal/team/models/models.go b/internal/team/models/models.go
+index 905f06c1..74ad2923 100644
+--- a/internal/team/models/models.go
++++ b/internal/team/models/models.go
+@@ -20,12 +20,16 @@ type Team struct {
+ 	BusinessHoursID              null.Int    `db:"business_hours_id" json:"business_hours_id"`
+ 	SLAPolicyID                  null.Int    `db:"sla_policy_id" json:"sla_policy_id"`
+ 	MaxAutoAssignedConversations int         `db:"max_auto_assigned_conversations" json:"max_auto_assigned_conversations"`
++	Weight                       int         `db:"weight" json:"weight"`
+ }
+ 
+ type TeamCompact struct {
+ 	ID    int         `db:"id" json:"id"`
+ 	Name  string      `db:"name" json:"name"`
+ 	Emoji null.String `db:"emoji" json:"emoji"`
++	// Weight and the member's own Position come only with the current agent's teams.
++	Weight   int `db:"weight" json:"weight,omitempty"`
++	Position int `db:"position" json:"position,omitempty"`
+ }
+ 
+ type TeamMember struct {
+diff --git a/internal/team/queries.sql b/internal/team/queries.sql
+index df38299b..b4d82974 100644
+--- a/internal/team/queries.sql
++++ b/internal/team/queries.sql
+@@ -1,5 +1,5 @@
+ -- name: get-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone from teams order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams order by updated_at desc;
+ 
+ -- name: get-teams-compact
+ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%') order by name limit NULLIF($2, 0) offset $3;
+@@ -8,10 +8,10 @@ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%')
+ SELECT id, name, emoji from teams where id = ANY($1) order by name;
+ 
+ -- name: get-user-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
+ 
+ -- name: get-team
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone from teams where id = $1;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams where id = $1;
+ 
+ -- name: get-team-members
+ SELECT u.id, t.id as team_id, u.availability_status
+@@ -21,10 +21,10 @@ JOIN teams t ON t.id = tm.team_id
+ WHERE t.id = $1 AND u.deleted_at IS NULL AND u.type = 'agent' AND u.enabled = true;
+ 
+ -- name: insert-team
+-INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
++INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations, weight) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
+ 
+ -- name: update-team
+-UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, updated_at = now() where id = $1 RETURNING *;
++UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, weight = $9, updated_at = now() where id = $1 RETURNING *;
+ 
+ -- name: upsert-user-teams
+ WITH delete_old_teams AS (
+diff --git a/internal/team/team.go b/internal/team/team.go
+index 8f93169c..c587f3ce 100644
+--- a/internal/team/team.go
++++ b/internal/team/team.go
+@@ -117,9 +117,9 @@ func (u *Manager) Get(id int) (models.Team, error) {
+ }
+ 
+ // Create creates a new team.
+-func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations int) (models.Team, error) {
++func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations); err != nil {
++	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight); err != nil {
+ 		if dbutil.IsUniqueViolationError(err) {
+ 			return team, envelope.NewError(envelope.GeneralError, u.i18n.T("errors.alreadyExistsTeam"), nil)
+ 		}
+@@ -130,9 +130,9 @@ func (u *Manager) Create(name, timezone, conversationAssignmentType string, busi
+ }
+ 
+ // Update updates an existing team.
+-func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations int) (models.Team, error) {
++func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations); err != nil {
++	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight); err != nil {
+ 		u.lo.Error("error updating team", "error", err)
+ 		return team, envelope.NewError(envelope.GeneralError, u.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/internal/user/models/models.go b/internal/user/models/models.go
+index 95eb8731..bd30d6c1 100644
+--- a/internal/user/models/models.go
++++ b/internal/user/models/models.go
+@@ -82,6 +82,8 @@ type User struct {
+ 	CustomAttributes       json.RawMessage      `db:"custom_attributes" json:"custom_attributes"`
+ 	ExternalUserID         null.String          `db:"external_user_id" json:"external_user_id"`
+ 	Teams                  tmodels.TeamsCompact `db:"teams" json:"teams"`
++	TeamInboxSort          string               `db:"team_inbox_sort" json:"team_inbox_sort"`
++	TeamInboxGroup         bool                 `db:"team_inbox_group" json:"team_inbox_group"`
+ 	ContactChannelID       int                  `db:"contact_channel_id" json:"contact_channel_id,omitempty"`
+ 	NewPassword            string               `db:"-" json:"new_password,omitempty"`
+ 	SendWelcomeEmail       bool                 `db:"-" json:"send_welcome_email,omitempty"`
+diff --git a/internal/user/queries.sql b/internal/user/queries.sql
+index 87b59734..1e4f0a4a 100644
+--- a/internal/user/queries.sql
++++ b/internal/user/queries.sql
+@@ -65,12 +65,14 @@ SELECT
+     u.custom_attributes,
+     array_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL) AS roles,
+     COALESCE(
+-        (SELECT json_agg(json_build_object('id', t.id, 'name', t.name, 'emoji', t.emoji))
++        (SELECT json_agg(json_build_object('id', t.id, 'name', t.name, 'emoji', t.emoji, 'weight', t.weight, 'position', tm.position))
+          FROM team_members tm
+          JOIN teams t ON tm.team_id = t.id
+          WHERE tm.user_id = u.id),
+         '[]'
+     ) AS teams,
++    u.team_inbox_sort,
++    u.team_inbox_group,
+     array_agg(DISTINCT p ORDER BY p) FILTER (WHERE p IS NOT NULL) AS permissions
+ FROM users u
+ LEFT JOIN user_roles ur ON ur.user_id = u.id
+@@ -598,3 +600,11 @@ SELECT jsonb_build_object(
+         WHERE c.contact_id = $1
+     )
+ );
++
++-- name: update-team-inbox-order
++WITH positions AS (
++    UPDATE team_members tm SET position = o.ord::int
++    FROM unnest($4::int[]) WITH ORDINALITY AS o(team_id, ord)
++    WHERE tm.user_id = $1 AND tm.team_id = o.team_id
++)
++UPDATE users SET team_inbox_sort = $2, team_inbox_group = $3, updated_at = NOW() WHERE id = $1;
+diff --git a/internal/user/user.go b/internal/user/user.go
+index a739fce5..3c91d898 100644
+--- a/internal/user/user.go
++++ b/internal/user/user.go
+@@ -93,6 +93,7 @@ type queries struct {
+ 	UpsertCustomAttributes           *sqlx.Stmt `query:"upsert-custom-attributes"`
+ 	UpdateAvatar                     *sqlx.Stmt `query:"update-avatar"`
+ 	UpdateAvailability               *sqlx.Stmt `query:"update-availability"`
++	UpdateTeamInboxOrder             *sqlx.Stmt `query:"update-team-inbox-order"`
+ 	UpdateLastActiveAt               *sqlx.Stmt `query:"update-last-active-at"`
+ 	UpdateInactiveOffline            *sqlx.Stmt `query:"update-inactive-offline"`
+ 	GetAvailabilityStatus            *sqlx.Stmt `query:"get-availability-status"`
+@@ -366,6 +367,15 @@ func (u *Manager) ResetPassword(token, password string) (int, error) {
+ 	return id, nil
+ }
+ 
++// UpdateTeamInboxOrder saves how the agent sorts their team inboxes and their own order.
++func (u *Manager) UpdateTeamInboxOrder(id int, sort string, group bool, order []int) error {
++	if _, err := u.q.UpdateTeamInboxOrder.Exec(id, sort, group, pq.Array(order)); err != nil {
++		u.lo.Error("error updating team inbox order", "error", err)
++		return envelope.NewError(envelope.GeneralError, u.i18n.T("globals.messages.somethingWentWrong"), nil)
++	}
++	return nil
++}
++
+ // UpdateAvailability updates the availability status of an user.
+ func (u *Manager) UpdateAvailability(id int, status string) error {
+ 	if _, err := u.q.UpdateAvailability.Exec(id, status); err != nil {

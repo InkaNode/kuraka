@@ -14,12 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk conversation list**: **Display as** switches between **List** and **Groups**. Groups show one section per status with its count; each section opens and closes, loads more on its own, and **Closed** starts closed. Views stay a list.
 - **Libredesk sort menu**: each order has an icon, also shown on the button.
 - **Libredesk sidebar**: a button next to the inbox title shrinks the sidebar to icons, with each name shown on hover, and opens it again. Team inboxes and views come back when it is opened again.
+- **Libredesk team inboxes**: each team has a **Weight** from 0 to 1000. Agents sort their team inboxes as **My order** (drag, or Alt + arrow keys), **Alphabetical** or **By weight**, where higher weights go first and teams with the same weight stay together, in the agent's order or by name. **Group by weight** adds a heading per weight. The choice is saved to the agent's account.
 - **Libredesk Admin → General**: **Collapse activity events after** sets how many activity events in a row are shown before they start collapsed. The default is 2.
 
 ### Changed
 
 - **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
-- **Libredesk patches**: the tag colour, rule icon and activity setting patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
+- **Libredesk patches**: the tag colour, rule icon, activity setting and team inbox order patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
 
 ### Fixed
 
