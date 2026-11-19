@@ -11,6 +11,7 @@ Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar su
  cmd/handlers.go                               |   1 +
  cmd/teams.go                                  |  10 +-
  cmd/users.go                                  |  31 ++++
+ frontend/DESIGN.md                            |   2 +-
  frontend/apps/main/src/api/index.js           |   2 +
  .../components/sidebar/KurakaTeamInboxes.vue  | 144 ++++++++++++++++++
  .../main/src/components/sidebar/Sidebar.vue   |  37 +----
@@ -19,6 +20,7 @@ Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar su
  frontend/apps/main/src/stores/user.js         |  23 +++
  .../apps/main/src/utils/teamInboxOrder.js     |  31 ++++
  .../main/src/utils/teamInboxOrder.test.js     |  29 ++++
+ frontend/shared-ui/assets/styles/main.scss    |   2 +-
  i18n/en-US.json                               |  11 +-
  i18n/es-ES.json                               |  11 +-
  internal/kuraka/migrate.go                    |  16 ++
@@ -28,7 +30,7 @@ Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar su
  internal/user/models/models.go                |   2 +
  internal/user/queries.sql                     |  12 +-
  internal/user/user.go                         |  10 ++
- 20 files changed, 356 insertions(+), 48 deletions(-)
+ 22 files changed, 358 insertions(+), 50 deletions(-)
  create mode 100644 frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
  create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.js
  create mode 100644 frontend/apps/main/src/utils/teamInboxOrder.test.js
@@ -115,6 +117,19 @@ index 57e0c8f1..45d54528 100644
  // handleGetCurrentAgent returns the current logged in agent.
  func handleGetCurrentAgent(r *fastglue.Request) error {
  	var (
+diff --git a/frontend/DESIGN.md b/frontend/DESIGN.md
+index bf212207..058294fc 100644
+--- a/frontend/DESIGN.md
++++ b/frontend/DESIGN.md
+@@ -146,7 +146,7 @@ Pass `reserve-height` when a page needs space for a centered loading indicator.
+ | Utility | Style |
+ | --- | --- |
+ | `.box` | Border, small shadow, and large radius |
+-| `.sidebar-section-label` | 12px muted uppercase text with wider tracking |
++| `.sidebar-section-label` | 11px muted uppercase text with wider tracking, on one line |
+ | `.link-style` | Muted underlined text with foreground hover color |
+ 
+ Use these utilities when their shared style fits the control.
 diff --git a/frontend/apps/main/src/api/index.js b/frontend/apps/main/src/api/index.js
 index 8b154f2b..597a7a82 100644
 --- a/frontend/apps/main/src/api/index.js
@@ -137,7 +152,7 @@ index 8b154f2b..597a7a82 100644
    updateEmailNotificationSettings,
 diff --git a/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue b/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
 new file mode 100644
-index 00000000..7e476180
+index 00000000..e2b426bc
 --- /dev/null
 +++ b/frontend/apps/main/src/components/sidebar/KurakaTeamInboxes.vue
 @@ -0,0 +1,144 @@
@@ -156,7 +171,7 @@ index 00000000..7e476180
 +        <DropdownMenuTrigger as-child>
 +          <SidebarMenuAction
 +            show-on-hover
-+            class="right-8 top-1.5 translate-y-0 text-muted-foreground"
++            class="right-1 top-1.5 translate-y-0 text-muted-foreground"
 +            :aria-label="t('kuraka.sortTeamInboxes')"
 +            :title="t('kuraka.sortTeamInboxes')"
 +          >
@@ -495,6 +510,19 @@ index 00000000..0f348ac4
 +    expect(reorderTeamInboxes([2, 3, 4, 1], section, [teams[0], teams[2]])).toEqual([2, 1, 4, 3])
 +  })
 +})
+diff --git a/frontend/shared-ui/assets/styles/main.scss b/frontend/shared-ui/assets/styles/main.scss
+index 6f562ac1..4e35728b 100644
+--- a/frontend/shared-ui/assets/styles/main.scss
++++ b/frontend/shared-ui/assets/styles/main.scss
+@@ -345,7 +345,7 @@
+ }
+ 
+ .sidebar-section-label {
+-  @apply text-xs font-medium uppercase tracking-wider text-muted-foreground;
++  @apply truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground;
+ }
+ 
+ .box {
 diff --git a/i18n/en-US.json b/i18n/en-US.json
 index 1aad2b73..342ea2df 100644
 --- a/i18n/en-US.json
