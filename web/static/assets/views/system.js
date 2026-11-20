@@ -116,7 +116,7 @@ export async function systemView() {
     if (!addon) return null;
     const name = t(`system.addons.${app}`);
     const report = addon.report;
-    const missing = report?.missing || [];
+    const broken = report?.missing?.length > 0;
     const control = checkbox({ label: t('system.addons.disable'), checked: addon.disabled,
       onChange: async event => {
         const input = event.currentTarget;
@@ -128,9 +128,9 @@ export async function systemView() {
       },
     });
     return h('div', { class: 'stack gap-1' }, h('h3', {}, name),
-      missing.length ? h('div', { class: 'stack gap-1', role: 'status' },
-        badge(t('system.addons.warning', { app: name }), 'warn'),
-        h('p', { class: 'muted' }, missing.join(', '), report.at ? ` · ${formatDate(report.at)}` : ''))
+      broken ? h('div', { class: 'row gap-1', role: 'status' },
+        badge(t('system.addons.original'), 'warn'), infoTip(t('system.addons.fix', { app: name })),
+        report.at ? h('span', { class: 'muted' }, formatDate(report.at)) : null)
         : badge(t('system.addons.working'), 'ok'), control);
   }));
 
