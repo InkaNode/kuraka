@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Live chat for websites**: on a domain's page, **Add live chat** creates a Libredesk live chat for your website, with its name, website, button colour and side, logo, welcome message and the websites allowed to show it. It then shows the code to paste before `</body>`, with **Copy code** and **Tell your AI**, which copies instructions for the AI assistant that edits your website. Chats are listed under the mailboxes with **Code**, **Edit** and **Delete**.
+- **Live chat for websites**: on a domain's page, **Add live chat** creates a Libredesk live chat for your website, with its name, website, language, button colour and side, logo, welcome message and the websites allowed to show it. It then shows the code to paste before `</body>`, with **Copy code** and **Tell your AI**, which copies instructions for the AI assistant that edits your website. Chats are listed under the mailboxes with **Code**, **Edit** and **Delete**.
 - **Libredesk automations**: rule types, events, conditions and actions show icons, and each rule can have its own icon. Rules are listed in compact rows with an on/off switch, **Edit** and **Delete**.
 - **Libredesk tags**: a tag can have one of nine colours, shown as a dot on its chips. Tags without a colour look as before.
 - **Libredesk Account**: the user menu shows your photo next to **Account**, with **View photo**, **Change photo** and **Remove photo**.
