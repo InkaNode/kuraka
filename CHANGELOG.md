@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk patches**: the tag colour, rule icon, activity setting and team inbox order patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
 - **System → Updates**: the list refreshes on its own every 30 seconds, so versions found by the daily check show without reloading. **Check now** says whether updates were found.
 - **System → Customization**: when an addon no longer recognizes the page, it shows **Original design** with a tip on how to fix it, instead of a long message and a list of page elements.
+- **System**: the page has one card each for **Kuraka**, **Mail (Stalwart)** and **Helpdesk (Libredesk)**, with its versions, updates, patches and customization. **Patches** lists every patch Kuraka adds, folded, and opens on its own when some could not be applied. **Check now** moved to the top of the page.
 
 ### Fixed
 
