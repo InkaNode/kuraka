@@ -57,7 +57,8 @@ export async function systemView() {
         h('ul', { class: 'patch-list stack gap-1' }, series.map(patch => h('li', { class: 'row gap-1' },
           patch.skipped ? badge(t(`system.patches.${patch.severity}`), patch.severity === 'urgent' ? 'danger' : 'warn') : badge(t('system.patches.active'), 'ok'),
           h('span', { class: 'stack grow' }, patch.title,
-            patch.skipped ? h('span', { class: 'muted' }, getLang() === 'en' ? patch.missing_en : patch.missing_es) : null))))));
+            h('span', { class: 'muted' }, getLang() === 'en' ? patch.adds_en : patch.adds_es),
+            patch.skipped ? h('span', { class: 'help' }, getLang() === 'en' ? patch.missing_en : patch.missing_es) : null))))));
   }
 
   const section = (title, ...body) => card(h('div', { class: 'stack gap-2' }, h('h2', {}, title), ...body));
