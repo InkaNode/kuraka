@@ -275,11 +275,11 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	webuiSkipped, err := patches.Skipped("stalwart-webui")
+	webuiPatches, err := patches.Series("stalwart-webui")
 	if err != nil {
 		return nil, err
 	}
-	deskSkipped, err := patches.Skipped("libredesk")
+	deskPatches, err := patches.Series("libredesk")
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +322,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	if status == "error" {
 		self["message"] = message
 	}
-	web := map[string]any{"latest": webuiVersion, "current": appliedVersion, "state": versionState(applied, webui), "patches": webuiSkipped}
+	web := map[string]any{"latest": webuiVersion, "current": appliedVersion, "state": versionState(applied, webui), "patches": webuiPatches}
 	updateKind(web, appliedVersion, webuiVersion)
 	out := map[string]any{
 		"checked_at":  nil,
@@ -330,7 +330,7 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 		"stalwart":    server,
 		"kuraka":      self,
 		"webui":       web,
-		"libredesk":   map[string]any{"latest": provision.LibredeskVersion, "helpdesks": desks, "patches": deskSkipped},
+		"libredesk":   map[string]any{"latest": provision.LibredeskVersion, "helpdesks": desks, "patches": deskPatches},
 	}
 	if !checkedAt.IsZero() {
 		out["checked_at"] = checkedAt

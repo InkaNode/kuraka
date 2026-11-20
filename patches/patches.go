@@ -15,10 +15,11 @@ var files embed.FS
 // work while the patch is skipped.
 type Patch struct {
 	Name      string `json:"name"`
+	Title     string `json:"title"`
 	Severity  string `json:"severity"`
 	MissingEn string `json:"missing_en"`
 	MissingEs string `json:"missing_es"`
-	Skipped   bool   `json:"-"`
+	Skipped   bool   `json:"skipped"`
 }
 
 // Series lists app's patches in apply order.
@@ -39,9 +40,19 @@ func Series(app string) ([]Patch, error) {
 			return nil, err
 		}
 		header, _, _ := strings.Cut(string(body), "\n---\n")
-		for _, l := range strings.Split(header, "\n") {
+		lines := strings.Split(header, "\n")
+		for i, l := range lines {
 			key, value, _ := strings.Cut(l, ": ")
 			switch key {
+			case "Subject":
+				// Long subjects fold onto lines that start with a space.
+				for _, next := range lines[i+1:] {
+					if !strings.HasPrefix(next, " ") {
+						break
+					}
+					value += next
+				}
+				p.Title = patchTitle(value)
 			case "Kuraka-Severity":
 				p.Severity = value
 			case "Kuraka-Missing-En":
@@ -72,17 +83,16 @@ func Upstream(app string) string {
 	return ""
 }
 
-// Skipped lists app's patches this build left out.
-func Skipped(app string) ([]Patch, error) {
-	series, err := Series(app)
-	if err != nil {
-		return nil, err
+// patchTitle turns "[PATCH] feat(tags): optional tag colors" into
+// "Tags: optional tag colors".
+func patchTitle(subject string) string {
+	subject = strings.TrimSpace(strings.TrimPrefix(subject, "[PATCH] "))
+	head, rest, ok := strings.Cut(subject, ": ")
+	if !ok {
+		return subject
 	}
-	out := []Patch{}
-	for _, p := range series {
-		if p.Skipped {
-			out = append(out, p)
-		}
+	if _, scope, ok := strings.Cut(strings.TrimSuffix(head, ")"), "("); ok && scope != "" {
+		return strings.ToUpper(scope[:1]) + scope[1:] + ": " + rest
 	}
-	return out, nil
+	return rest
 }

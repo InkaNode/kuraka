@@ -79,7 +79,7 @@
   <text class="title" x="900" y="322">Update timer</text>
   <text class="desc" x="900" y="344">Runs on the host as root and</text>
   <text class="desc" x="900" y="362">applies what you ask for in</text>
-  <text class="desc" x="900" y="380">System › Updates: backup, pull,</text>
+  <text class="desc" x="900" y="380">System page: backup, pull,</text>
   <text class="desc" x="900" y="398">restart, roll back on failure</text>
   <path class="dash" d="M780 244 C850 244 850 300 876 300"/>
   <text class="edge" x="796" y="282">request</text>
@@ -125,7 +125,7 @@
   <rect class="key" x="936" y="620" width="208" height="196" rx="10"/>
   <text class="title" x="956" y="652">GitHub release</text>
   <text class="desc" x="956" y="684">Shows up in</text>
-  <text class="desc" x="956" y="702">System › Updates as a</text>
+  <text class="desc" x="956" y="702">System page as a</text>
   <text class="desc" x="956" y="720">new version, or as</text>
   <text class="desc" x="956" y="738">“New patches” when only</text>
   <text class="desc" x="956" y="756">Kuraka’s patches changed</text>
