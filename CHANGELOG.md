@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk automations**: update rules can assign the conversation to the **Agent who did the action**, and **Assigned user** conditions can compare with that agent. The system, the contact and AI assistants never count as that agent.
 - **Libredesk automations**: **Hours since** conditions can **Count business hours only**, using the business hours of the assigned team or the default ones from General; nights, closed days and holidays do not count. Without business hours set up, those conditions never match. A new **Hours since tag added** condition counts from when the chosen tag was added.
 - **Libredesk Admin → General**: **Collapse activity events after** sets how many activity events in a row are shown before they start collapsed. The default is 2.
+- **Libredesk contacts**: contacts without a photo get their own solid avatar colour, one of 40, in the conversation list, messages, the contact panel and Contacts. Each contact always keeps the same colour.
 
 ### Changed
 
