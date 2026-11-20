@@ -65,6 +65,11 @@ You need a VPS with 2 GB of RAM or more, Docker with Compose, ports 25, 80, 443,
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md): versions and commits
 
+## Roadmap
+
+- **Connect with Meta:** connect a tenant's WhatsApp, Messenger and Instagram accounts to its helpdesk from Kuraka. Libredesk already has WhatsApp; Messenger and Instagram are new channels. Each one needs a Meta app approved in Meta's app review, so Kuraka will guide that setup step by step.
+- **Other helpdesks:** connect mailboxes and live chats to helpdesks other than Libredesk.
+
 ## License
 
 [AGPL-3.0](LICENSE). Copyright © 2026 InkaNode. Not affiliated with Stalwart Labs or Libredesk.
