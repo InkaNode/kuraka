@@ -10,8 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: required
 Kuraka-Missing-En: Automation rules have no icon, and the list uses tall cards with a status badge and a 3-dots menu instead of a direct switch, edit and delete.
 Kuraka-Missing-Es: Las automatizaciones no tienen ícono, y la lista usa tarjetas altas con una etiqueta de estado y un menú de 3 puntos en vez de un interruptor, editar y borrar directos.
-Kuraka-Adds-En: Each automation rule can have an icon, and the list uses compact rows with an on/off switch, edit and delete.
-Kuraka-Adds-Es: Cada automatización puede tener un ícono, y la lista usa filas compactas con interruptor, editar y borrar.
+Kuraka-Adds-En: Each automation rule can have an icon, and the list uses compact rows with an on/off switch and edit and delete buttons.
+Kuraka-Adds-Es: Cada automatización puede tener un ícono, y la lista usa filas compactas con un interruptor para activarla y botones para editar y borrar.
 ---
  cmd/media.go                                  |   4 +-
  .../apps/main/src/components/IconField.vue    | 152 ++++++++++++++++++

@@ -2,15 +2,12 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Kuraka <kuraka@localhost>
 Date: Sun, 15 Nov 2026 20:04:24 -0500
 Subject: [PATCH] feat(inboxes): inbox switcher grouped by client
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
 Kuraka-Severity: normal
 Kuraka-Missing-En: There is no inbox switcher; conversation lists always mix every inbox.
-Kuraka-Missing-Es: No hay selector de buzón; las listas de conversaciones siempre mezclan todos los buzones.
+Kuraka-Missing-Es: No hay selector de bandejas de entrada; las listas de conversaciones siempre mezclan todas las bandejas.
 Kuraka-Adds-En: An inbox switcher, grouped by client, shows the conversations of one inbox at a time.
-Kuraka-Adds-Es: Un selector de buzón, agrupado por cliente, muestra las conversaciones de un buzón a la vez.
+Kuraka-Adds-Es: Un selector de bandejas de entrada, agrupadas por cliente, muestra las conversaciones de una bandeja a la vez.
 ---
  .../sidebar/KurakaInboxSwitcher.vue           | 115 ++++++++++++++++++
  .../main/src/components/sidebar/Sidebar.vue   |   2 +

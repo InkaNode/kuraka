@@ -10,8 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: required
 Kuraka-Missing-En: Activity events are large and each takes its own row, so long runs of them bury the messages.
 Kuraka-Missing-Es: Los eventos de actividad son grandes y cada uno ocupa su propia fila, así que las rachas largas tapan los mensajes.
-Kuraka-Adds-En: Activity events are smaller, and runs of them are grouped and can be collapsed.
-Kuraka-Adds-Es: Los eventos de actividad son más pequeños, y los seguidos se agrupan y se pueden plegar.
+Kuraka-Adds-En: Activity events are smaller, and several in a row are grouped and can be folded so they do not bury the messages.
+Kuraka-Adds-Es: Los eventos de actividad son más pequeños, y varios seguidos se agrupan y se pueden plegar para que no tapen los mensajes.
 ---
  cmd/settings.go                               |  3 +
  .../admin/general/GeneralSettingForm.vue      | 16 +++++

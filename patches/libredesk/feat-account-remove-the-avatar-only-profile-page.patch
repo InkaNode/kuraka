@@ -9,8 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Account shows a Profile page that only changes the avatar, so agents expect to edit their name there.
 Kuraka-Missing-Es: Cuenta muestra una página Perfil que solo cambia la foto, y los agentes esperan poder editar su nombre ahí.
-Kuraka-Adds-En: Removes the Profile page that only changed the avatar.
-Kuraka-Adds-Es: Quita la página Perfil que solo cambiaba la foto.
+Kuraka-Adds-En: Removes the Profile page, which only changed the photo and made agents expect to edit their name there.
+Kuraka-Adds-Es: Quita la página Perfil, que solo cambiaba la foto y hacía pensar que ahí se editaba el nombre.
 ---
  .../apps/main/src/constants/navigation.js     |  5 --
  .../providers/useNavigationCommands.js        | 12 +--

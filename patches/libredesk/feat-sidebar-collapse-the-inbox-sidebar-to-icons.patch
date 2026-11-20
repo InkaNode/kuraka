@@ -10,7 +10,7 @@ Kuraka-Severity: normal
 Kuraka-Missing-En: Hiding the inbox sidebar removes it completely instead of leaving its icons.
 Kuraka-Missing-Es: Al ocultar la barra lateral de la bandeja desaparece por completo en vez de quedar solo con iconos.
 Kuraka-Adds-En: The inbox sidebar can shrink to its icons and open again.
-Kuraka-Adds-Es: La barra lateral de la bandeja se puede achicar a solo íconos y volver a abrir.
+Kuraka-Adds-Es: La barra lateral de las bandejas se puede reducir a solo íconos y volver a abrir.
 ---
  .../sidebar/KurakaInboxSwitcher.vue           | 14 +++++-----
  .../sidebar/KurakaSidebarToggle.vue           | 26 +++++++++++++++++++

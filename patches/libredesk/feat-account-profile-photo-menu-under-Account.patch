@@ -9,8 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Agents cannot see, change or remove their profile photo, because the Profile page is gone.
 Kuraka-Missing-Es: Los agentes no pueden ver, cambiar ni borrar su foto de perfil, porque la página Perfil ya no existe.
-Kuraka-Adds-En: The user menu shows the profile photo next to Account, with view, change and remove photo.
-Kuraka-Adds-Es: El menú de usuario muestra la foto de perfil junto a Cuenta, con ver, cambiar y borrar foto.
+Kuraka-Adds-En: The user menu shows the profile photo next to Account, with options to view, change or remove it.
+Kuraka-Adds-Es: El menú de usuario muestra la foto de perfil junto a Cuenta, con opciones para verla, cambiarla o borrarla.
 ---
  .../src/components/sidebar/SidebarNavUser.vue | 115 +++++++++++++++++-
  .../components/ui/avatar/AvatarUpload.vue     |   2 +
