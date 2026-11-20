@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CroaBeast <66433837+CroaBeast@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 01:14:43 -0500
+Subject: [PATCH] feat(contacts): a solid colour per contact on avatars without
+ a photo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Missing-En: Contacts without a photo all share the same avatar colour, so they are harder to tell apart in the conversation list, messages and contacts.
+Kuraka-Missing-Es: Los contactos sin foto tienen todos el mismo color de avatar, así que cuesta más distinguirlos en la lista de conversaciones, los mensajes y los contactos.
+---
+ .../src/features/contact/ContactsList.vue     |  3 ++-
+ .../list/ConversationListItem.vue             |  3 ++-
+ .../conversation/message/MessageBubble.vue    |  3 ++-
+ .../sidebar/ConversationSideBarContact.vue    |  3 ++-
+ frontend/apps/main/src/utils/contactColor.js  | 21 +++++++++++++++++++
+ .../apps/main/src/utils/contactColor.test.js  | 20 ++++++++++++++++++
+ .../src/views/contact/ContactDetailView.vue   |  2 ++
+ .../components/ui/avatar/AvatarUpload.vue     |  3 ++-
+ internal/conversation/models/models.go        |  1 +
+ internal/conversation/queries.sql             |  2 ++
+ 10 files changed, 56 insertions(+), 5 deletions(-)
+ create mode 100644 frontend/apps/main/src/utils/contactColor.js
+ create mode 100644 frontend/apps/main/src/utils/contactColor.test.js
+
+diff --git a/frontend/apps/main/src/features/contact/ContactsList.vue b/frontend/apps/main/src/features/contact/ContactsList.vue
+index 080d117a..2991f751 100644
+--- a/frontend/apps/main/src/features/contact/ContactsList.vue
++++ b/frontend/apps/main/src/features/contact/ContactsList.vue
+@@ -88,7 +88,7 @@
+             <div class="flex items-center gap-4">
+               <Avatar class="h-10 w-10 border">
+                 <AvatarImage :src="contact.avatar_url || ''" />
+-                <AvatarFallback class="text-sm font-medium">
++                <AvatarFallback class="text-sm font-medium" :style="contactAvatarStyle(contact.id)">
+                   {{ getInitials(contact.first_name, contact.last_name) }}
+                 </AvatarFallback>
+               </Avatar>
+@@ -133,6 +133,7 @@
+ </template>
+ 
+ <script setup>
++import { contactAvatarStyle } from '@main/utils/contactColor'
+ import { ref, onMounted, watch } from 'vue'
+ import { useRouter } from 'vue-router'
+ import { Card } from '@shared-ui/components/ui/card'
+diff --git a/frontend/apps/main/src/features/conversation/list/ConversationListItem.vue b/frontend/apps/main/src/features/conversation/list/ConversationListItem.vue
+index d985025a..a7841029 100644
+--- a/frontend/apps/main/src/features/conversation/list/ConversationListItem.vue
++++ b/frontend/apps/main/src/features/conversation/list/ConversationListItem.vue
+@@ -23,7 +23,7 @@
+                   :src="conversation.contact.avatar_url || ''"
+                   class="object-cover"
+                 />
+-                <AvatarFallback>
++                <AvatarFallback :style="contactAvatarStyle(conversation.contact.id)">
+                   {{ conversation.contact.first_name.substring(0, 2).toUpperCase() }}
+                 </AvatarFallback>
+               </Avatar>
+@@ -191,6 +191,7 @@
+ </template>
+ 
+ <script setup>
++import { contactAvatarStyle } from '@main/utils/contactColor'
+ const INDICATOR_GROUP_CLASS = 'flex shrink-0 items-center gap-1'
+ 
+ import { ref, computed, onMounted, onUnmounted } from 'vue'
+diff --git a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
+index 3a473c51..594ca6ca 100644
+--- a/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
++++ b/frontend/apps/main/src/features/conversation/message/MessageBubble.vue
+@@ -4,7 +4,7 @@
+     <div class="w-8 shrink-0" aria-hidden="true">
+       <Avatar v-if="!groupWithPrev" class="size-8">
+         <AvatarImage :src="getAvatar" />
+-        <AvatarFallback class="font-medium">
++        <AvatarFallback class="font-medium" :style="isOutgoing ? undefined : contactAvatarStyle(message.author?.id)">
+           {{ avatarFallback }}
+         </AvatarFallback>
+       </Avatar>
+@@ -254,6 +254,7 @@
+ </template>
+ 
+ <script setup>
++import { contactAvatarStyle } from '@main/utils/contactColor'
+ const AUTHOR_LINK_CLASS = 'cursor-pointer text-muted-foreground text-sm font-medium hover:underline hover:text-foreground transition-colors duration-200'
+ 
+ import { computed, ref, onMounted, nextTick, watch } from 'vue'
+diff --git a/frontend/apps/main/src/features/conversation/sidebar/ConversationSideBarContact.vue b/frontend/apps/main/src/features/conversation/sidebar/ConversationSideBarContact.vue
+index c0ed07f1..05c64895 100644
+--- a/frontend/apps/main/src/features/conversation/sidebar/ConversationSideBarContact.vue
++++ b/frontend/apps/main/src/features/conversation/sidebar/ConversationSideBarContact.vue
+@@ -4,7 +4,7 @@
+       <div class="relative shrink-0">
+         <Avatar class="size-14">
+           <AvatarImage :src="conversation?.contact?.avatar_url || ''" />
+-          <AvatarFallback>
++          <AvatarFallback :style="contactAvatarStyle(conversation?.contact_id)">
+             {{ conversation?.contact?.first_name?.toUpperCase().substring(0, 2) }}
+           </AvatarFallback>
+         </Avatar>
+@@ -133,6 +133,7 @@
+ </template>
+ 
+ <script setup>
++import { contactAvatarStyle } from '@main/utils/contactColor'
+ import { computed, ref, onMounted } from 'vue'
+ import { ViewVerticalIcon } from '@radix-icons/vue'
+ import { Button } from '@shared-ui/components/ui/button'
+diff --git a/frontend/apps/main/src/utils/contactColor.js b/frontend/apps/main/src/utils/contactColor.js
+new file mode 100644
+index 00000000..5948bee8
+--- /dev/null
++++ b/frontend/apps/main/src/utils/contactColor.js
+@@ -0,0 +1,21 @@
++// Contacts without a photo get a solid colour picked from their id: 20 hues in
++// two shades, dark enough for white initials. The step is coprime with the
++// palette size, so consecutive ids land far apart and every colour is used
++// equally often.
++const HUES = 20
++const SIZE = HUES * 2
++const STEP = 17
++
++export function contactColorIndex (id) {
++  const n = Number(id)
++  if (!Number.isSafeInteger(n) || n <= 0) return -1
++  return ((n % SIZE) * STEP) % SIZE
++}
++
++export function contactAvatarStyle (id) {
++  const i = contactColorIndex(id)
++  if (i < 0) return undefined
++  const hue = (i % HUES) * (360 / HUES)
++  const color = i < HUES ? `oklch(52% 0.15 ${hue})` : `oklch(42% 0.12 ${hue})`
++  return { backgroundColor: color, backgroundImage: 'none', color: '#fff' }
++}
+diff --git a/frontend/apps/main/src/utils/contactColor.test.js b/frontend/apps/main/src/utils/contactColor.test.js
+new file mode 100644
+index 00000000..0b1383e6
+--- /dev/null
++++ b/frontend/apps/main/src/utils/contactColor.test.js
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from 'vitest'
++import { contactAvatarStyle, contactColorIndex } from './contactColor'
++
++describe('contactColorIndex', () => {
++  it('uses every colour equally often', () => {
++    const counts = new Array(40).fill(0)
++    for (let id = 1; id <= 400; id++) counts[contactColorIndex(id)]++
++    expect(counts.every((n) => n === 10)).toBe(true)
++  })
++
++  it('is stable and spreads consecutive ids', () => {
++    expect(contactColorIndex(7)).toBe(contactColorIndex(7))
++    expect(contactColorIndex(1)).not.toBe(contactColorIndex(2))
++    expect(contactColorIndex('7')).toBe(contactColorIndex(7))
++  })
++
++  it('has no colour without a valid id', () => {
++    for (const id of [undefined, null, 0, -3, 1.5, 'x']) expect(contactAvatarStyle(id)).toBeUndefined()
++  })
++})
+diff --git a/frontend/apps/main/src/views/contact/ContactDetailView.vue b/frontend/apps/main/src/views/contact/ContactDetailView.vue
+index 1f4c3745..b5ae3a26 100644
+--- a/frontend/apps/main/src/views/contact/ContactDetailView.vue
++++ b/frontend/apps/main/src/views/contact/ContactDetailView.vue
+@@ -17,6 +17,7 @@
+               @remove="onRemove"
+               :src="contact.avatar_url || ''"
+               :initials="getInitials"
++              :fallback-style="contactAvatarStyle(contact.id)"
+               :label="t('globals.messages.upload')"
+             />
+ 
+@@ -155,6 +156,7 @@
+ </template>
+ 
+ <script setup>
++import { contactAvatarStyle } from '@main/utils/contactColor'
+ import { ref, onMounted, onUnmounted, computed } from 'vue'
+ import { useRoute, useRouter } from 'vue-router'
+ import { format } from 'date-fns'
+diff --git a/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue b/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
+index 4fcf9223..68fd2b8b 100644
+--- a/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
++++ b/frontend/shared-ui/components/ui/avatar/AvatarUpload.vue
+@@ -6,7 +6,7 @@
+   >
+     <Avatar class="size-28">
+       <AvatarImage :src="src || ''" />
+-      <AvatarFallback>{{ initials }}</AvatarFallback>
++      <AvatarFallback :style="fallbackStyle">{{ initials }}</AvatarFallback>
+     </Avatar>
+ 
+     <!-- Hover Overlay -->
+@@ -86,6 +86,7 @@ import {
+ const props = defineProps({
+   src: String,
+   initials: String,
++  fallbackStyle: Object,
+   label: {
+     type: String,
+     default: 'Upload'
+diff --git a/internal/conversation/models/models.go b/internal/conversation/models/models.go
+index 49f0986a..34b0d177 100644
+--- a/internal/conversation/models/models.go
++++ b/internal/conversation/models/models.go
+@@ -166,6 +166,7 @@ type ConversationListItem struct {
+ 
+ // ConversationListContact represents contact info in conversation list views
+ type ConversationListContact struct {
++	ID        int         `db:"id" json:"id"`
+ 	CreatedAt time.Time   `db:"created_at" json:"created_at"`
+ 	UpdatedAt time.Time   `db:"updated_at" json:"updated_at"`
+ 	FirstName string      `db:"first_name" json:"first_name"`
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 944ca409..9a5dc51d 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -43,6 +43,7 @@ SELECT
+     conversations.uuid,
+     conversations.reference_number,
+     conversations.waiting_since,
++    users.id as "contact.id",
+     users.created_at as "contact.created_at",
+     users.updated_at as "contact.updated_at",
+     users.first_name as "contact.first_name",
+@@ -140,6 +141,7 @@ SELECT
+     conversations.uuid,
+     conversations.reference_number,
+     conversations.waiting_since,
++    users.id as "contact.id",
+     users.created_at as "contact.created_at",
+     users.updated_at as "contact.updated_at",
+     users.first_name as "contact.first_name",
