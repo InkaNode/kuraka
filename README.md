@@ -26,7 +26,7 @@
 
 - **Tenants and roles:** superadmins manage everything; each tenant admin sees only their own domains, mailboxes, aliases and quotas.
 - **DNS on autopilot:** plans, applies and checks the records Stalwart needs through Cloudflare, or shows them for manual setup.
-- **Helpdesks:** deploys Libredesk per tenant and connects mailboxes to it.
+- **Helpdesks:** deploys Libredesk per tenant, connects mailboxes to it and adds its live chat to websites.
 - **Branding:** name, logo and colors, global or per tenant, applied to Kuraka, the official Stalwart web interface and Libredesk through small addons.
 - **Updates from the panel:** Kuraka, Stalwart, its web interface and Libredesk, with a backup first and rollback on failure.
 - **Day to day:** mail queue, metrics, IMAP migrations, blocked IP addresses and an audit log, in Spanish and English.
