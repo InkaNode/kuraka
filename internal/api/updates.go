@@ -341,7 +341,15 @@ func (s *Server) updatesBody(ctx context.Context) (any, error) {
 	return out, nil
 }
 
+// updatesStatus checks right away when nothing was checked since start, so the
+// latest versions show without waiting for the first scheduled check.
 func (s *Server) updatesStatus(_ http.ResponseWriter, r *http.Request) (any, error) {
+	s.updates.mu.Lock()
+	never := s.updates.checkedAt.IsZero()
+	s.updates.mu.Unlock()
+	if never {
+		s.checkUpdates(r.Context())
+	}
 	return s.updatesBody(r.Context())
 }
 

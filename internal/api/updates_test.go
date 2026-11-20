@@ -118,15 +118,14 @@ func decodeUpdates(t *testing.T, b []byte) updatesReply {
 
 func TestUpdatesStatusAndCheck(t *testing.T) {
 	h, gh, _, desk, _ := updatesHarness(t)
+	// The first read checks GitHub, since nothing was checked since start.
 	v := decodeUpdates(t, h.root.do("GET", "/updates", nil, 200))
-	if v.CheckedAt != nil || !v.UpdatesDir || v.WebUI.State != "unknown" || len(v.Libredesk.Helpdesks) != 1 ||
-		v.Stalwart.Current != "v1.0.2" || v.Stalwart.State != "unknown" {
-		t.Fatalf("before check: %+v", v)
+	if !v.UpdatesDir || len(v.Libredesk.Helpdesks) != 1 || v.Stalwart.Current != "v1.0.2" {
+		t.Fatalf("first read: %+v", v)
 	}
 	if d := v.Libredesk.Helpdesks[0]; d.ID != desk || d.Current != provision.LibredeskVersion || d.State != "available" || d.Kind != "patches" {
-		t.Fatalf("desk before check: %+v", d)
+		t.Fatalf("desk on first read: %+v", d)
 	}
-	v = decodeUpdates(t, h.root.do("POST", "/updates/check", nil, 200))
 	if v.CheckedAt == nil || v.Error != "" || v.Libredesk.Latest != provision.LibredeskVersion || v.Libredesk.Helpdesks[0].State != "available" ||
 		v.WebUI.Latest != patches.Upstream("stalwart-webui") || v.WebUI.Current != "" || v.WebUI.State != "available" || v.WebUI.Kind != "version" ||
 		v.Stalwart.Latest != "v1.0.3" || v.Stalwart.State != "available" {
@@ -397,6 +396,8 @@ func TestKurakaStates(t *testing.T) {
 			h.s.cfg.UpdatesDir = dir
 			h.s.updates.mu.Lock()
 			h.s.updates.kuraka = releases.Release{Tag: tc.tag, Commit: tc.commit, URL: "https://github.com/InkaNode/kuraka"}
+			// Checked already, so the read below does not ask GitHub again.
+			h.s.updates.checkedAt = time.Now()
 			h.s.updates.mu.Unlock()
 			for _, name := range []string{"kuraka.json", "kuraka.result.json"} {
 				if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
