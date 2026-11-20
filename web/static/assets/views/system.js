@@ -5,6 +5,7 @@ import { t, formatDate, getLang } from '../core/i18n.js';
 import { button, card, pageHeader, table, badge, checkbox, errorBox, confirmDialog, toast, infoTip } from '../core/ui.js';
 
 const UPDATE_POLL_MS = 10000;
+const IDLE_POLL_MS = 30000;
 const UPDATE_BADGE = { current: 'ok', available: 'warn', waiting: 'warn', updating: 'neutral', error: 'danger', unknown: 'neutral' };
 
 export async function systemView() {
@@ -62,11 +63,12 @@ export async function systemView() {
       !updates.updates_dir ? h('p', { class: 'muted' }, t('system.updates.noDir')) : null);
   }
 
-  // Retry through maintenance responses and stop once the card leaves the document.
+  // Keeps the card current (daily checks, other admins, running updates), retries through
+  // maintenance responses and stops once the card leaves the document.
   function schedulePoll() {
     clearTimeout(pollTimer); pollTimer = 0;
     if (!kurakaBefore && updates?.kuraka?.state === 'updating') kurakaBefore = { ...updates.kuraka };
-    if (!kurakaBefore && updates?.stalwart.state !== 'updating' && !updates?.libredesk.helpdesks.some(desk => desk.state === 'updating')) return;
+    const busy = updates?.stalwart.state === 'updating' || updates?.libredesk.helpdesks.some(desk => desk.state === 'updating');
     pollTimer = setTimeout(async () => {
       pollTimer = 0;
       if (!updatesBody.isConnected) return;
@@ -77,17 +79,22 @@ export async function systemView() {
           || result.kuraka.current !== kurakaBefore.current || result.kuraka.state !== 'updating')) {
           location.reload(); return;
         }
-        updates = result; updatesError = null; renderUpdates();
+        // Re-render only on changes so focus and open tips survive idle polls.
+        if (updatesError || JSON.stringify(result) !== JSON.stringify(updates)) { updates = result; updatesError = null; renderUpdates(); }
       } catch { /* Network errors and non-JSON maintenance responses are retried. */ }
       schedulePoll();
-    }, kurakaBefore ? 5000 : UPDATE_POLL_MS);
+    }, kurakaBefore ? 5000 : busy ? UPDATE_POLL_MS : IDLE_POLL_MS);
   }
 
   async function checkUpdates(event) {
     const trigger = event.currentTarget;
     if (trigger.disabled) return;
     trigger.disabled = true;
-    try { updates = await api('POST', '/updates/check'); updatesError = null; renderUpdates(); schedulePoll(); }
+    try {
+      updates = await api('POST', '/updates/check'); updatesError = null; renderUpdates(); schedulePoll();
+      const found = [updates.kuraka, updates.stalwart, updates.webui, ...updates.libredesk.helpdesks].some(row => row?.state === 'available');
+      if (root.isConnected) toast(t(updates.error ? 'system.updates.checkError' : found ? 'system.updates.found' : 'system.updates.none'), updates.error ? 'danger' : 'ok');
+    }
     catch (err) { if (root.isConnected) toast(errorMessage(err), 'danger'); }
     finally { trigger.disabled = false; }
   }
