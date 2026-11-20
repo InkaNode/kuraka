@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Update rules cannot assign the conversation to the agent who did the action, or check whether it is assigned to that agent.
 Kuraka-Missing-Es: Las reglas de actualización no pueden asignar la conversación al agente que hizo la acción ni comprobar si está asignada a ese agente.
+Kuraka-Adds-En: Update rules can assign the conversation to the agent who did the action, or check whether it is assigned to that agent.
+Kuraka-Adds-Es: Las reglas de actualización pueden asignar la conversación al agente que hizo la acción o comprobar si está asignada a ese agente.
 ---
  .../features/admin/automation/ActionBox.vue   |  8 +-
  .../src/features/admin/automation/RuleBox.vue |  5 +

@@ -6,6 +6,8 @@ Subject: [PATCH] feat(conversation): list or status groups view
 Kuraka-Severity: normal
 Kuraka-Missing-En: Agents cannot see their conversations grouped by status; the list shows one status at a time.
 Kuraka-Missing-Es: Los agentes no pueden ver sus conversaciones agrupadas por estado; la lista muestra un estado a la vez.
+Kuraka-Adds-En: Agents can show their conversations as a list or grouped by status.
+Kuraka-Adds-Es: Los agentes pueden ver sus conversaciones como lista o agrupadas por estado.
 ---
  .../conversation/list/ConversationList.vue    | 117 +++++++++++++++-
  frontend/apps/main/src/stores/conversation.js | 128 +++++++++++++++---

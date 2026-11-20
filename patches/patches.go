@@ -11,12 +11,14 @@ import (
 //go:embed */UPSTREAM */series */*.patch
 var files embed.FS
 
-// Patch is one entry of an app's series. Missing* tell users what does not
-// work while the patch is skipped.
+// Patch is one entry of an app's series. Adds* tell users what the patch
+// adds; Missing* what does not work while it is skipped.
 type Patch struct {
 	Name      string `json:"name"`
 	Title     string `json:"title"`
 	Severity  string `json:"severity"`
+	AddsEn    string `json:"adds_en"`
+	AddsEs    string `json:"adds_es"`
 	MissingEn string `json:"missing_en"`
 	MissingEs string `json:"missing_es"`
 	Skipped   bool   `json:"skipped"`
@@ -55,14 +57,18 @@ func Series(app string) ([]Patch, error) {
 				p.Title = patchTitle(value)
 			case "Kuraka-Severity":
 				p.Severity = value
+			case "Kuraka-Adds-En":
+				p.AddsEn = value
+			case "Kuraka-Adds-Es":
+				p.AddsEs = value
 			case "Kuraka-Missing-En":
 				p.MissingEn = value
 			case "Kuraka-Missing-Es":
 				p.MissingEs = value
 			}
 		}
-		if p.Severity != "urgent" && p.Severity != "normal" && p.Severity != "required" || p.MissingEn == "" || p.MissingEs == "" {
-			return nil, fmt.Errorf("%s/%s: needs Kuraka-Severity (urgent, normal or required), Kuraka-Missing-En and Kuraka-Missing-Es", app, p.Name)
+		if p.Severity != "urgent" && p.Severity != "normal" && p.Severity != "required" || p.AddsEn == "" || p.AddsEs == "" || p.MissingEn == "" || p.MissingEs == "" {
+			return nil, fmt.Errorf("%s/%s: needs Kuraka-Severity (urgent, normal or required), Kuraka-Adds-En, Kuraka-Adds-Es, Kuraka-Missing-En and Kuraka-Missing-Es", app, p.Name)
 		}
 		if p.Skipped && p.Severity == "required" {
 			return nil, fmt.Errorf("%s/%s: required patches cannot be skipped", app, p.Name)

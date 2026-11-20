@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Hours since conditions cannot count business hours only, there is no Hours since tag added condition, and Hours since first reply, last reply or resolved can match conversations where that has not happened yet.
 Kuraka-Missing-Es: Las condiciones de horas no pueden contar solo el horario laboral, no existe la condición Horas desde que se agregó la etiqueta, y Horas desde la primera respuesta, la última respuesta o la resolución pueden cumplirse en conversaciones donde eso todavía no pasó.
+Kuraka-Adds-En: Hours since conditions can count business hours only, there is an Hours since tag added condition, and first reply, last reply or resolved conditions only match once that has happened.
+Kuraka-Adds-Es: Las condiciones de horas pueden contar solo el horario laboral, existe la condición Horas desde que se agregó la etiqueta, y las de primera respuesta, última respuesta o resolución solo se cumplen cuando eso ya pasó.
 ---
  cmd/main.go                                   |  1 +
  .../src/composables/useConversationFilters.js |  6 ++

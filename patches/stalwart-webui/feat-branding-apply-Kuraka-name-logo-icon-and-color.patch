@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: The mail admin keeps Stalwart's own name, logo, icon and colors.
 Kuraka-Missing-Es: La administración de correo mantiene el nombre, logo, ícono y colores de Stalwart.
+Kuraka-Adds-En: The mail admin shows Kuraka's name, logo, icon and colors.
+Kuraka-Adds-Es: La administración de correo muestra el nombre, logo, ícono y colores de Kuraka.
 ---
  src/hooks/useDocumentTitle.ts | 13 ++++++--
  src/index.css                 | 29 ++++++++++++++++-

@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Automations cannot check tags, tag changes, contact name or phone, channel or conversation custom fields.
 Kuraka-Missing-Es: Las automatizaciones no pueden revisar etiquetas, cambios de etiquetas, nombre o teléfono del contacto, canal ni campos personalizados de la conversación.
+Kuraka-Adds-En: Automations can check tags, tag changes, contact name and phone, channel and conversation custom fields.
+Kuraka-Adds-Es: Las automatizaciones pueden revisar etiquetas, cambios de etiquetas, nombre y teléfono del contacto, canal y campos personalizados de la conversación.
 ---
  .../src/composables/useConversationFilters.js |  44 +++++-
  .../src/features/admin/automation/RuleBox.vue |  66 ++++++--

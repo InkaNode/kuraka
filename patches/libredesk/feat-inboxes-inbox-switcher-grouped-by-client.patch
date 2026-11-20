@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: There is no inbox switcher; conversation lists always mix every inbox.
 Kuraka-Missing-Es: No hay selector de buzón; las listas de conversaciones siempre mezclan todos los buzones.
+Kuraka-Adds-En: An inbox switcher, grouped by client, shows the conversations of one inbox at a time.
+Kuraka-Adds-Es: Un selector de buzón, agrupado por cliente, muestra las conversaciones de un buzón a la vez.
 ---
  .../sidebar/KurakaInboxSwitcher.vue           | 115 ++++++++++++++++++
  .../main/src/components/sidebar/Sidebar.vue   |   2 +

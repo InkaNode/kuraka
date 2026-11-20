@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Default statuses use emoji icons, and status icons sit right against their names.
 Kuraka-Missing-Es: Los estados por defecto usan íconos emoji y el ícono queda pegado al nombre del estado.
+Kuraka-Adds-En: Default statuses use built-in icons instead of emoji, with a small gap before each status name.
+Kuraka-Adds-Es: Los estados por defecto usan íconos propios en vez de emoji, con un pequeño espacio antes del nombre.
 ---
  .../components/combobox/SelectCombobox.vue    |  4 +--
  .../src/features/admin/status/StatusForm.vue  | 21 +++++++++--

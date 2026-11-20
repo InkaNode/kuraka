@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Statuses show their original names without icons, and default statuses cannot be edited.
 Kuraka-Missing-Es: Los estados muestran su nombre original sin íconos y los estados por defecto no se pueden editar.
+Kuraka-Adds-En: Statuses get a display name and an icon, and default statuses can be edited.
+Kuraka-Adds-Es: Los estados tienen un nombre visible y un ícono, y los estados por defecto se pueden editar.
 ---
  cmd/main.go                                   |   5 +
  cmd/media.go                                  |  12 +-

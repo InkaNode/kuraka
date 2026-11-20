@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: The sort menu shows only text, without an icon for each order.
 Kuraka-Missing-Es: El menú de orden solo muestra texto, sin un icono para cada orden.
+Kuraka-Adds-En: Each order in the sort menu has an icon, also shown on the button.
+Kuraka-Adds-Es: Cada orden del menú de orden tiene un ícono, que también se ve en el botón.
 ---
  .../conversation/list/ConversationList.vue    | 58 ++++++++++++-------
  1 file changed, 37 insertions(+), 21 deletions(-)

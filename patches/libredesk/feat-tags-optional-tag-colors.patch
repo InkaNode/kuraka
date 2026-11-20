@@ -9,6 +9,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: required
 Kuraka-Missing-En: Tags have no color, so they all look the same.
 Kuraka-Missing-Es: Las etiquetas no tienen color, así que todas se ven iguales.
+Kuraka-Adds-En: Tags can have a color, shown as a dot on each tag.
+Kuraka-Adds-Es: Las etiquetas pueden tener un color, que se ve como un punto en cada etiqueta.
 ---
  cmd/tag_import.go                             |  2 +-
  cmd/tags.go                                   | 18 +++++++-

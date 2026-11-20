@@ -7,6 +7,8 @@ Subject: [PATCH] feat(sidebar): order team inboxes by hand, name or team
 Kuraka-Severity: required
 Kuraka-Missing-En: Teams have no weight, and agents cannot sort their team inboxes by hand, by name or by weight; the order is not saved to their account.
 Kuraka-Missing-Es: Los equipos no tienen peso y los agentes no pueden ordenar sus bandejas de equipo a mano, por nombre ni por peso; el orden no se guarda en su cuenta.
+Kuraka-Adds-En: Teams have a weight, and agents can order their team inboxes by hand, by name or by weight; the order is saved to their account.
+Kuraka-Adds-Es: Los equipos tienen un peso, y los agentes pueden ordenar sus bandejas de equipo a mano, por nombre o por peso; el orden se guarda en su cuenta.
 ---
  cmd/handlers.go                               |   1 +
  cmd/teams.go                                  |  10 +-

@@ -7,6 +7,8 @@ Subject: [PATCH] feat(conversations): flat email thread instead of chat
 Kuraka-Severity: normal
 Kuraka-Missing-En: Conversations show messages as chat bubbles, which squeeze email content.
 Kuraka-Missing-Es: Las conversaciones muestran los mensajes como burbujas de chat, que aprietan el contenido de los correos.
+Kuraka-Adds-En: Conversations show messages as a flat email thread, with room for the whole email.
+Kuraka-Adds-Es: Las conversaciones muestran los mensajes como un hilo de correo plano, con espacio para todo el correo.
 ---
  .../conversation/message/MessageBubble.vue    | 434 +++++++++---------
  .../conversation/message/MessageList.vue      |   2 +-

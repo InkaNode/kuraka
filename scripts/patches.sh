@@ -4,8 +4,8 @@
 #   series    patch files in apply order; "-name.patch" is skipped (it no longer
 #             applies; the panel shows its Kuraka-Missing-* text until fixed).
 # Each patch's commit message carries the trailers Kuraka-Severity (urgent,
-# normal or required), Kuraka-Missing-En and Kuraka-Missing-Es: what users lose
-# without it. A skipped "required" patch (one that changes the database) fails
+# normal or required), Kuraka-Adds-En and Kuraka-Adds-Es: what it adds, and
+# Kuraka-Missing-En and Kuraka-Missing-Es: what users lose without it. A skipped "required" patch (one that changes the database) fails
 # checkout, so CI fails and nothing merges or releases until it is fixed.
 #
 #   checkout <app> [dir]       clone upstream at REF and apply the series.
@@ -54,7 +54,7 @@ export_patches() {
   local -a old names=()
   mapfile -t old < <(series)
   for sha in $(git -C "$dir" rev-list --reverse "refs/tags/$REF..HEAD"); do
-    for key in Kuraka-Severity Kuraka-Missing-En Kuraka-Missing-Es; do
+    for key in Kuraka-Severity Kuraka-Adds-En Kuraka-Adds-Es Kuraka-Missing-En Kuraka-Missing-Es; do
       if [[ -z $(git -C "$dir" log -1 --format="%(trailers:key=$key,valueonly)" "$sha") ]]; then
         printf 'Commit %s has no %s trailer\n' "$sha" "$key" >&2
         exit 1

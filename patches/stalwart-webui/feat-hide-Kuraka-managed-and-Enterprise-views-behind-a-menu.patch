@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Stalwart's menu and search show the views Kuraka manages (accounts, tenants, domains, DKIM) and Enterprise-only views. Make those changes in Kuraka.
 Kuraka-Missing-Es: El menú y la búsqueda de Stalwart muestran las vistas que gestiona Kuraka (cuentas, tenants, dominios, DKIM) y las de Enterprise. Haz esos cambios en Kuraka.
+Kuraka-Adds-En: A menu toggle hides the views Kuraka manages (accounts, tenants, domains, DKIM) and Enterprise-only views from Stalwart's menu and search.
+Kuraka-Adds-Es: Un interruptor en el menú oculta del menú y la búsqueda de Stalwart las vistas que gestiona Kuraka (cuentas, tenants, dominios, DKIM) y las de Enterprise.
 ---
  src/components/layout/TopBar.tsx | 10 +++++++++-
  src/hooks/useGlobalSearch.ts     |  3 +++

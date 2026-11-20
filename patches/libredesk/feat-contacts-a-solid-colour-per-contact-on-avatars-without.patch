@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Contacts without a photo all share the same avatar colour, so they are harder to tell apart in the conversation list, messages and contacts.
 Kuraka-Missing-Es: Los contactos sin foto tienen todos el mismo color de avatar, así que cuesta más distinguirlos en la lista de conversaciones, los mensajes y los contactos.
+Kuraka-Adds-En: Each contact without a photo gets its own avatar colour in the conversation list, messages and contacts.
+Kuraka-Adds-Es: Cada contacto sin foto tiene su propio color de avatar en la lista de conversaciones, los mensajes y los contactos.
 ---
  .../src/features/contact/ContactsList.vue     |  3 ++-
  .../list/ConversationListItem.vue             |  3 ++-

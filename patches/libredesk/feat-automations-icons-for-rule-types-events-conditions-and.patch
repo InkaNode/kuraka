@@ -10,6 +10,8 @@ Content-Transfer-Encoding: 8bit
 Kuraka-Severity: normal
 Kuraka-Missing-En: Automation rule types, events, conditions and actions are plain text lists without icons.
 Kuraka-Missing-Es: Los tipos, eventos, condiciones y acciones de las automatizaciones son listas de solo texto, sin íconos.
+Kuraka-Adds-En: Icons next to automation rule types, events, conditions and actions.
+Kuraka-Adds-Es: Íconos junto a los tipos, eventos, condiciones y acciones de las automatizaciones.
 ---
  .../src/composables/useConversationFilters.js | 54 +++++++++++++++++--
  .../features/admin/automation/ActionBox.vue   |  2 +-
