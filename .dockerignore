@@ -4,3 +4,4 @@ bin/
 .env*
 docs/
 node_modules
+.work/
