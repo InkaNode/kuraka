@@ -23,10 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
 - **Libredesk patches**: the tag colour, rule icon, activity setting and team inbox order patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
+- **System → Updates**: the list refreshes on its own every 30 seconds, so versions found by the daily check show without reloading. **Check now** says whether updates were found.
+- **System → Customization**: when an addon no longer recognizes the page, it shows **Original design** with a tip on how to fix it, instead of a long message and a list of page elements.
 
 ### Fixed
 
 - **Libredesk status icons**: inside buttons the icons follow the text size.
+- **System → Updates**: right after Kuraka starts, the latest versions show at once. Before, they stayed empty until the first check a minute later, even after reloading.
 - **Libredesk sidebar**: the sort button of **Team inboxes** no longer covers the arrow that opens and closes it. Section titles are a little smaller and stay on one line.
 - **Libredesk automations**: **Hours since** conditions no longer match when that moment has not happened yet. Before, **Hours since resolved** less than 24 also matched conversations that were never resolved.
 
