@@ -59,6 +59,7 @@ async function chatDialog(view, existing, notice, onSaved) {
   const s = chat?.settings || { name: view.domain.name, website_url: view.domain.name, color: DEFAULT_COLOR, position: 'right', logo_url: '',
     greeting: t('livechat.greeting.default'), allowed_domains: [`*.${view.domain.name.toLowerCase().replace(/^www\./, '')}`] };
   const helpdesk = helpdesks.length > 1 ? select({ required: true, options: helpdesks.map(x => ({ value: String(x.id), label: x.name })) }) : null;
+  const language = existing ? null : select({ value: getLang() === 'es' ? 'es' : 'en', options: [{ value: 'es', label: 'Español' }, { value: 'en', label: 'English' }] });
   const name = textInput({ required: true, maxlength: 128, autocomplete: 'off', value: s.name });
   const website = textInput({ class: 'mono', required: true, inputmode: 'url', autocomplete: 'off', spellcheck: 'false', value: s.website_url });
   const color = h('input', { type: 'color', value: HEX.test(s.color) ? s.color : DEFAULT_COLOR });
@@ -89,6 +90,7 @@ async function chatDialog(view, existing, notice, onSaved) {
     helpdesk ? field({ label: t('helpdesk.select'), input: helpdesk }) : null,
     field({ label: t('livechat.name'), input: name, help: t('livechat.name.help') }),
     field({ label: t('livechat.website'), input: website, help: t('livechat.website.help') }),
+    language ? field({ label: t('livechat.language'), input: language, help: t('livechat.language.help') }) : null,
     field({ label: t('livechat.color'), input: color }),
     positionGroup,
     field({ label: t('livechat.logo'), input: logo, help: t(existing ? 'livechat.logo.help.edit' : 'livechat.logo.help') }),
@@ -101,7 +103,7 @@ async function chatDialog(view, existing, notice, onSaved) {
       logo_url: logo.value.trim(), greeting: greeting.value.trim(), allowed_domains: parseDomains(domains.value) };
     const result = existing
       ? await api('PUT', chatPath(view, existing.id), values)
-      : await api('POST', chatPath(view), { ...values, helpdesk_id: Number(helpdesk?.value ?? helpdesks[0].id), language: getLang() === 'es' ? 'es' : 'en' });
+      : await api('POST', chatPath(view), { ...values, helpdesk_id: Number(helpdesk?.value ?? helpdesks[0].id), language: language.value });
     dialog.close();
     toast(t(existing ? 'livechat.updated' : 'livechat.created', { name: result.name }));
     onSaved();
