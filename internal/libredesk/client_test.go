@@ -447,3 +447,64 @@ func TestApplyBranding(t *testing.T) {
 		t.Errorf("PUT body = %v, want %v", put, want)
 	}
 }
+
+func TestLiveChat(t *testing.T) {
+	for in, want := range map[string]string{"https://www.Shop.test/contact": "*.shop.test", "http://a.test:8080": "*.a.test:8080"} {
+		if got := TrustedDomain(in); got != want {
+			t.Errorf("TrustedDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+	lc := LiveChat{Name: "Ventas", Website: "https://www.shop.test", Color: "#112233", LogoURL: "https://shop.test/l.png", Greeting: "Hola", Position: "left"}
+	var created, updated map[string]any
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		switch r.Method + " " + r.URL.Path {
+		case "POST /api/v1/inboxes":
+			json.NewDecoder(r.Body).Decode(&created)
+			io.WriteString(w, `{"status":"success","data":{"id":9,"uuid":"u-9"}}`)
+		case "GET /api/v1/inboxes/9":
+			io.WriteString(w, `{"status":"success","data":{"id":9,"name":"Old","channel":"livechat","secret":"••••","config":{"brand_name":"Old","home_apps":[{"url":"https://x.test"}],"launcher":{"position":"right","icon_scale":80},"branding":{"light":{"colors":{"primary":"#000000"},"logo_url":""},"dark":{"colors":{"primary":"#ffffff"}}}}}}`)
+		case "PUT /api/v1/inboxes/9":
+			json.NewDecoder(r.Body).Decode(&updated)
+			io.WriteString(w, `{"status":"success","data":{}}`)
+		case "GET /api/v1/inboxes/8":
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"status":"error","message":"not found"}`)
+		case "GET /api/v1/settings/general":
+			io.WriteString(w, `{"status":"success","data":{"app.root_url":"https://desk.test/"}}`)
+		default:
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+	})
+	ctx := context.Background()
+	id, uuid, err := c.CreateLiveChat(ctx, lc, "es-ES")
+	if err != nil || id != 9 || uuid != "u-9" {
+		t.Fatalf("CreateLiveChat = %d %q %v", id, uuid, err)
+	}
+	cfg := created["config"].(map[string]any)
+	dark := cfg["branding"].(map[string]any)["dark"].(map[string]any)
+	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "¿Cómo podemos ayudarte?" ||
+		cfg["launcher"].(map[string]any)["position"] != "left" || dark["colors"].(map[string]any)["primary"] != "#112233" ||
+		!reflect.DeepEqual(cfg["trusted_domains"], []any{"*.shop.test"}) {
+		t.Fatalf("create body: %v", created)
+	}
+	if err := c.UpdateLiveChat(ctx, 9, lc); err != nil {
+		t.Fatal(err)
+	}
+	cfg = updated["config"].(map[string]any)
+	launcher := cfg["launcher"].(map[string]any)
+	if updated["name"] != "Ventas" || updated["secret"] != "••••" || launcher["position"] != "left" || launcher["icon_scale"] != 80.0 ||
+		cfg["home_apps"] == nil || cfg["greeting_message"] != "Hola" || cfg["trusted_domains"] != nil {
+		t.Fatalf("update body: %v", updated)
+	}
+	got, err := c.GetLiveChat(ctx, 9)
+	if err != nil || got.Name != "Old" || got.Position != "right" || got.Color != "#000000" || got.Domains == nil {
+		t.Fatalf("GetLiveChat = %+v %v", got, err)
+	}
+	if _, err := c.GetLiveChat(ctx, 8); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	if root, err := c.RootURL(ctx); err != nil || root != "https://desk.test" {
+		t.Fatalf("RootURL = %q %v", root, err)
+	}
+}

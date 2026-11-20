@@ -8,6 +8,7 @@ import { splitNames } from './domains.js';
 import { dnsAutomation } from './domain-dns.js';
 import { helpdeskBadges, helpdeskDialog } from './domain-helpdesk.js';
 import { showMigrations, migrationDialog } from './domain-migrations.js';
+import { liveChats } from './domain-livechat.js';
 
 const TABS = ['mailboxes', 'aliases', 'dns', 'migrations'];
 const LONG_VALUE = 60;
@@ -70,12 +71,13 @@ export async function domainView(ctx) {
       if (mine !== current()) return;
     }
     const notice = h('div', {});
+    const chats = liveChats(view, mine, notice);
     const create = button({ label: t('mailbox.new'), icon: 'plus', variant: 'primary', onClick: () => mailboxDialog(null, notice) });
     const rows = [...mailboxes].sort((a, b) => a.email.localeCompare(b.email));
-    const toolbar = h('div', { class: 'row gap-2' }, h('p', { class: 'muted grow' }, t('mailbox.count', { n: rows.length })), create);
+    const toolbar = h('div', { class: 'row gap-2' }, h('p', { class: 'muted grow' }, t('mailbox.count', { n: rows.length })), chats.add(), create);
     if (!rows.length) {
       mount(panel, notice, emptyState({ icon: 'inbox', title: t('mailbox.empty.title'), text: t('mailbox.empty.text'),
-        action: button({ label: t('mailbox.new'), icon: 'plus', variant: 'primary', onClick: () => mailboxDialog(null, notice) }) }));
+        action: h('div', { class: 'row gap-1' }, chats.add(), button({ label: t('mailbox.new'), icon: 'plus', variant: 'primary', onClick: () => mailboxDialog(null, notice) })) }), chats.node);
       return;
     }
     const links = helpdeskBadges(view, rows, mine);
@@ -90,7 +92,7 @@ export async function domainView(ctx) {
         m.kind === 'user' ? button({ label: t('migration.action'), icon: 'download', variant: 'ghost', ariaLabel: t('migration.action.label', { email: m.email }), onClick: () => migrationDialog(view, m.id, () => view.goTab('migrations')) }) : null,
         button({ icon: 'edit', variant: 'ghost', ariaLabel: t('mailbox.edit.label', { email: m.email }), onClick: () => mailboxDialog(m, notice) }),
         button({ icon: 'trash', variant: 'ghost', ariaLabel: t('mailbox.delete.label', { email: m.email }), onClick: () => deleteMailbox(m, notice) })) },
-    ] }));
+    ] }), chats.node);
     links.start();
   }
   async function refreshMailboxes(notice) {

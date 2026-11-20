@@ -247,7 +247,7 @@ dialog.modal[open], .toast { animation: pop-in 200ms ease-out; }
 }
 .branding-scope { max-width: 400px; }
 .brand-field { border: 0; margin: 0; padding: 0; min-width: 0; }
-.brand-field input[type="color"] { width: 96px; padding: 4px; cursor: pointer; }
+.brand-field input[type="color"], .field input[type="color"] { width: 96px; padding: 4px; cursor: pointer; }
 .brand-preview { height: 64px; width: auto; max-width: 240px; object-fit: contain; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .error-box ul { margin: 4px 0 0; padding-inline-start: 20px; }
 .docs-page { overflow-wrap: anywhere; }

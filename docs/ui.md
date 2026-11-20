@@ -38,7 +38,7 @@ Type: system UI stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
 | `#/setup` | first run | token, name, email, password |
 | `#/login` | anyone | email + password, then 6-digit code step when required |
 | `#/domains` | all | table: domain, alias domains, tenant (superadmin), mailbox count link |
-| `#/domains/:id` | all | tabs **Mailboxes** (table + create/edit dialog), **Alias domains** (chips + add/remove), **DNS** (records per zone with copy buttons, DKIM selectors) |
+| `#/domains/:id` | all | tabs **Mailboxes** (table + create/edit dialog; live chats below with embed code, edit, delete), **Alias domains** (chips + add/remove), **DNS** (records per zone with copy buttons, DKIM selectors) |
 | `#/tenants` | superadmin | table + create/rename/delete; per tenant: add domain (create or import) |
 | `#/users` | superadmin | table + create/edit (role, tenant, disable, reset password) |
 | `#/audit` | all | table: time, user, action, target, result badge, IP; "load more" |

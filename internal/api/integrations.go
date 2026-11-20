@@ -42,6 +42,10 @@ type HelpdeskAPI interface {
 	SetAgentPassword(context.Context, int64, libredesk.NewAgent, string) error
 	SyncAgentPassword(context.Context, int64, string) error
 	ApplyBranding(context.Context, string, string, string) error
+	CreateLiveChat(context.Context, libredesk.LiveChat, string) (int64, string, error)
+	GetLiveChat(context.Context, int64) (libredesk.LiveChat, error)
+	UpdateLiveChat(context.Context, int64, libredesk.LiveChat) error
+	RootURL(context.Context) (string, error)
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)

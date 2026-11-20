@@ -123,6 +123,9 @@ type fakeHelpdesk struct {
 	syncErr                       error
 	branding                      [][3]string
 	brandingErr                   error
+	liveChats                     map[int64]libredesk.LiveChat
+	liveChatLanguage              string
+	liveChatErr                   error
 }
 
 func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon string) error {

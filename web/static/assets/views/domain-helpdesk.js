@@ -6,7 +6,7 @@ import { button, field, textInput, select, badge, spinner, errorBox, modal, conf
 const CONCURRENCY = 4;
 const linkPath = (view, id) => `${view.base}/mailboxes/${encodeURIComponent(id)}/helpdesk`;
 
-function helpdeskError(err) {
+export function helpdeskError(err) {
   if (err?.code === 'helpdesk_not_ready') return { message: t('helpdesk.error.notReady') };
   if (err?.code === 'upstream_error' || err?.code === 'helpdesk_error') return { message: t('helpdesk.error.upstream') };
   if (err?.code === 'conflict') return { message: t('helpdesk.error.conflict') };

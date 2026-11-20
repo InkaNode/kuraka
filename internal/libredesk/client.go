@@ -1,5 +1,5 @@
 // Package libredesk is a typed client for the parts of the Libredesk HTTP API
-// Kuraka needs: email inboxes, agents, activation and branding.
+// Kuraka needs: email and live chat inboxes, agents, activation and branding.
 package libredesk
 
 import (
@@ -191,6 +191,179 @@ func (c *Client) ApplyBranding(ctx context.Context, name, logoURL, faviconURL st
 		delete(settings, key)
 	}
 	return c.do(ctx, http.MethodPut, path, settings, nil)
+}
+
+// LiveChat is the part of a live chat inbox Kuraka edits. Color is #rrggbb,
+// Position is "left" or "right" and Language a Libredesk locale (es-ES).
+type LiveChat struct {
+	Name     string `json:"name"`
+	Website  string `json:"website_url"`
+	Color    string `json:"color"`
+	LogoURL  string `json:"logo_url"`
+	Greeting string `json:"greeting"`
+	Position string `json:"position"`
+	// Domains are the sites the widget may load on; nil keeps the current
+	// ones (the website on creation) and empty allows any site.
+	Domains []string `json:"allowed_domains"`
+}
+
+// liveChatTexts are the widget texts Kuraka sets once, on creation.
+var liveChatTexts = map[string][3]string{
+	"es-ES": {"¿Cómo podemos ayudarte?", "Pregúntanos lo que quieras.", "Iniciar conversación"},
+	"en-US": {"How can we help?", "Ask us anything, or share your feedback.", "Start conversation"},
+}
+
+// TrustedDomain is the widget origin pattern for a website: its host without
+// "www." as "*.host", which also matches the bare host.
+func TrustedDomain(website string) string {
+	host := website
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	host, _, _ = strings.Cut(host, "/")
+	return "*." + strings.TrimPrefix(strings.ToLower(host), "www.")
+}
+
+// applyLiveChat writes lc into a live chat config, keeping its other keys.
+func applyLiveChat(config map[string]any, lc LiveChat) {
+	child := func(m map[string]any, key string) map[string]any {
+		next, ok := m[key].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			m[key] = next
+		}
+		return next
+	}
+	config["brand_name"] = lc.Name
+	config["website_url"] = lc.Website
+	config["greeting_message"] = lc.Greeting
+	if lc.Domains != nil {
+		config["trusted_domains"] = lc.Domains
+	}
+	child(config, "launcher")["position"] = lc.Position
+	branding := child(config, "branding")
+	for _, theme := range []string{"light", "dark"} {
+		b := child(branding, theme)
+		child(b, "colors")["primary"] = lc.Color
+		child(b, "launcher")["color"] = lc.Color
+		b["logo_url"] = lc.LogoURL
+	}
+}
+
+// CreateLiveChat creates an enabled live chat inbox and returns its id and the
+// UUID the widget snippet uses.
+func (c *Client) CreateLiveChat(ctx context.Context, lc LiveChat, language string) (int64, string, error) {
+	texts, ok := liveChatTexts[language]
+	if !ok {
+		language, texts = "en-US", liveChatTexts["en-US"]
+	}
+	audience := map[string]any{"allow_start_conversation": true, "start_conversation_button_text": texts[2]}
+	config := map[string]any{
+		"theme":                "light",
+		"show_powered_by":      false,
+		"language":             language,
+		"fallback_language":    language,
+		"introduction_message": texts[0],
+		"chat_introduction":    texts[1],
+		"session_duration":     "10h",
+		"campaign_cooldown":    "24h",
+		"features":             map[string]any{"emoji": true, "file_upload": true, "transcript": true},
+		"launcher":             map[string]any{"icon_scale": 100, "spacing": map[string]any{"side": 20, "bottom": 20}},
+		"visitors":             audience,
+		"users":                audience,
+	}
+	if lc.Domains == nil {
+		lc.Domains = []string{TrustedDomain(lc.Website)}
+	}
+	applyLiveChat(config, lc)
+	body := map[string]any{"name": lc.Name, "channel": "livechat", "enabled": true, "csat_enabled": false, "config": config}
+	var out struct {
+		ID   int64  `json:"id"`
+		UUID string `json:"uuid"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/inboxes", body, &out); err != nil {
+		return 0, "", err
+	}
+	if out.ID == 0 || out.UUID == "" {
+		return 0, "", errors.New("libredesk: live chat create returned no id")
+	}
+	return out.ID, out.UUID, nil
+}
+
+// liveChatInbox reads a live chat inbox as a raw map. A missing inbox yields
+// ErrNotFound.
+func (c *Client) liveChatInbox(ctx context.Context, id int64) (map[string]any, map[string]any, error) {
+	var inbox map[string]any
+	err := c.do(ctx, http.MethodGet, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), nil, &inbox)
+	if ae, ok := errors.AsType[*APIError](err); ok && ae.Status == http.StatusNotFound {
+		return nil, nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	config, ok := inbox["config"].(map[string]any)
+	if inbox["channel"] != "livechat" || !ok {
+		return nil, nil, errors.New("libredesk: not a live chat inbox")
+	}
+	return inbox, config, nil
+}
+
+// GetLiveChat returns the fields Kuraka edits, read from the light branding.
+func (c *Client) GetLiveChat(ctx context.Context, id int64) (LiveChat, error) {
+	inbox, config, err := c.liveChatInbox(ctx, id)
+	if err != nil {
+		return LiveChat{}, err
+	}
+	str := func(m any, keys ...string) string {
+		for _, key := range keys {
+			next, _ := m.(map[string]any)
+			m = next[key]
+		}
+		s, _ := m.(string)
+		return s
+	}
+	domains := []string{}
+	list, _ := config["trusted_domains"].([]any)
+	for _, d := range list {
+		if d, ok := d.(string); ok {
+			domains = append(domains, d)
+		}
+	}
+	return LiveChat{
+		Name:     str(inbox, "name"),
+		Website:  str(config, "website_url"),
+		Color:    str(config, "branding", "light", "colors", "primary"),
+		LogoURL:  str(config, "branding", "light", "logo_url"),
+		Greeting: str(config, "greeting_message"),
+		Position: str(config, "launcher", "position"),
+		Domains:  domains,
+	}, nil
+}
+
+// UpdateLiveChat writes lc into a live chat inbox, keeping its other settings.
+// The masked widget secret is kept by Libredesk. A missing inbox yields ErrNotFound.
+func (c *Client) UpdateLiveChat(ctx context.Context, id int64, lc LiveChat) error {
+	inbox, config, err := c.liveChatInbox(ctx, id)
+	if err != nil {
+		return err
+	}
+	applyLiveChat(config, lc)
+	inbox["name"] = lc.Name
+	return c.do(ctx, http.MethodPut, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), inbox, nil)
+}
+
+// RootURL returns the public Libredesk URL the widget loads from.
+func (c *Client) RootURL(ctx context.Context) (string, error) {
+	var settings struct {
+		RootURL string `json:"app.root_url"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/settings/general", nil, &settings); err != nil {
+		return "", err
+	}
+	if settings.RootURL == "" {
+		return "", errors.New("libredesk: root URL is not set")
+	}
+	return strings.TrimRight(settings.RootURL, "/"), nil
 }
 
 type envelope struct {

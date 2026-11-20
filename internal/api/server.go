@@ -177,6 +177,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/alerts", "alert.create", false, true, s.createAlert)
 	route("DELETE /api/v1/alerts/{id}", "alert.delete", false, true, s.deleteAlert)
 	s.integrationRoutes(route)
+	s.liveChatRoutes(route)
 	s.updateRoutes(route)
 	s.brandingRoutes(route)
 	s.securityRoutes(route)
