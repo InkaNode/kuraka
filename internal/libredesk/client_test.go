@@ -463,7 +463,7 @@ func TestLiveChat(t *testing.T) {
 			json.NewDecoder(r.Body).Decode(&created)
 			io.WriteString(w, `{"status":"success","data":{"id":9,"uuid":"u-9"}}`)
 		case "GET /api/v1/inboxes/9":
-			io.WriteString(w, `{"status":"success","data":{"id":9,"name":"Old","channel":"livechat","secret":"••••","config":{"brand_name":"Old","home_apps":[{"url":"https://x.test"}],"launcher":{"position":"right","icon_scale":80},"branding":{"light":{"colors":{"primary":"#000000"},"logo_url":""},"dark":{"colors":{"primary":"#ffffff"}}}}}}`)
+			io.WriteString(w, `{"status":"success","data":{"id":9,"name":"Old","channel":"livechat","secret":"••••","config":{"brand_name":"Old","language":"es-ES","introduction_message":"¿Cómo podemos ayudarte?","home_apps":[{"url":"https://x.test"}],"launcher":{"position":"right","icon_scale":80},"branding":{"light":{"colors":{"primary":"#000000"},"logo_url":""},"dark":{"colors":{"primary":"#ffffff"}}}}}}`)
 		case "PUT /api/v1/inboxes/9":
 			json.NewDecoder(r.Body).Decode(&updated)
 			io.WriteString(w, `{"status":"success","data":{}}`)
@@ -501,7 +501,7 @@ func TestLiveChat(t *testing.T) {
 	}
 	cfg = updated["config"].(map[string]any)
 	launcher := cfg["launcher"].(map[string]any)
-	if updated["name"] != "Ventas" || cfg["theme"] != "dark" ||
+	if updated["name"] != "Ventas" || cfg["theme"] != "dark" || cfg["introduction_message"] != "Estamos aquí para ayudarte" ||
 		cfg["branding"].(map[string]any)["dark"].(map[string]any)["launcher"].(map[string]any)["logo_url"] != "https://shop.test/i.png" || updated["secret"] != "••••" || launcher["position"] != "left" || launcher["icon_scale"] != 80.0 ||
 		cfg["home_apps"] == nil || cfg["greeting_message"] != "Hola" || cfg["trusted_domains"] != nil {
 		t.Fatalf("update body: %v", updated)

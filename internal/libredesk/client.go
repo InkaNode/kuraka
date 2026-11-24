@@ -269,6 +269,9 @@ var liveChatTexts = map[string][3]string{
 	"en-US": {"We're here to help", "Ask us anything, or share your feedback.", "Start conversation"},
 }
 
+// oldIntros are the intros of earlier chats, replaced on their next edit.
+var oldIntros = map[string]string{"es-ES": "¿Cómo podemos ayudarte?", "en-US": "How can we help?"}
+
 // formLabels are the labels of new pre-chat form fields: English, Spanish.
 var formLabels = map[string][2]string{
 	"name":      {"Name", "Nombre"},
@@ -593,6 +596,10 @@ func (c *Client) UpdateLiveChat(ctx context.Context, id int64, lc LiveChat) erro
 		return err
 	}
 	applyLiveChat(config, lc, lastName)
+	// Chats created before 0.4.0 had an intro that repeated the greeting; replace it unless edited.
+	if texts, ok := liveChatTexts[language]; ok && config["introduction_message"] == oldIntros[language] {
+		config["introduction_message"] = texts[0]
+	}
 	inbox["name"] = lc.Name
 	return c.do(ctx, http.MethodPut, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), inbox, nil)
 }
