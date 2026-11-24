@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk in Spanish**: every screen is translated, including the 834 texts that were still in English, such as the automation conditions.
 - **Mail admin in Spanish**: Stalwart's admin follows the browser language when its account is left in English. Form names sent by the Stalwart server stay in English.
 - **Libredesk teams**: **Keep the assigned agent** keeps a conversation's agent when it moves to that team. **Admin → General** chooses whether the new team is enough or both teams need it on. The default is **No**, as before.
+- **Libredesk automatic assignment**: Round robin teams give a conversation to an agent as soon as it reaches the team, instead of waiting up to 5 minutes. **Admin → General** sets **Assign instantly** (on by default) and **Check pending conversations every**, from 10 seconds to 1 hour (5 minutes by default), which picks up conversations left without an agent because nobody was available. Each Round robin team can use the general values or its own.
 - **Stalwart 1.2**: Kuraka supports Stalwart `v1.2.x`, so System → Updates offers `v1.2.0` instead of waiting. The update starts it once with `STALWART_UPDATE_ROLE_PERMISSIONS=true`, which adds the new mail rule, blocked and safe sender, calendar and Exchange permissions to the default roles. Stalwart 1.2 needs the web interface `v2.1.1` from this release, so update the web interface first.
 - **Libredesk business hours**: new helpdesks start with Monday to Friday, 08:00 to 17:00, already chosen in **Admin → General**.
 
@@ -32,7 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Libredesk admin**: the **Channels** menu is hidden, because Kuraka creates and manages the inboxes. Its addresses open Admin instead.
 - **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
-- **Libredesk patches**: the tag colour, rule icon, activity setting, team inbox order and live chat **Waiting** status patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
+- **Libredesk patches**: the tag colour, rule icon, activity setting, team inbox order, live chat **Waiting** status and automatic assignment patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
+- **Libredesk config**: `autoassign_interval` in `config.toml` is no longer used. The time is set in **Admin → General** and in each team.
 - **Libredesk Root URL**: helpdesks provisioned by Kuraka get their public address (`https://<helpdesk>`) as Root URL, so links Libredesk builds open the helpdesk instead of `http://localhost:9000`.
 - **System → Updates**: the list refreshes on its own every 30 seconds, so versions found by the daily check show without reloading. **Check now** says whether updates were found.
 - **System → Customization**: when an addon no longer recognizes the page, it shows **Original design** with a tip on how to fix it, instead of a long message and a list of page elements.
