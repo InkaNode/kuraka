@@ -1,0 +1,399 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Mon, 23 Nov 2026 21:19:49 -0500
+Subject: [PATCH] feat(teams): keep the assigned agent when the team changes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Adds-En: Teams can keep the assigned agent when a conversation moves to them, set per team and in General.
+Kuraka-Adds-Es: Los equipos pueden mantener al agente asignado cuando una conversación pasa a ellos, según cada equipo y General.
+Kuraka-Missing-En: Moving a conversation to another team always removes its assigned agent.
+Kuraka-Missing-Es: Pasar una conversación a otro equipo siempre le quita el agente asignado.
+---
+ cmd/settings.go                               |  3 ++
+ cmd/teams.go                                  |  4 +-
+ .../admin/general/GeneralSettingForm.vue      | 21 ++++++++++
+ .../src/features/admin/general/formSchema.js  |  3 +-
+ .../src/features/admin/teams/TeamForm.vue     | 12 ++++++
+ .../features/admin/teams/teamFormSchema.js    |  1 +
+ .../cypress/e2e/ui/generalSettingsForm.cy.js  |  3 +-
+ i18n/en-US.json                               |  8 ++++
+ i18n/es-ES.json                               |  8 ++++
+ internal/conversation/conversation.go         | 39 +++++++++++++++++--
+ internal/kuraka/migrate.go                    |  5 +++
+ internal/setting/models/models.go             |  1 +
+ internal/team/models/models.go                |  1 +
+ internal/team/queries.sql                     | 10 ++---
+ internal/team/team.go                         |  8 ++--
+ schema.sql                                    |  1 +
+ 16 files changed, 112 insertions(+), 16 deletions(-)
+
+diff --git a/cmd/settings.go b/cmd/settings.go
+index b76260b4..7651b8a4 100644
+--- a/cmd/settings.go
++++ b/cmd/settings.go
+@@ -64,6 +64,9 @@ func handleUpdateGeneralSettings(r *fastglue.Request) error {
+ 	if req.ActivityCollapseAfter < 1 || req.ActivityCollapseAfter > 50 {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.activityCollapseAfter.valid"), nil, envelope.InputError)
+ 	}
++	if req.KeepAssigneeOnTeamChange != "off" && req.KeepAssigneeOnTeamChange != "new_team" && req.KeepAssigneeOnTeamChange != "both_teams" {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.keepAssigneeOnTeamChange.valid"), nil, envelope.InputError)
++	}
+ 
+ 	app.Lock()
+ 	oldLang := ko.String("app.lang")
+diff --git a/cmd/teams.go b/cmd/teams.go
+index f86b29df..274e53ff 100644
+--- a/cmd/teams.go
++++ b/cmd/teams.go
+@@ -72,7 +72,7 @@ func handleCreateTeam(r *fastglue.Request) error {
+ 	if req.Weight < 0 || req.Weight > 1000 {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
+ 	}
+-	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight)
++	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -98,7 +98,7 @@ func handleUpdateTeam(r *fastglue.Request) error {
+ 	if req.Weight < 0 || req.Weight > 1000 {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
+ 	}
+-	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight)
++	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+index a93a102e..af829e0c 100644
+--- a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
++++ b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+@@ -120,6 +120,27 @@
+             <FormMessage />
+           </FormItem>
+         </FormField>
++        <FormField v-slot="{ componentField }" name="keep_assignee_on_team_change">
++          <FormItem>
++            <FormLabel>{{ t('admin.general.keepAssigneeOnTeamChange') }}</FormLabel>
++            <FormControl>
++              <Select v-bind="componentField">
++                <SelectTrigger>
++                  <SelectValue />
++                </SelectTrigger>
++                <SelectContent>
++                  <SelectGroup>
++                    <SelectItem value="off">{{ t('admin.general.keepAssigneeOnTeamChange.off') }}</SelectItem>
++                    <SelectItem value="new_team">{{ t('admin.general.keepAssigneeOnTeamChange.newTeam') }}</SelectItem>
++                    <SelectItem value="both_teams">{{ t('admin.general.keepAssigneeOnTeamChange.bothTeams') }}</SelectItem>
++                  </SelectGroup>
++                </SelectContent>
++              </Select>
++            </FormControl>
++            <FormDescription>{{ t('admin.general.keepAssigneeOnTeamChange.description') }}</FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
+       </FormGrid>
+     </fieldset>
+     <fieldset class="min-w-0">
+diff --git a/frontend/apps/main/src/features/admin/general/formSchema.js b/frontend/apps/main/src/features/admin/general/formSchema.js
+index ced044c9..d70815e9 100644
+--- a/frontend/apps/main/src/features/admin/general/formSchema.js
++++ b/frontend/apps/main/src/features/admin/general/formSchema.js
+@@ -46,5 +46,6 @@ export const createFormSchema = (t) => z.object({
+     .int({ message: t('admin.general.activityCollapseAfter.valid') })
+     .min(1, { message: t('admin.general.activityCollapseAfter.valid') })
+     .max(50, { message: t('admin.general.activityCollapseAfter.valid') })
+-    .optional()
++    .optional(),
++  keep_assignee_on_team_change: z.enum(['off', 'new_team', 'both_teams']).optional()
+ })
+diff --git a/frontend/apps/main/src/features/admin/teams/TeamForm.vue b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+index e35e03c7..d386d462 100644
+--- a/frontend/apps/main/src/features/admin/teams/TeamForm.vue
++++ b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+@@ -145,12 +145,24 @@
+       </FormField>
+     </FormGrid>
+ 
++    <FormField v-slot="{ componentField, handleChange }" name="keep_assignee">
++      <FormItem>
++        <SwitchField
++          :title="$t('kuraka.teamKeepAssignee')"
++          :description="$t('kuraka.teamKeepAssigneeHelp')"
++          :checked="componentField.modelValue"
++          @update:checked="handleChange"
++        />
++      </FormItem>
++    </FormField>
++
+     <Button type="submit" :isLoading="isLoading"> {{ submitLabel }} </Button>
+   </form>
+ </template>
+ 
+ <script setup>
+ import FormGrid from '@shared-ui/components/FormGrid.vue'
++import SwitchField from '@shared-ui/components/SwitchField.vue'
+ import { ref, watch, onMounted, computed, defineAsyncComponent } from 'vue'
+ import { onClickOutside } from '@vueuse/core'
+ import { Button } from '@shared-ui/components/ui/button/index.js'
+diff --git a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+index a4a76bbc..0f26b494 100644
+--- a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
++++ b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+@@ -13,6 +13,7 @@ export const createTeamFormSchema = (t) => z.object({
+   conversation_assignment_type: z.string({ required_error: t('globals.messages.required') }),
+   max_auto_assigned_conversations: z.coerce.number().default(0),
+   weight: z.coerce.number().int().min(0).max(1000).default(0),
++  keep_assignee: z.boolean().default(false),
+   timezone: z.string({ required_error: t('globals.messages.required') }),
+   business_hours_id: z.number().optional().nullable(),
+   sla_policy_id: z.number().optional().nullable(),
+diff --git a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+index 1a54c29d..83fa6030 100644
+--- a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
++++ b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+@@ -15,7 +15,8 @@ describe('General settings form', () => {
+     'app.timezone',
+     'app.business_hours_id',
+     'app.show_conversation_subject',
+-    'app.activity_collapse_after'
++    'app.activity_collapse_after',
++    'app.keep_assignee_on_team_change'
+   ]
+ 
+   let original
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 3d4e50ab..bd4f0dbf 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -263,6 +263,12 @@
+   "admin.general.activityCollapseAfter": "Collapse activity events after",
+   "admin.general.activityCollapseAfter.description": "In a conversation, runs of more activity events than this start collapsed.",
+   "admin.general.activityCollapseAfter.valid": "Enter a number between 1 and 50",
++  "admin.general.keepAssigneeOnTeamChange": "Keep the assigned agent when the team changes",
++  "admin.general.keepAssigneeOnTeamChange.bothTeams": "When both teams have it on",
++  "admin.general.keepAssigneeOnTeamChange.description": "Turn on Keep the assigned agent in each team that should keep it.",
++  "admin.general.keepAssigneeOnTeamChange.newTeam": "When the new team has it on",
++  "admin.general.keepAssigneeOnTeamChange.off": "No",
++  "admin.general.keepAssigneeOnTeamChange.valid": "Choose one of the options",
+   "admin.general.allowedFileUploadExtensions": "Allowed file upload extensions",
+   "admin.general.allowedFileUploadExtensions.description": "Use `*` to permit all file types. For example: `jpg, png, pdf`",
+   "admin.general.businessHours.placeholder": "Select business hours",
+@@ -1580,6 +1586,8 @@
+   "kuraka.sortTeamInboxes": "Sort team inboxes",
+   "kuraka.sortWeight": "By weight",
+   "kuraka.switchInbox": "Switch inbox",
++  "kuraka.teamKeepAssignee": "Keep the assigned agent",
++  "kuraka.teamKeepAssigneeHelp": "When a conversation moves to this team, its assigned agent stays. Admin → General sets whether the previous team must also have this on.",
+   "kuraka.teamWeight": "Weight",
+   "kuraka.teamWeightHelp": "When agents sort their team inboxes by weight, higher weights go first. Teams with the same weight stay together.",
+   "kuraka.teamWeightRange": "Weight must be a whole number from 0 to 1000.",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index abdaaf5b..4ffe75ef 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -112,6 +112,12 @@
+   "admin.general.activityCollapseAfter": "Contraer eventos de actividad a partir de",
+   "admin.general.activityCollapseAfter.description": "En una conversación, los grupos con más eventos de actividad que este número se muestran contraídos.",
+   "admin.general.activityCollapseAfter.valid": "Escribe un número entre 1 y 50",
++  "admin.general.keepAssigneeOnTeamChange": "Mantener al agente asignado al cambiar de equipo",
++  "admin.general.keepAssigneeOnTeamChange.bothTeams": "Cuando ambos equipos lo tienen activado",
++  "admin.general.keepAssigneeOnTeamChange.description": "Activa Mantener al agente asignado en cada equipo que deba mantenerlo.",
++  "admin.general.keepAssigneeOnTeamChange.newTeam": "Cuando el equipo nuevo lo tiene activado",
++  "admin.general.keepAssigneeOnTeamChange.off": "No",
++  "admin.general.keepAssigneeOnTeamChange.valid": "Elige una de las opciones",
+   "admin.general.allowedFileUploadExtensions": "Extensiones de carga de archivo permitidas",
+   "admin.general.allowedFileUploadExtensions.description": "Usa `*` para permitir todos los tipos de archivo. Por ejemplo: `jpg, png, pdf`",
+   "admin.general.businessHours.placeholder": "Seleccionar horario de atención",
+@@ -847,6 +853,8 @@
+   "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
+   "kuraka.sortWeight": "Por peso",
+   "kuraka.switchInbox": "Cambiar de buzón",
++  "kuraka.teamKeepAssignee": "Mantener al agente asignado",
++  "kuraka.teamKeepAssigneeHelp": "Cuando una conversación pasa a este equipo, su agente asignado se queda. Admin → General define si el equipo anterior también debe tenerlo activado.",
+   "kuraka.teamWeight": "Peso",
+   "kuraka.teamWeightHelp": "Cuando los agentes ordenan sus bandejas de equipo por peso, los pesos más altos van primero. Los equipos con el mismo peso quedan juntos.",
+   "kuraka.teamWeightRange": "El peso debe ser un número entero de 0 a 1000.",
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index 93c5e59e..82b4565b 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -972,9 +972,11 @@ func (c *Manager) UpdateConversationTeamAssignee(uuid string, teamID int, actor
+ 
+ 	// Team changed?
+ 	if previousAssignedTeamID != teamID {
+-		// Remove assigned user if team has changed.
+-		if err := c.RemoveConversationAssignee(uuid, models.AssigneeTypeUser, actor); err != nil {
+-			c.lo.Error("error removing conversation assignee after team change", "uuid", uuid, "error", err)
++		// Remove assigned user if team has changed, unless the teams keep it.
++		if !c.keepAssigneeOnTeamChange(previousAssignedTeamID, teamID) {
++			if err := c.RemoveConversationAssignee(uuid, models.AssigneeTypeUser, actor); err != nil {
++				c.lo.Error("error removing conversation assignee after team change", "uuid", uuid, "error", err)
++			}
+ 		}
+ 
+ 		updatedConversation, err := c.GetConversation(0, uuid, "")
+@@ -994,6 +996,37 @@ func (c *Manager) UpdateConversationTeamAssignee(uuid string, teamID int, actor
+ 	return nil
+ }
+ 
++// keepAssigneeOnTeamChange reports whether the assigned user stays when a conversation moves from team prevTeamID to teamID, per app.keep_assignee_on_team_change and the teams' keep_assignee.
++func (c *Manager) keepAssigneeOnTeamChange(prevTeamID, teamID int) bool {
++	b, err := c.settingsStore.Get("app.keep_assignee_on_team_change")
++	if err != nil {
++		c.lo.Error("error fetching keep assignee on team change setting", "error", err)
++		return false
++	}
++	var mode string
++	if err := json.Unmarshal(b, &mode); err != nil {
++		c.lo.Error("error parsing keep assignee on team change setting", "error", err)
++		return false
++	}
++	if mode != "new_team" && mode != "both_teams" {
++		return false
++	}
++	team, err := c.teamStore.Get(teamID)
++	if err != nil {
++		c.lo.Error("error fetching team for keep assignee", "team_id", teamID, "error", err)
++		return false
++	}
++	if !team.KeepAssignee || mode == "new_team" || prevTeamID == 0 {
++		return team.KeepAssignee
++	}
++	prevTeam, err := c.teamStore.Get(prevTeamID)
++	if err != nil {
++		c.lo.Error("error fetching previous team for keep assignee", "team_id", prevTeamID, "error", err)
++		return false
++	}
++	return prevTeam.KeepAssignee
++}
++
+ // applyTeamSLA applies the team's SLA policy to the conversation if the team has one, logging failures.
+ func (c *Manager) applyTeamSLA(conversation models.Conversation, teamID int) {
+ 	team, err := c.teamStore.Get(teamID)
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index fb88ae5e..07944ad6 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -61,6 +61,7 @@ func Migrate(db *sqlx.DB) error {
+     ADD COLUMN IF NOT EXISTS team_inbox_group BOOLEAN NOT NULL DEFAULT false;
+   END IF;
+   ALTER TABLE team_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;
++  ALTER TABLE teams ADD COLUMN IF NOT EXISTS keep_assignee BOOLEAN NOT NULL DEFAULT false;
+  END $$`)
+ 	if err != nil {
+ 		return err
+@@ -69,5 +70,9 @@ func Migrate(db *sqlx.DB) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	_, err = tx.Exec(`INSERT INTO settings (key, value) VALUES ('app.keep_assignee_on_team_change', '"off"'::jsonb) ON CONFLICT (key) DO NOTHING`)
++	if err != nil {
++		return err
++	}
+ 	return tx.Commit()
+ }
+diff --git a/internal/setting/models/models.go b/internal/setting/models/models.go
+index df9fb182..96849d75 100644
+--- a/internal/setting/models/models.go
++++ b/internal/setting/models/models.go
+@@ -12,6 +12,7 @@ type General struct {
+ 	BusinessHoursID             string   `json:"app.business_hours_id"`
+ 	ShowConversationSubject     bool     `json:"app.show_conversation_subject"`
+ 	ActivityCollapseAfter       int      `json:"app.activity_collapse_after"`
++	KeepAssigneeOnTeamChange    string   `json:"app.keep_assignee_on_team_change"`
+ }
+ 
+ type EmailNotification struct {
+diff --git a/internal/team/models/models.go b/internal/team/models/models.go
+index 74ad2923..6dfbf83d 100644
+--- a/internal/team/models/models.go
++++ b/internal/team/models/models.go
+@@ -21,6 +21,7 @@ type Team struct {
+ 	SLAPolicyID                  null.Int    `db:"sla_policy_id" json:"sla_policy_id"`
+ 	MaxAutoAssignedConversations int         `db:"max_auto_assigned_conversations" json:"max_auto_assigned_conversations"`
+ 	Weight                       int         `db:"weight" json:"weight"`
++	KeepAssignee                 bool        `db:"keep_assignee" json:"keep_assignee"`
+ }
+ 
+ type TeamCompact struct {
+diff --git a/internal/team/queries.sql b/internal/team/queries.sql
+index b4d82974..14a45383 100644
+--- a/internal/team/queries.sql
++++ b/internal/team/queries.sql
+@@ -1,5 +1,5 @@
+ -- name: get-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams order by updated_at desc;
+ 
+ -- name: get-teams-compact
+ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%') order by name limit NULLIF($2, 0) offset $3;
+@@ -8,10 +8,10 @@ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%')
+ SELECT id, name, emoji from teams where id = ANY($1) order by name;
+ 
+ -- name: get-user-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
+ 
+ -- name: get-team
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight from teams where id = $1;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams where id = $1;
+ 
+ -- name: get-team-members
+ SELECT u.id, t.id as team_id, u.availability_status
+@@ -21,10 +21,10 @@ JOIN teams t ON t.id = tm.team_id
+ WHERE t.id = $1 AND u.deleted_at IS NULL AND u.type = 'agent' AND u.enabled = true;
+ 
+ -- name: insert-team
+-INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations, weight) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
++INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations, weight, keep_assignee) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+ 
+ -- name: update-team
+-UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, weight = $9, updated_at = now() where id = $1 RETURNING *;
++UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, weight = $9, keep_assignee = $10, updated_at = now() where id = $1 RETURNING *;
+ 
+ -- name: upsert-user-teams
+ WITH delete_old_teams AS (
+diff --git a/internal/team/team.go b/internal/team/team.go
+index c587f3ce..4c1bc800 100644
+--- a/internal/team/team.go
++++ b/internal/team/team.go
+@@ -117,9 +117,9 @@ func (u *Manager) Get(id int) (models.Team, error) {
+ }
+ 
+ // Create creates a new team.
+-func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int) (models.Team, error) {
++func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight); err != nil {
++	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee); err != nil {
+ 		if dbutil.IsUniqueViolationError(err) {
+ 			return team, envelope.NewError(envelope.GeneralError, u.i18n.T("errors.alreadyExistsTeam"), nil)
+ 		}
+@@ -130,9 +130,9 @@ func (u *Manager) Create(name, timezone, conversationAssignmentType string, busi
+ }
+ 
+ // Update updates an existing team.
+-func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int) (models.Team, error) {
++func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight); err != nil {
++	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee); err != nil {
+ 		u.lo.Error("error updating team", "error", err)
+ 		return team, envelope.NewError(envelope.GeneralError, u.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/schema.sql b/schema.sql
+index 92555d9d..e77f9ce1 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -1122,6 +1122,7 @@ VALUES
+ 	('app.business_hours_id', '""'::jsonb),
+ 	('app.show_conversation_subject', 'true'::jsonb),
+ 	('app.activity_collapse_after', '2'::jsonb),
++	('app.keep_assignee_on_team_change', '"off"'::jsonb),
+ 	('ai_agent.faq_learning_enabled', 'false'::jsonb),
+     ('notification.email.username', '"admin@yourcompany.com"'::jsonb),
+     ('notification.email.host', '""'::jsonb),
