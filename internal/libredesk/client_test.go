@@ -489,7 +489,7 @@ func TestLiveChat(t *testing.T) {
 		cfg["inactivity_close"] != "30m" || cfg["team_id"] != nil || cfg["visitors"].(map[string]any)["prevent_reply_to_closed_conversation"] != true {
 		t.Fatalf("create flow: %v", cfg)
 	}
-	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "¿Cómo podemos ayudarte?" || cfg["theme"] != "light" ||
+	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "Estamos aquí para ayudarte" || cfg["theme"] != "light" ||
 		cfg["branding"].(map[string]any)["light"].(map[string]any)["launcher"].(map[string]any)["logo_url"] != "https://shop.test/i.png" ||
 		cfg["launcher"].(map[string]any)["position"] != "left" || dark["colors"].(map[string]any)["primary"] != "#112233" ||
 		!reflect.DeepEqual(cfg["trusted_domains"], []any{"*.shop.test"}) {

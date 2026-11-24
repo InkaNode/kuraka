@@ -265,8 +265,8 @@ type Team struct {
 
 // liveChatTexts are the widget texts Kuraka sets once, on creation.
 var liveChatTexts = map[string][3]string{
-	"es-ES": {"¿Cómo podemos ayudarte?", "Pregúntanos lo que quieras.", "Iniciar conversación"},
-	"en-US": {"How can we help?", "Ask us anything, or share your feedback.", "Start conversation"},
+	"es-ES": {"Estamos aquí para ayudarte", "Pregúntanos lo que quieras.", "Iniciar conversación"},
+	"en-US": {"We're here to help", "Ask us anything, or share your feedback.", "Start conversation"},
 }
 
 // formLabels are the labels of new pre-chat form fields: English, Spanish.
