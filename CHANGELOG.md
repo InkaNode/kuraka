@@ -37,6 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Live chat code**: it uses the helpdesk's public address (`https://<helpdesk>`) instead of Libredesk's Root URL, which stayed `http://localhost:9000` and websites could not load. A helpdesk without a public HTTPS address shows a warning instead of the code.
+- **Live chat websites**: a new chat allows the domain itself as well as its subdomains (`example.com` and `*.example.com`). Before, the chat did not show on `example.com`. Existing chats need `example.com` added in **Edit**.
 - **Libredesk status icons**: inside buttons the icons follow the text size.
 - **System → Updates**: right after Kuraka starts, the latest versions show at once. Before, they stayed empty until the first check a minute later, even after reloading.
 - **Libredesk sidebar**: the sort button of **Team inboxes** no longer covers the arrow that opens and closes it. Section titles are a little smaller and stay on one line.
