@@ -130,7 +130,7 @@ Superadmins set branding globally or for one tenant (migration 0007, tables `bra
 
 - **Kuraka:** name, logo, icon, color, gradient (`gradient_from`, `gradient_to`) and banner. `GET /branding/kuraka` is public; a signed-in tenant user gets the tenant's values, everyone else the global ones.
 - **Stalwart:** the same fields, global only (one shared server; tenant rows are rejected and ignored). The Stalwart addon applies them through `/_kuraka/addon/`.
-- **Libredesk (`desk`):** only name, logo and favicon (`icon`). Saving `default` or `desk` pushes them to every ready helpdesk in scope (`app.site_name`, `app.logo_url`, `app.favicon_url` in its general settings, other settings unchanged), and so does activation. Push failures are reported per helpdesk and do not fail the save.
+- **Libredesk (`desk`):** only name, logo and favicon (`icon`). Saving `default` or `desk` pushes them to every ready helpdesk in scope (`app.site_name`, `app.logo_url`, `app.favicon_url` in its general settings, other settings unchanged), and so does activation. A helpdesk provisioned by Kuraka also gets `app.root_url` = `https://<name>`, even with no branding. Push failures are reported per helpdesk and do not fail the save.
 - **Images:** uploaded as a base64 data URL, at most 512 KiB, PNG, JPEG, WebP, GIF or SVG (bytes must match the declared type). Served at `/branding/assets/{id}` (absolute URLs from `KURAKA_PUBLIC_URL`) with a one-year immutable cache; SVG gets a sandbox CSP. Unreferenced uploads older than an hour are deleted on the next save.
 - **Validation:** names are trimmed, at most 64 characters, no control characters; colors are `#rrggbb`, stored lowercase.
 
@@ -185,6 +185,7 @@ Stalwart blocks addresses that look like attacks, such as many failed logins or 
 | `POST /helpdesks/{id}/activate` | superadmin; tenant_admin for own tenant | creates and verifies API credentials; ready helpdesk or `409 helpdesk_not_ready` |
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
+| `GET /domains/{id}/helpdesks/{helpdesk}/teams` | domain access + same-tenant ready helpdesk | `[{id, name, conversation_assignment_type, members}]` for the live chat team select; see [livechat.md](livechat.md) |
 
 ## CI (Phase 3)
 

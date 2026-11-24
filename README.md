@@ -61,6 +61,7 @@ You need a VPS with 2 GB of RAM or more, Docker with Compose, ports 25, 80, 443,
 - [Install](docs/install.md)
 - [Architecture](docs/architecture.md)
 - [Integrations](docs/integrations.md): Cloudflare, Libredesk, branding and updates
+- [Live chat](docs/livechat.md): pre-chat form, menu, teams and offline handling
 - [UI](docs/ui.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md): versions and commits
