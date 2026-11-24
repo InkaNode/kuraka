@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 15:53:55 -0500
+Subject: [PATCH] fix(livechat): hide ended chats from continue and reopen them
+ when an agent replies
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: A resolved or closed chat no longer shows as "Continue your conversation" in the widget, and an agent reply reopens it so the visitor sees it open again.
+Kuraka-Adds-Es: Un chat resuelto o cerrado ya no aparece como "Continúa tu conversación" en el chat de la web, y si un agente responde se vuelve a abrir para el visitante.
+Kuraka-Missing-En: The widget offers to continue chats that already ended, and an agent reply does not reopen them for the visitor.
+Kuraka-Missing-Es: El chat de la web ofrece continuar chats que ya terminaron, y si un agente responde no se vuelven a abrir para el visitante.
+---
+ cmd/kuraka.go                                     | 11 +++++++++++
+ cmd/messages.go                                   |  1 +
+ frontend/apps/widget/src/App.vue                  |  4 ++--
+ frontend/apps/widget/src/store/chat.js            |  5 +++++
+ frontend/apps/widget/src/views/HomeView.vue       | 10 ++--------
+ frontend/apps/widget/src/websocket.status.test.js | 12 ++++++++++++
+ 6 files changed, 33 insertions(+), 10 deletions(-)
+
+diff --git a/cmd/kuraka.go b/cmd/kuraka.go
+index 71aef450..e3443baf 100644
+--- a/cmd/kuraka.go
++++ b/cmd/kuraka.go
+@@ -13,6 +13,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/envelope"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
+ 	"github.com/abhinavxd/libredesk/internal/kuraka"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ 	"github.com/zerodha/fastglue"
+ )
+ 
+@@ -193,3 +194,13 @@ func startLiveChat(app *App, conversationUUID string, teamID int, waiting bool)
+ 		}
+ 	}
+ }
++
++// reopenEndedLiveChat reopens a resolved or closed live chat when an agent replies, so the visitor sees it open again.
++func reopenEndedLiveChat(app *App, conv *cmodels.Conversation, channel string, actor umodels.User) {
++	if channel != livechat.ChannelLiveChat || (conv.Status.String != cmodels.StatusResolved && conv.Status.String != cmodels.StatusClosed) {
++		return
++	}
++	if _, err := app.conversation.ReOpenConversation(conv.UUID, actor); err != nil {
++		app.lo.Error("error reopening live chat after agent reply", "uuid", conv.UUID, "error", err)
++	}
++}
+diff --git a/cmd/messages.go b/cmd/messages.go
+index afad1bda..961de7f9 100644
+--- a/cmd/messages.go
++++ b/cmd/messages.go
+@@ -293,6 +293,7 @@ func handleSendMessage(r *fastglue.Request) error {
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
++	reopenEndedLiveChat(app, conv, inbox.Channel, user)
+ 	markAssignmentNotificationRead(app, conv, user)
+ 	resolveQuotedCIDs(app, &message)
+ 	resolveAttachmentCIDs(&message, rootURL)
+diff --git a/frontend/apps/widget/src/App.vue b/frontend/apps/widget/src/App.vue
+index 1ccf75a8..72d3f1ca 100644
+--- a/frontend/apps/widget/src/App.vue
++++ b/frontend/apps/widget/src/App.vue
+@@ -87,9 +87,9 @@ const signalWidgetLoaded = async () => {
+ 
+ const fetchInitialConversations = async () => {
+   const success = await chatStore.fetchConversations()
+-  if (success && chatStore.hasConversations) {
++  if (success && chatStore.activeConversation) {
+     try {
+-      await chatStore.loadConversation(chatStore.getConversations[0].uuid)
++      await chatStore.loadConversation(chatStore.activeConversation.uuid)
+     } catch { /* non-blocking */ }
+   }
+   const audience = userStore.isVisitor ? widgetStore.config?.visitors : widgetStore.config?.users
+diff --git a/frontend/apps/widget/src/store/chat.js b/frontend/apps/widget/src/store/chat.js
+index 4621cab7..e8b17750 100644
+--- a/frontend/apps/widget/src/store/chat.js
++++ b/frontend/apps/widget/src/store/chat.js
+@@ -42,6 +42,10 @@ export const useChatStore = defineStore('chat', () => {
+     }
+     return []
+   })
++  // Most recent chat that is not resolved or closed, offered as "Continue your conversation".
++  const activeConversation = computed(
++    () => getConversations.value.find((c) => !['Resolved', 'Closed'].includes(c.status)) || null
++  )
+ 
+   const updateConversationListLastMessage = (
+     conversationUUID,
+@@ -284,6 +288,7 @@ export const useChatStore = defineStore('chat', () => {
+     getCurrentConversationLastMessage,
+     hasConversations,
+     getConversations,
++    activeConversation,
+ 
+     addMessageToConversation,
+     addPendingMessage,
+diff --git a/frontend/apps/widget/src/views/HomeView.vue b/frontend/apps/widget/src/views/HomeView.vue
+index 0bc4a946..f97e0ed4 100644
+--- a/frontend/apps/widget/src/views/HomeView.vue
++++ b/frontend/apps/widget/src/views/HomeView.vue
+@@ -12,8 +12,8 @@
+     >
+       <HomeHeader ref="headerRef" :config="config">
+         <RecentConversationCard
+-          v-if="mostRecentConversation"
+-          :conversation="mostRecentConversation"
++          v-if="chatStore.activeConversation"
++          :conversation="chatStore.activeConversation"
+         />
+         <StartConversationButton
+           v-else
+@@ -60,11 +60,5 @@ const homeItems = computed(() =>
+   (config.value.home_apps || []).filter((item) => item.type !== 'help' || help.available)
+ )
+ 
+-const mostRecentConversation = computed(() => {
+-  const conversations = chatStore.getConversations
+-  if (!conversations || conversations.length === 0) return null
+-  // Get the most recent conversation (already sorted by last_message.created_at in the store)
+-  return conversations[0]
+-})
+ 
+ </script>
+diff --git a/frontend/apps/widget/src/websocket.status.test.js b/frontend/apps/widget/src/websocket.status.test.js
+index 4fe393a6..2b767997 100644
+--- a/frontend/apps/widget/src/websocket.status.test.js
++++ b/frontend/apps/widget/src/websocket.status.test.js
+@@ -47,4 +47,16 @@ describe('Widget websocket conversation status', () => {
+     expect(chatStore.currentConversation.status).toBe('Open')
+     expect(chatStore.conversations.find((c) => c.uuid === 'convo-2').status).toBe('Resolved')
+   })
++
++  test('offers only open chats to continue, and again when reopened', () => {
++    chatStore.conversations[0].last_message = { created_at: '2026-01-02T00:00:00Z' }
++    chatStore.conversations[1].last_message = { created_at: '2026-01-01T00:00:00Z' }
++    expect(chatStore.activeConversation.uuid).toBe('convo-1')
++    receive({ uuid: 'convo-1', status: 'Closed' })
++    expect(chatStore.activeConversation.uuid).toBe('convo-2')
++    receive({ uuid: 'convo-2', status: 'Resolved' })
++    expect(chatStore.activeConversation).toBeNull()
++    receive({ uuid: 'convo-1', status: 'Open' })
++    expect(chatStore.activeConversation.uuid).toBe('convo-1')
++  })
+ })
