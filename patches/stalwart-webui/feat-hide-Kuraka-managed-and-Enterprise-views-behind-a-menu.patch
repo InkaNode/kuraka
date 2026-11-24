@@ -15,9 +15,11 @@ Kuraka-Adds-Es: Un interruptor en el menú oculta del menú y la búsqueda de St
 ---
  src/components/layout/TopBar.tsx | 10 +++++++++-
  src/hooks/useGlobalSearch.ts     |  3 +++
+ src/i18n/en.json                 |  3 +++
+ src/i18n/es.json                 |  3 +++
  src/lib/kuraka.ts                | 34 ++++++++++++++++++++++++++++++++
  src/lib/layout.ts                |  2 ++
- 4 files changed, 48 insertions(+), 1 deletion(-)
+ 6 files changed, 54 insertions(+), 1 deletion(-)
  create mode 100644 src/lib/kuraka.ts
 
 diff --git a/src/components/layout/TopBar.tsx b/src/components/layout/TopBar.tsx
@@ -83,6 +85,32 @@ index e9b084e..fa8f687 100644
        return hasObjectPermission(
          resolved.permissionPrefix,
          isCreateOnly(schema, resolved.permissionPrefix) ? 'Create' : 'Get',
+diff --git a/src/i18n/en.json b/src/i18n/en.json
+index 6b2917e..498961f 100644
+--- a/src/i18n/en.json
++++ b/src/i18n/en.json
+@@ -763,5 +763,8 @@
+     "search": "Search",
+     "searchLabel": "Search {{label}}",
+     "noMatch": "No entries match “{{search}}”."
++  },
++  "kuraka": {
++    "showAll": "Show Kuraka and Enterprise items"
+   }
+ }
+diff --git a/src/i18n/es.json b/src/i18n/es.json
+index 97bfe56..bddf44b 100644
+--- a/src/i18n/es.json
++++ b/src/i18n/es.json
+@@ -763,5 +763,8 @@
+     "search": "Buscar",
+     "searchLabel": "Buscar {{label}}",
+     "noMatch": "Ninguna entrada coincide con “{{search}}”."
++  },
++  "kuraka": {
++    "showAll": "Mostrar elementos de Kuraka y Enterprise"
+   }
+ }
 diff --git a/src/lib/kuraka.ts b/src/lib/kuraka.ts
 new file mode 100644
 index 0000000..bef7dfe
@@ -124,7 +152,7 @@ index 0000000..bef7dfe
 +  return !showAllViews() && (enterprise || KURAKA_VIEWS.has(viewName));
 +}
 diff --git a/src/lib/layout.ts b/src/lib/layout.ts
-index f1c6cd7..915a3e0 100644
+index 83f4358..226f9c5 100644
 --- a/src/lib/layout.ts
 +++ b/src/lib/layout.ts
 @@ -7,6 +7,7 @@
@@ -132,10 +160,10 @@ index f1c6cd7..915a3e0 100644
  import { resolveObject } from '@/lib/schemaResolver';
  import { isCommunityEdition, isCreateOnly } from '@/lib/permissions';
 +import { isHiddenView } from '@/lib/kuraka';
+ import { CUSTOM_COMPONENT_PREFIX, matchRoutePage } from '@/extensions/pages';
  
  export type CanGet = (permissionPrefix: string) => boolean;
- export type HasPermission = (permission: string) => boolean;
-@@ -62,6 +63,7 @@ function checkSpecialLink(
+@@ -37,6 +38,7 @@ function checkSpecialLink(
  }
  
  export function isLinkVisible(schema: Schema, viewName: string, canGet: CanGet, hasPerm?: HasPermission): boolean {
