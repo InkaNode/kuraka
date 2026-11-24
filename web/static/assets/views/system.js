@@ -56,8 +56,9 @@ export async function systemView() {
         h('p', { class: 'muted' }, t(skipped ? 'system.patches.intro' : 'system.patches.help')),
         h('ul', { class: 'patch-list stack gap-1' }, series.map(patch => h('li', { class: 'row gap-1' },
           patch.skipped ? badge(t(`system.patches.${patch.severity}`), patch.severity === 'urgent' ? 'danger' : 'warn') : badge(t('system.patches.active'), 'ok'),
-          h('span', { class: 'stack grow' }, patch.title,
-            h('span', { class: 'muted' }, getLang() === 'en' ? patch.adds_en : patch.adds_es),
+          // Titles are English commit subjects, so Spanish shows only what the patch adds.
+          h('span', { class: 'stack grow' }, getLang() === 'en' ? patch.title : patch.adds_es,
+            getLang() === 'en' ? h('span', { class: 'muted' }, patch.adds_en) : null,
             patch.skipped ? h('span', { class: 'help' }, getLang() === 'en' ? patch.missing_en : patch.missing_es) : null))))));
   }
 
