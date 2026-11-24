@@ -219,7 +219,7 @@ func TestDeskBrandingPush(t *testing.T) {
 	if desks := out["desks"].([]any); len(desks) != 2 || desks[0].(map[string]any)["url"] != "http://desk.test" || desks[0].(map[string]any)["error"] != nil {
 		t.Fatalf("desks: %v", out)
 	}
-	if len(hd.branding) != 2 || hd.branding[0] != [3]string{"Inka", logo, ""} {
+	if len(hd.branding) != 2 || hd.branding[0] != [4]string{"Inka", logo, "", ""} {
 		t.Fatalf("pushed: %v", hd.branding)
 	}
 	hd.branding, hd.brandingErr = nil, errors.New("down")
@@ -227,12 +227,29 @@ func TestDeskBrandingPush(t *testing.T) {
 	if desks := out["desks"].([]any); len(desks) != 1 || desks[0].(map[string]any)["error"] != "Helpdesk branding failed" {
 		t.Fatalf("failed push: %v", out)
 	}
-	if len(hd.branding) != 1 || hd.branding[0] != [3]string{"Acme Desk", logo, logo} {
+	if len(hd.branding) != 1 || hd.branding[0] != [4]string{"Acme Desk", logo, logo, ""} {
 		t.Fatalf("tenant push: %v", hd.branding)
 	}
 	hd.branding, hd.brandingErr = nil, nil
 	h.root.do("POST", fmt.Sprintf("/helpdesks/%d/activate", pending.ID), nil, 200)
-	if len(hd.branding) != 1 || hd.branding[0] != [3]string{"Acme Desk", logo, logo} {
+	if len(hd.branding) != 1 || hd.branding[0] != [4]string{"Acme Desk", logo, logo, ""} {
 		t.Fatalf("activation push: %v", hd.branding)
+	}
+}
+
+func TestDeskRootURLPush(t *testing.T) {
+	h, _, hd := integrations(t)
+	tenant := h.tenant("Plain")
+	enc, err := h.s.box.Seal([]byte("setup-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desk, err := h.st.CreateHelpdesk(context.Background(), store.Helpdesk{TenantID: tenant, Kind: "libredesk", Name: "desk.plain.test", URL: "http://kuraka-plain-desk:9000", Status: "pending", SetupSecretEnc: enc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.root.do("POST", fmt.Sprintf("/helpdesks/%d/activate", desk.ID), nil, 200)
+	if len(hd.branding) != 1 || hd.branding[0] != [4]string{"", "", "", "https://desk.plain.test"} {
+		t.Fatalf("root URL push: %v", hd.branding)
 	}
 }

@@ -121,17 +121,17 @@ type fakeHelpdesk struct {
 	syncIDs                       []int64
 	syncPasswords                 []string
 	syncErr                       error
-	branding                      [][3]string
+	branding                      [][4]string
 	brandingErr                   error
 	liveChats                     map[int64]libredesk.LiveChat
 	liveChatLanguage              string
 	liveChatErr                   error
 }
 
-func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon string) error {
+func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon, root string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.branding = append(f.branding, [3]string{name, logo, favicon})
+	f.branding = append(f.branding, [4]string{name, logo, favicon, root})
 	return f.brandingErr
 }
 

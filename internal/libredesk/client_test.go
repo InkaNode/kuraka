@@ -432,14 +432,14 @@ func TestApplyBranding(t *testing.T) {
 			t.Errorf("got %s %s", r.Method, r.URL.Path)
 		}
 	})
-	if err := c.ApplyBranding(context.Background(), "Acme Desk", "https://kuraka.test/branding/assets/a", ""); err != nil {
+	if err := c.ApplyBranding(context.Background(), "Acme Desk", "https://kuraka.test/branding/assets/a", "", "https://desk.acme.test"); err != nil {
 		t.Fatalf("ApplyBranding: %v", err)
 	}
 	want := map[string]any{
 		"app.site_name":            "Acme Desk",
 		"app.logo_url":             "https://kuraka.test/branding/assets/a",
 		"app.favicon_url":          "old.ico",
-		"app.root_url":             "https://desk.example.com",
+		"app.root_url":             "https://desk.acme.test",
 		"app.lang":                 "en",
 		"app.max_file_upload_size": float64(20),
 	}

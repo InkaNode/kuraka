@@ -165,10 +165,10 @@ func (c *Client) SyncAgentPassword(ctx context.Context, id int64, password strin
 	}, nil)
 }
 
-// ApplyBranding sets the site name, logo URL and favicon URL; empty values
-// keep the current ones. v2.9.2 replaces every general setting from the PUT
-// body, so the current settings are sent back without the read-only keys.
-func (c *Client) ApplyBranding(ctx context.Context, name, logoURL, faviconURL string) error {
+// ApplyBranding sets the site name, logo URL, favicon URL and Root URL; empty
+// values keep the current ones. v2.9.2 replaces every general setting from the
+// PUT body, so the current settings are sent back without the read-only keys.
+func (c *Client) ApplyBranding(ctx context.Context, name, logoURL, faviconURL, rootURL string) error {
 	const path = "/api/v1/settings/general"
 	var settings map[string]json.RawMessage
 	if err := c.do(ctx, http.MethodGet, path, nil, &settings); err != nil {
@@ -177,7 +177,7 @@ func (c *Client) ApplyBranding(ctx context.Context, name, logoURL, faviconURL st
 	if settings == nil {
 		return errors.New("libredesk: empty general settings")
 	}
-	for key, value := range map[string]string{"app.site_name": name, "app.logo_url": logoURL, "app.favicon_url": faviconURL} {
+	for key, value := range map[string]string{"app.site_name": name, "app.logo_url": logoURL, "app.favicon_url": faviconURL, "app.root_url": rootURL} {
 		if value == "" {
 			continue
 		}

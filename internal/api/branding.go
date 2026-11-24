@@ -256,18 +256,23 @@ func (s *Server) pushDeskBranding(ctx context.Context, tenant *int64) []deskBran
 	return out
 }
 
-// applyDeskBranding sends the helpdesk's resolved name, logo and favicon.
-// Nothing is sent when all three are empty, so Libredesk keeps its own.
+// applyDeskBranding sends the helpdesk's resolved name, logo and favicon, and
+// the public address of a helpdesk Kuraka provisioned as its Root URL.
+// Nothing is sent when all are empty, so Libredesk keeps its own.
 func (s *Server) applyDeskBranding(ctx context.Context, h store.Helpdesk) (bool, error) {
 	b, err := s.resolvedBranding(ctx, "desk", &h.TenantID)
-	if err != nil || b.Name == "" && b.Logo == "" && b.Icon == "" {
+	root := ""
+	if deskContainer(h) != "" {
+		root = deskURL(h)
+	}
+	if err != nil || b.Name == "" && b.Logo == "" && b.Icon == "" && root == "" {
 		return false, err
 	}
 	client, err := s.helpdeskClient(h)
 	if err != nil {
 		return true, err
 	}
-	return true, client.ApplyBranding(ctx, b.Name, b.Logo, b.Icon)
+	return true, client.ApplyBranding(ctx, b.Name, b.Logo, b.Icon, root)
 }
 
 // createBrandingAsset stores an image sent as a base64 data URL. The
