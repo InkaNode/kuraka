@@ -10,9 +10,16 @@ How a live chat created in Kuraka (domain page, **Add live chat**) behaves, and 
 4. The first message creates the conversation in the helpdesk. With a **team** set, it goes to that team and an agent gets it automatically.
 5. The chat ends when the visitor or an agent ends it, or after **inactivity**.
 
+## Look
+
+- **Theme:** light, dark, or as the visitor's device. New chats are light.
+- **Chat button icon:** the image on the round button. Left empty, it is your brand icon from Kuraka branding.
+
 ## Form before the chat
 
 The name is always asked and required. Last name, email and phone can each be shown and made required; new chats show email and phone as optional.
+
+When the chat can wait (**Keep the message waiting** or **Let visitors choose**), the email is always shown, and it becomes required when no agent is available, so the team can answer later. Visitors who already gave it are not asked again.
 
 The last name is a contact custom attribute in Libredesk (key `last_name`). Kuraka creates it the first time a chat shows the field, and it appears on the contact in the helpdesk. Fields added in Libredesk (other custom attributes) are kept and shown after Kuraka's fields.
 
