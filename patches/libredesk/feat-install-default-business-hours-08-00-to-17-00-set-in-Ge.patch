@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Mon, 23 Nov 2026 21:21:32 -0500
+Subject: [PATCH] feat(install): default business hours 08:00 to 17:00, set in
+ General
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: New helpdesks start with business hours Monday to Friday 08:00 to 17:00, already chosen in General.
+Kuraka-Adds-Es: Los helpdesks nuevos empiezan con horario de lunes a viernes de 08:00 a 17:00, ya elegido en General.
+Kuraka-Missing-En: New helpdesks start with business hours 09:00 to 17:00 that are not chosen in General, so business-hours conditions never match until an admin picks them.
+Kuraka-Missing-Es: Los helpdesks nuevos empiezan con un horario de 09:00 a 17:00 que no está elegido en General, así que las condiciones de horario laboral nunca se cumplen hasta que un admin lo elija.
+---
+ schema.sql | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/schema.sql b/schema.sql
+index e77f9ce1..22078eea 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -1119,7 +1119,7 @@ VALUES
+     ('app.max_file_upload_size', '20'::jsonb),
+     ('app.allowed_file_upload_extensions', '["*"]'::jsonb),
+ 	('app.timezone', '"Asia/Kolkata"'::jsonb),
+-	('app.business_hours_id', '""'::jsonb),
++	('app.business_hours_id', '"1"'::jsonb),
+ 	('app.show_conversation_subject', 'true'::jsonb),
+ 	('app.activity_collapse_after', '2'::jsonb),
+ 	('app.keep_assignee_on_team_change', '"off"'::jsonb),
+@@ -1429,7 +1429,7 @@ VALUES (
+ 
+ -- Default business hours
+ INSERT INTO business_hours ("name", description, is_always_open, hours, holidays) VALUES
+-('Default', 'Default business hours, Monday to Friday, 09:00 to 17:00.', false, '{"Monday": {"open": "09:00", "close": "17:00"}, "Tuesday": {"open": "09:00", "close": "17:00"}, "Wednesday": {"open": "09:00", "close": "17:00"}, "Thursday": {"open": "09:00", "close": "17:00"}, "Friday": {"open": "09:00", "close": "17:00"}}'::jsonb, '[]'::jsonb);
++('Default', 'Default business hours, Monday to Friday, 08:00 to 17:00.', false, '{"Monday": {"open": "08:00", "close": "17:00"}, "Tuesday": {"open": "08:00", "close": "17:00"}, "Wednesday": {"open": "08:00", "close": "17:00"}, "Thursday": {"open": "08:00", "close": "17:00"}, "Friday": {"open": "08:00", "close": "17:00"}}'::jsonb, '[]'::jsonb);
+ 
+ -- Default SLA policy
+ INSERT INTO sla_policies ("name", description, first_response_time, resolution_time, next_response_time, notifications) VALUES
