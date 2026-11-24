@@ -40,7 +40,7 @@
 Kuraka is one Go binary with an embedded SQLite database, running next to Stalwart, Caddy and the Libredesk helpdesks on one server with Docker Compose.
 
 - **Stalwart** is used as released. Kuraka talks to it only through its public JMAP management API and keeps Stalwart's admin interface private.
-- **The Stalwart web interface and Libredesk** are built from their upstream releases plus a few small patches in [`patches/`](patches) (status icons, an email thread view, an inbox switcher, more automation conditions). Upstream code is never copied into this repository, and each patch says what users lose if it stops applying.
+- **The Stalwart web interface and Libredesk** are built from their upstream releases plus a few small patches in [`patches/`](patches) (Spanish translations, status icons, an email thread view, an inbox switcher, more automation conditions, teams that keep the assigned agent). Upstream code is never copied into this repository, and each patch says what users lose if it stops applying.
 - **Updates:** The System page shows the upstream version of each part. A new upstream release shows as a new version; a Kuraka release that only changes the patches shows as **New patches**. A daily job opens a pull request for every new upstream release, and patches that no longer apply are skipped and listed on the System page until they are fixed.
 - **Security:** Kuraka never gets the Docker socket. Updates are applied by a small timer on the host that accepts only a validated version, backs up first and rolls back on failure.
 
