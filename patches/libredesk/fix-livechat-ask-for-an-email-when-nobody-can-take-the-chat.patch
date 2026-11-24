@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 01:40:13 -0500
+Subject: [PATCH] fix(livechat): ask for an email when nobody can take the chat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: When no agent is available, the chat asks for the visitor's email so the team can answer later, and the email-only mode shows its own notice.
+Kuraka-Adds-Es: Cuando no hay agentes disponibles, el chat pide el correo del visitante para poder responderle después, y el modo solo correo muestra su propio aviso.
+Kuraka-Missing-En: Chats left waiting can arrive without an email, and the email-only mode tells visitors to leave a message they cannot leave.
+Kuraka-Missing-Es: Los chats en espera pueden llegar sin correo, y el modo solo correo pide dejar un mensaje que no se puede dejar.
+---
+ cmd/chat.go                                   |  5 ++++
+ cmd/kuraka.go                                 | 26 +++++++++++++++++++
+ .../apps/widget/src/components/ChatMenu.vue   |  4 ++-
+ .../widget/src/components/PreChatForm.vue     | 14 ++++++++--
+ 4 files changed, 46 insertions(+), 3 deletions(-)
+
+diff --git a/cmd/chat.go b/cmd/chat.go
+index 174eaa41..656c8932 100644
+--- a/cmd/chat.go
++++ b/cmd/chat.go
+@@ -231,6 +231,11 @@ func handleChatInit(r *fastglue.Request) error {
+ 
+ 	// Check if user is already authenticated (has session token).
+ 	contactID, _ = getWidgetContactID(r)
++	if waiting {
++		if err := checkWaitingEmail(app, initialConfig, req.FormData, contactID); err != nil {
++			return sendErrorEnvelope(r, err)
++		}
++	}
+ 	if contactID > 0 {
+ 		// Returning user (visitor or contact) with session token.
+ 		// Custom attributes from JWT were already saved during /auth/exchange.
+diff --git a/cmd/kuraka.go b/cmd/kuraka.go
+index 4ffe227d..71aef450 100644
+--- a/cmd/kuraka.go
++++ b/cmd/kuraka.go
+@@ -2,7 +2,9 @@ package main
+ 
+ import (
+ 	"encoding/json"
++	"slices"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	bhmodels "github.com/abhinavxd/libredesk/internal/business_hours/models"
+@@ -131,6 +133,30 @@ func chatInitWaits(app *App, config livechat.Config) (bool, error) {
+ 	return true, nil
+ }
+ 
++// checkWaitingEmail asks for an email before a Waiting chat starts, so the team can answer later.
++// Only when the pre-chat form shows the email field; a returning contact's saved email counts.
++func checkWaitingEmail(app *App, config livechat.Config, formData map[string]any, contactID int) error {
++	asksEmail := config.PreChatForm.Enabled && slices.ContainsFunc(config.PreChatForm.Fields, func(f livechat.PreChatFormField) bool {
++		return f.Enabled && f.Key == "email"
++	})
++	if !asksEmail {
++		return nil
++	}
++	if email, _ := formData["email"].(string); strings.TrimSpace(email) != "" {
++		return nil
++	}
++	if contactID > 0 {
++		contact, err := app.user.GetContactOrVisitor(contactID, "")
++		if err != nil {
++			return err
++		}
++		if contact.Email.String != "" {
++			return nil
++		}
++	}
++	return envelope.NewError(envelope.InputError, app.i18n.Ts("globals.messages.required", "name", "{globals.terms.email}"), nil)
++}
++
+ // validateLiveChatKuraka checks the team_id, menu and offline live chat config keys.
+ func validateLiveChatKuraka(app *App, config livechat.Config) error {
+ 	if field := config.InvalidKurakaField(); field != "" {
+diff --git a/frontend/apps/widget/src/components/ChatMenu.vue b/frontend/apps/widget/src/components/ChatMenu.vue
+index 3d7e3841..7b2fbcbf 100644
+--- a/frontend/apps/widget/src/components/ChatMenu.vue
++++ b/frontend/apps/widget/src/components/ChatMenu.vue
+@@ -45,7 +45,9 @@
+       </template>
+ 
+       <template v-else>
+-        <NoticeBanner :noticeText="$t('widget.menu.noAgents')" />
++        <NoticeBanner
++          :noticeText="$t(menuState.offline === 'email' ? 'widget.noAgentsEmail' : 'widget.menu.noAgents')"
++        />
+         <div class="flex flex-wrap gap-2">
+           <Button
+             v-if="menuState.offline === 'both'"
+diff --git a/frontend/apps/widget/src/components/PreChatForm.vue b/frontend/apps/widget/src/components/PreChatForm.vue
+index 2f6dcbca..36915bc1 100644
+--- a/frontend/apps/widget/src/components/PreChatForm.vue
++++ b/frontend/apps/widget/src/components/PreChatForm.vue
+@@ -281,6 +281,7 @@ import {
+ import PhoneNumberInput from '@shared-ui/components/PhoneNumberInput.vue'
+ import { countryCodeKey, defaultCountryCode } from '@shared-ui/utils/phone.js'
+ import { useWidgetStore } from '@widget/store/widget.js'
++import { menuState } from '@widget/composables/useChatMenu.js'
+ import { useChatStore } from '@widget/store/chat.js'
+ import { useUserStore } from '@widget/store/user.js'
+ import { resolvePreChatForm } from '@widget/utils/preChatForm.js'
+@@ -327,9 +328,18 @@ const formFields = computed(() => config.value.fields || [])
+ const sortedFields = computed(() => {
+   let fields = formFields.value.filter((field) => field.enabled)
+ 
+-  // If user has session token, exclude default name, email and phone fields and Kuraka's last name
++  // If user has session token, exclude default name, email and phone fields and Kuraka's last name.
++  // With nobody available the chat waits, so the email stays: required for new visitors,
++  // optional for returning ones (the server uses their saved email).
++  const waiting = ['wait', 'both'].includes(menuState.offline)
+   if (props.excludeDefaultFields) {
+-    fields = fields.filter((field) => !['name', 'last_name', 'email', 'phone'].includes(field.key))
++    fields = fields.filter(
++      (field) =>
++        !['name', 'last_name', 'email', 'phone'].includes(field.key) ||
++        (waiting && field.key === 'email')
++    )
++  } else if (waiting) {
++    fields = fields.map((field) => (field.key === 'email' ? { ...field, required: true } : field))
+   }
+ 
+   return fields.sort((a, b) => (a.order || 0) - (b.order || 0))

@@ -26,3 +26,4 @@ feat-livechat-close-chats-after-visitor-inactivity.patch
 feat-livechat-menu-with-answers-before-talking-to-an-agent.patch
 feat-livechat-check-agents-and-business-hours-Waiting-status.patch
 fix-livechat-do-not-ask-returning-visitors-for-their-last-na.patch
+fix-livechat-ask-for-an-email-when-nobody-can-take-the-chat.patch
