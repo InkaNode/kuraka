@@ -45,6 +45,8 @@ type HelpdeskAPI interface {
 	CreateLiveChat(context.Context, libredesk.LiveChat, string) (int64, string, error)
 	GetLiveChat(context.Context, int64) (libredesk.LiveChat, error)
 	UpdateLiveChat(context.Context, int64, libredesk.LiveChat) error
+	ListTeams(context.Context) ([]libredesk.Team, error)
+	CreateTeam(context.Context, string) (int64, error)
 	RootURL(context.Context) (string, error)
 }
 

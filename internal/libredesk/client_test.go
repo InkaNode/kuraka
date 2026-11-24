@@ -483,6 +483,12 @@ func TestLiveChat(t *testing.T) {
 	}
 	cfg := created["config"].(map[string]any)
 	dark := cfg["branding"].(map[string]any)["dark"].(map[string]any)
+	fields := cfg["prechat_form"].(map[string]any)["fields"].([]any)
+	if len(fields) != 3 || fields[0].(map[string]any)["label"] != "Nombre" || fields[1].(map[string]any)["key"] != "email" || fields[1].(map[string]any)["required"] != false ||
+		cfg["menu"].(map[string]any)["enabled"] != true || cfg["offline"].(map[string]any)["mode"] != "wait" || cfg["hide_agent_names"] != true ||
+		cfg["inactivity_close"] != "30m" || cfg["team_id"] != nil || cfg["visitors"].(map[string]any)["prevent_reply_to_closed_conversation"] != true {
+		t.Fatalf("create flow: %v", cfg)
+	}
 	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "¿Cómo podemos ayudarte?" ||
 		cfg["launcher"].(map[string]any)["position"] != "left" || dark["colors"].(map[string]any)["primary"] != "#112233" ||
 		!reflect.DeepEqual(cfg["trusted_domains"], []any{"*.shop.test"}) {
@@ -497,8 +503,13 @@ func TestLiveChat(t *testing.T) {
 		cfg["home_apps"] == nil || cfg["greeting_message"] != "Hola" || cfg["trusted_domains"] != nil {
 		t.Fatalf("update body: %v", updated)
 	}
+	if cfg["menu"] != nil || cfg["prechat_form"] != nil {
+		t.Fatalf("nil flow settings changed: %v", cfg)
+	}
 	got, err := c.GetLiveChat(ctx, 9)
-	if err != nil || got.Name != "Old" || got.Position != "right" || got.Color != "#000000" || got.Domains == nil {
+	if err != nil || got.Name != "Old" || got.Position != "right" || got.Color != "#000000" || got.Domains == nil ||
+		got.Menu.Enabled || got.Menu.Items == nil || got.Offline.Mode != "" || *got.HideAgentNames || *got.InactivityClose != 0 || *got.TeamID != 0 ||
+		got.PreChat.Enabled || !got.PreChat.Email.Shown {
 		t.Fatalf("GetLiveChat = %+v %v", got, err)
 	}
 	if _, err := c.GetLiveChat(ctx, 8); !errors.Is(err, ErrNotFound) {
@@ -506,5 +517,78 @@ func TestLiveChat(t *testing.T) {
 	}
 	if root, err := c.RootURL(ctx); err != nil || root != "https://desk.test" {
 		t.Fatalf("RootURL = %q %v", root, err)
+	}
+}
+
+func TestLiveChatFlow(t *testing.T) {
+	var updated, attribute, team map[string]any
+	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		checkAuth(t, r)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/inboxes/9":
+			io.WriteString(w, `{"status":"success","data":{"id":9,"name":"Chat","channel":"livechat","config":{"language":"en-US","menu":{"enabled":true,"items":[{"label":"A","answer":"B"}]},"inactivity_close":"2h","team_id":3,"hide_agent_names":true,"offline":{"mode":"both","email":"a@b.test"},
+				"prechat_form":{"enabled":true,"title":"Hi","fields":[{"key":"company","custom_attribute_id":5},{"key":"email","enabled":true,"required":true},{"key":"name","enabled":true,"required":true}],"visitors":{"enabled":true,"fields":[{"key":"phone","enabled":false}]}}}}}`)
+		case "PUT /api/v1/inboxes/9":
+			json.NewDecoder(r.Body).Decode(&updated)
+			io.WriteString(w, `{"status":"success","data":{}}`)
+		case "GET /api/v1/custom-attributes":
+			if r.URL.Query().Get("applies_to") != "contact" {
+				t.Errorf("custom attributes query: %s", r.URL.RawQuery)
+			}
+			io.WriteString(w, `{"status":"success","data":[{"id":5,"key":"company"}]}`)
+		case "POST /api/v1/custom-attributes":
+			json.NewDecoder(r.Body).Decode(&attribute)
+			io.WriteString(w, `{"status":"success","data":{"id":6}}`)
+		case "GET /api/v1/teams":
+			io.WriteString(w, `{"status":"success","data":[{"id":3,"name":"Ventas","conversation_assignment_type":"Manual"},{"id":4,"name":"Soporte","conversation_assignment_type":"Round robin"}]}`)
+		case "GET /api/v1/agents":
+			io.WriteString(w, `{"status":"success","data":[{"id":1,"enabled":true},{"id":2,"enabled":false}]}`)
+		case "GET /api/v1/agents/1":
+			io.WriteString(w, `{"status":"success","data":{"id":1,"teams":[{"id":3}]}}`)
+		case "POST /api/v1/teams":
+			json.NewDecoder(r.Body).Decode(&team)
+			io.WriteString(w, `{"status":"success","data":{"id":7,"name":"Chat Web"}}`)
+		default:
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+	})
+	ctx := context.Background()
+	got, err := c.GetLiveChat(ctx, 9)
+	if err != nil || !got.Menu.Enabled || got.Menu.Items[0].Answer != "B" || *got.InactivityClose != 120 || *got.TeamID != 3 || !*got.HideAgentNames ||
+		got.Offline.Email != "a@b.test" || !got.PreChat.Enabled || got.PreChat.Phone.Shown || !got.PreChat.Email.Shown {
+		t.Fatalf("GetLiveChat = %+v %v", got, err)
+	}
+	off := 0
+	got.PreChat = &PreChatForm{Enabled: true, LastName: FormField{Shown: true}, Email: FormField{Shown: true, Required: true}}
+	got.Offline, got.InactivityClose = &Offline{}, &off
+	if err := c.UpdateLiveChat(ctx, 9, got); err != nil {
+		t.Fatal(err)
+	}
+	if attribute["key"] != "last_name" || attribute["applies_to"] != "contact" || attribute["name"] != "Last name" {
+		t.Fatalf("attribute: %v", attribute)
+	}
+	cfg := updated["config"].(map[string]any)
+	form := cfg["prechat_form"].(map[string]any)
+	keys := func(fields any) (out []string) {
+		for _, f := range fields.([]any) {
+			out = append(out, f.(map[string]any)["key"].(string))
+		}
+		return out
+	}
+	visitors := form["visitors"].(map[string]any)["fields"].([]any)
+	last := form["fields"].([]any)[1].(map[string]any)
+	if form["title"] != "Hi" || !reflect.DeepEqual(keys(form["fields"]), []string{"name", "last_name", "email", "phone", "company"}) ||
+		!reflect.DeepEqual(keys(visitors), []string{"name", "last_name", "email", "phone"}) || last["custom_attribute_id"] != 6.0 || last["order"] != 2.0 ||
+		visitors[2].(map[string]any)["required"] != true || cfg["offline"] != nil || cfg["inactivity_close"] != "" || cfg["menu"].(map[string]any)["items"] == nil {
+		t.Fatalf("update flow: %v", cfg)
+	}
+
+	teams, err := c.ListTeams(ctx)
+	if err != nil || len(teams) != 2 || teams[0].Members != 1 || teams[1].Members != 0 || teams[0].AssignmentType != "Manual" {
+		t.Fatalf("ListTeams = %+v %v", teams, err)
+	}
+	if id, err := c.CreateTeam(ctx, "Chat Web"); err != nil || id != 7 || team["name"] != "Chat Web" || team["conversation_assignment_type"] != "Round robin" ||
+		team["business_hours_id"] != nil || team["max_auto_assigned_conversations"] != 0.0 {
+		t.Fatalf("CreateTeam = %d %v %v", id, team, err)
 	}
 }

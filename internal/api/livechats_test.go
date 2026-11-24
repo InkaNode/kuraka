@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/InkaNode/kuraka/internal/libredesk"
@@ -44,6 +45,18 @@ func (f *fakeHelpdesk) UpdateLiveChat(_ context.Context, id int64, lc libredesk.
 	return nil
 }
 func (f *fakeHelpdesk) RootURL(context.Context) (string, error) { return "https://desk.example", nil }
+func (f *fakeHelpdesk) ListTeams(context.Context) ([]libredesk.Team, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.teams, nil
+}
+func (f *fakeHelpdesk) CreateTeam(_ context.Context, name string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := int64(len(f.teams) + 10)
+	f.teams = append(f.teams, libredesk.Team{ID: id, Name: name, AssignmentType: "Round robin"})
+	return id, nil
+}
 
 func TestLiveChats(t *testing.T) {
 	h, _, hd := integrations(t)
@@ -54,7 +67,13 @@ func TestLiveChats(t *testing.T) {
 	base := fmt.Sprintf("/domains/%d/livechats", da)
 	in := map[string]any{"helpdesk_id": ha, "language": "es", "name": " Ventas ", "website_url": "www.a.test", "color": "#1a2b3c", "logo_url": "", "greeting": "Hola", "position": "left"}
 
-	for field, value := range map[string]any{"name": "", "website_url": "ftp://a.test", "color": "red", "logo_url": "javascript:x", "position": "top", "allowed_domains": []string{"a*.test"}} {
+	item := map[string]string{"label": "Pedidos", "answer": "Revisa tu correo."}
+	for field, value := range map[string]any{"name": "", "website_url": "ftp://a.test", "color": "red", "logo_url": "javascript:x", "position": "top", "allowed_domains": []string{"a*.test"},
+		"menu":             map[string]any{"enabled": true, "items": slices.Repeat([]any{item}, 9)},
+		"offline":          map[string]string{"mode": "both", "email": "not-an-email"},
+		"inactivity_close": -1,
+		"team_id":          7,
+	} {
 		bad := map[string]any{}
 		for k, v := range in {
 			bad[k] = v
@@ -89,6 +108,30 @@ func TestLiveChats(t *testing.T) {
 	settings := object(t, ca.do("GET", path, nil, 200))["settings"].(map[string]any)
 	if settings["position"] != "right" || settings["logo_url"] != "https://a.test/logo.png" {
 		t.Fatalf("settings: %v", settings)
+	}
+
+	hd.teams = []libredesk.Team{{ID: 3, Name: "Ventas", AssignmentType: "Manual", Members: 2}}
+	if teams := array(t, ca.do("GET", fmt.Sprintf("/domains/%d/helpdesks/%d/teams", da, ha), nil, 200)); len(teams) != 1 {
+		t.Fatalf("teams: %v", teams)
+	}
+	cb.do("GET", fmt.Sprintf("/domains/%d/helpdesks/%d/teams", db, ha), nil, 404)
+	teamsPath := fmt.Sprintf("/domains/%d/helpdesks/%d/teams", da, ha)
+	cb.do("POST", fmt.Sprintf("/domains/%d/helpdesks/%d/teams", db, ha), map[string]string{"name": "Chat"}, 404)
+	ca.do("POST", teamsPath, map[string]string{"name": " "}, 422)
+	ca.do("POST", teamsPath, map[string]string{"name": strings.Repeat("a", 51)}, 422)
+	if team := object(t, ca.do("POST", teamsPath, map[string]string{"name": " Chat Soporte "}, 201)); team["id"] != 11.0 || hd.teams[1].Name != "Chat Soporte" {
+		t.Fatalf("created team: %v %+v", team, hd.teams)
+	}
+	edit["team_id"] = 3
+	edit["menu"] = map[string]any{"enabled": true, "items": []any{map[string]string{"label": " Pedidos ", "answer": "Revisa tu correo."}}, "agent_button_text": ""}
+	edit["offline"] = map[string]string{"mode": "email", "email": "hola@a.test"}
+	edit["prechat_form"] = map[string]any{"enabled": true, "email": map[string]bool{"shown": false, "required": true}}
+	edit["inactivity_close"] = 45
+	ca.do("PUT", path, edit, 200)
+	saved := hd.liveChats[100]
+	if *saved.TeamID != 3 || hd.teams[0].AssignmentType != "Manual" || saved.Menu.Items[0].Label != "Pedidos" || saved.Offline.Mode != "email" ||
+		saved.PreChat.Email.Required || *saved.InactivityClose != 45 {
+		t.Fatalf("flow settings: %+v", saved)
 	}
 
 	delete(hd.liveChats, 100)

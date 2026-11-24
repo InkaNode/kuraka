@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/InkaNode/kuraka/internal/authz"
@@ -25,6 +26,8 @@ func (s *Server) liveChatRoutes(route func(string, string, bool, bool, endpoint)
 	route("GET /api/v1/domains/{id}/livechats/{chat}", "livechat.get", false, false, s.liveChat)
 	route("PUT /api/v1/domains/{id}/livechats/{chat}", "livechat.update", false, false, s.updateLiveChat)
 	route("DELETE /api/v1/domains/{id}/livechats/{chat}", "livechat.delete", false, false, s.deleteLiveChat)
+	route("GET /api/v1/domains/{id}/helpdesks/{helpdesk}/teams", "livechat.teams", false, false, s.helpdeskTeams)
+	route("POST /api/v1/domains/{id}/helpdesks/{helpdesk}/teams", "livechat.teams.create", false, false, s.createHelpdeskTeam)
 }
 
 func httpURL(raw string) bool {
@@ -77,7 +80,119 @@ func cleanLiveChat(lc *libredesk.LiveChat) error {
 	case lc.Position != "left" && lc.Position != "right":
 		return invalid("position")
 	}
+	return cleanLiveChatFlow(lc)
+}
+
+// cleanLiveChatFlow validates the flow settings; nil ones are left alone.
+func cleanLiveChatFlow(lc *libredesk.LiveChat) error {
+	if p := lc.PreChat; p != nil {
+		for _, f := range []*libredesk.FormField{&p.LastName, &p.Email, &p.Phone} {
+			f.Required = f.Shown && f.Required
+		}
+	}
+	if m := lc.Menu; m != nil {
+		m.AgentButtonText = strings.TrimSpace(m.AgentButtonText)
+		if len(m.Items) > 8 || utf8.RuneCountInString(m.AgentButtonText) > 60 {
+			return invalid("menu")
+		}
+		for i := range m.Items {
+			item := &m.Items[i]
+			item.Label, item.Answer = strings.TrimSpace(item.Label), strings.TrimSpace(item.Answer)
+			if item.Label == "" || item.Answer == "" || utf8.RuneCountInString(item.Label) > 60 || utf8.RuneCountInString(item.Answer) > 1000 {
+				return invalid("menu")
+			}
+		}
+		if m.Items == nil {
+			m.Items = []libredesk.MenuItem{}
+		}
+	}
+	if lc.TeamID != nil && *lc.TeamID < 0 {
+		return invalid("team_id")
+	}
+	if o := lc.Offline; o != nil {
+		o.Email = strings.TrimSpace(o.Email)
+		switch o.Mode {
+		case "", "wait":
+			if o.Email != "" && !validEmail(o.Email) {
+				return invalid("offline_email")
+			}
+		case "both", "email":
+			if !validEmail(o.Email) {
+				return invalid("offline_email")
+			}
+		default:
+			return invalid("offline")
+		}
+	}
+	if m := lc.InactivityClose; m != nil && (*m < 0 || *m > 7*24*60) {
+		return invalid("inactivity_close")
+	}
 	return nil
+}
+
+// checkTeam makes sure the chosen team exists; its assignment is left as is,
+// as it also applies to the team's emails.
+func checkTeam(ctx context.Context, client HelpdeskAPI, lc libredesk.LiveChat) error {
+	if lc.TeamID == nil || *lc.TeamID == 0 {
+		return nil
+	}
+	teams, err := client.ListTeams(ctx)
+	if err != nil {
+		return helpdeskFailure("Teams could not be read", err)
+	}
+	if !slices.ContainsFunc(teams, func(t libredesk.Team) bool { return t.ID == *lc.TeamID }) {
+		return invalid("team_id")
+	}
+	return nil
+}
+
+// teamsClient returns the client of the domain's helpdesk in the path.
+func (s *Server) teamsClient(r *http.Request) (HelpdeskAPI, error) {
+	d, err := s.authorizedDomain(r)
+	if err != nil {
+		return nil, err
+	}
+	id, err := positiveID(r.PathValue("helpdesk"), "helpdesk")
+	if err != nil {
+		return nil, err
+	}
+	_, client, err := s.tenantHelpdesk(r.Context(), d, id)
+	return client, err
+}
+
+// createHelpdeskTeam creates a round robin team, meant for one chat.
+func (s *Server) createHelpdeskTeam(_ http.ResponseWriter, r *http.Request) (any, error) {
+	client, err := s.teamsClient(r)
+	if err != nil {
+		return nil, err
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		return nil, err
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if n := utf8.RuneCountInString(in.Name); n < 1 || n > 50 || strings.IndexFunc(in.Name, unicode.IsControl) >= 0 {
+		return nil, invalid("name")
+	}
+	id, err := client.CreateTeam(r.Context(), in.Name)
+	if err != nil {
+		return nil, helpdeskFailure("Team creation failed", err)
+	}
+	return reply{201, map[string]any{"id": id, "name": in.Name}}, nil
+}
+
+func (s *Server) helpdeskTeams(_ http.ResponseWriter, r *http.Request) (any, error) {
+	client, err := s.teamsClient(r)
+	if err != nil {
+		return nil, err
+	}
+	teams, err := client.ListTeams(r.Context())
+	if err != nil {
+		return nil, helpdeskFailure("Teams could not be read", err)
+	}
+	return teams, nil
 }
 
 func liveChatJSON(lc store.LiveChat) map[string]any {
@@ -190,6 +305,9 @@ func (s *Server) createLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
+	if err := checkTeam(r.Context(), client, in.LiveChat); err != nil {
+		return nil, err
+	}
 	inboxID, uuid, err := client.CreateLiveChat(r.Context(), in.LiveChat, language)
 	if err != nil {
 		return nil, helpdeskFailure("Live chat creation failed", err)
@@ -235,6 +353,9 @@ func (s *Server) updateLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
+	}
+	if err := checkTeam(r.Context(), client, in); err != nil {
+		return nil, err
 	}
 	if err := client.UpdateLiveChat(r.Context(), lc.InboxID, in); err != nil {
 		return nil, liveChatFailure("Live chat update failed", err)

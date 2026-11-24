@@ -205,12 +205,101 @@ type LiveChat struct {
 	// Domains are the sites the widget may load on; nil keeps the current
 	// ones (the website on creation) and empty allows any site.
 	Domains []string `json:"allowed_domains"`
+	// The flow settings below: nil keeps the current value on update and
+	// takes the default on creation.
+	PreChat        *PreChatForm `json:"prechat_form,omitempty"`
+	Menu           *Menu        `json:"menu,omitempty"`
+	TeamID         *int64       `json:"team_id,omitempty"`
+	Offline        *Offline     `json:"offline,omitempty"`
+	HideAgentNames *bool        `json:"hide_agent_names,omitempty"`
+	// InactivityClose is in minutes, 0 = off; Libredesk stores a duration.
+	InactivityClose *int `json:"inactivity_close,omitempty"`
+}
+
+// FormField is a pre-chat form field Kuraka manages.
+type FormField struct {
+	Shown    bool `json:"shown"`
+	Required bool `json:"required"`
+}
+
+// PreChatForm is the form before a chat; the name is always required.
+// LastName is a contact custom attribute with the key last_name.
+type PreChatForm struct {
+	Enabled  bool      `json:"enabled"`
+	LastName FormField `json:"last_name"`
+	Email    FormField `json:"email"`
+	Phone    FormField `json:"phone"`
+}
+
+// MenuItem is a menu button and the answer shown when it is clicked.
+type MenuItem struct {
+	Label  string `json:"label"`
+	Answer string `json:"answer"`
+}
+
+// Menu is shown before any conversation; an empty AgentButtonText uses the
+// widget's default.
+type Menu struct {
+	Enabled         bool       `json:"enabled"`
+	Items           []MenuItem `json:"items"`
+	AgentButtonText string     `json:"agent_button_text"`
+}
+
+// Offline is what happens when no agent is available: Mode "wait", "both" or
+// "email"; "" removes the availability check.
+type Offline struct {
+	Mode  string `json:"mode"`
+	Email string `json:"email"`
+}
+
+// Team is a Libredesk team with its number of enabled agents.
+type Team struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	AssignmentType string `json:"conversation_assignment_type"`
+	Members        int    `json:"members"`
 }
 
 // liveChatTexts are the widget texts Kuraka sets once, on creation.
 var liveChatTexts = map[string][3]string{
 	"es-ES": {"¿Cómo podemos ayudarte?", "Pregúntanos lo que quieras.", "Iniciar conversación"},
 	"en-US": {"How can we help?", "Ask us anything, or share your feedback.", "Start conversation"},
+}
+
+// formLabels are the labels of new pre-chat form fields: English, Spanish.
+var formLabels = map[string][2]string{
+	"name":      {"Name", "Nombre"},
+	"last_name": {"Last name", "Apellido"},
+	"email":     {"Email", "Correo electrónico"},
+	"phone":     {"Phone", "Teléfono"},
+}
+
+func formLabel(key, language string) string {
+	if strings.HasPrefix(language, "es") {
+		return formLabels[key][1]
+	}
+	return formLabels[key][0]
+}
+
+// liveChatDefaults fills the flow settings a new chat starts with.
+func liveChatDefaults(lc *LiveChat) {
+	if lc.PreChat == nil {
+		lc.PreChat = &PreChatForm{Enabled: true, Email: FormField{Shown: true}, Phone: FormField{Shown: true}}
+	}
+	if lc.Menu == nil {
+		lc.Menu = &Menu{Enabled: true}
+	}
+	if lc.Offline == nil {
+		lc.Offline = &Offline{Mode: "wait"}
+	}
+	if lc.HideAgentNames == nil {
+		hide := true
+		lc.HideAgentNames = &hide
+	}
+	if lc.InactivityClose == nil {
+		minutes := 30
+		lc.InactivityClose = &minutes
+	}
 }
 
 // TrustedDomain is the widget origin pattern for a website: its host without
@@ -224,15 +313,100 @@ func TrustedDomain(website string) string {
 	return "*." + strings.TrimPrefix(strings.ToLower(host), "www.")
 }
 
-// applyLiveChat writes lc into a live chat config, keeping its other keys.
-func applyLiveChat(config map[string]any, lc LiveChat) {
-	child := func(m map[string]any, key string) map[string]any {
-		next, ok := m[key].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			m[key] = next
+func child(m map[string]any, key string) map[string]any {
+	next, ok := m[key].(map[string]any)
+	if !ok {
+		next = map[string]any{}
+		m[key] = next
+	}
+	return next
+}
+
+// applyPreChat writes the fields Kuraka manages first, in a fixed order, and
+// keeps the other fields after them. Audience overrides get the same fields.
+// lastName is the custom attribute id, 0 when it was not needed.
+func applyPreChat(config map[string]any, p PreChatForm, lastName int64) {
+	language, _ := config["language"].(string)
+	form := child(config, "prechat_form")
+	form["enabled"] = p.Enabled
+	managed := []struct {
+		key, kind string
+		f         FormField
+	}{{"name", "text", FormField{true, true}}, {"last_name", "text", p.LastName}, {"email", "email", p.Email}, {"phone", "phone", p.Phone}}
+	set := func(holder map[string]any) {
+		current := map[string]map[string]any{}
+		var rest []any
+		old, _ := holder["fields"].([]any)
+		for _, f := range old {
+			m, _ := f.(map[string]any)
+			key, _ := m["key"].(string)
+			if _, ok := formLabels[key]; ok && m != nil {
+				current[key] = m
+				continue
+			}
+			rest = append(rest, f)
 		}
-		return next
+		fields := []any{}
+		for _, mf := range managed {
+			m := current[mf.key]
+			if m == nil {
+				if mf.key == "last_name" && lastName == 0 {
+					continue
+				}
+				m = map[string]any{"key": mf.key, "type": mf.kind, "label": formLabel(mf.key, language), "placeholder": "", "is_default": mf.key != "last_name"}
+			}
+			if mf.key == "last_name" && lastName > 0 {
+				m["custom_attribute_id"] = lastName
+			}
+			m["enabled"], m["required"] = mf.f.Shown, mf.f.Shown && mf.f.Required
+			fields = append(fields, m)
+		}
+		fields = append(fields, rest...)
+		for i, f := range fields {
+			if m, ok := f.(map[string]any); ok {
+				m["order"] = i + 1
+			}
+		}
+		holder["fields"] = fields
+	}
+	set(form)
+	for _, audience := range []string{"visitors", "users"} {
+		if a, ok := form[audience].(map[string]any); ok {
+			set(a)
+		}
+	}
+}
+
+// applyLiveChat writes lc into a live chat config, keeping its other keys.
+func applyLiveChat(config map[string]any, lc LiveChat, lastName int64) {
+	if lc.PreChat != nil {
+		applyPreChat(config, *lc.PreChat, lastName)
+	}
+	if lc.Menu != nil {
+		menu := *lc.Menu
+		if menu.Items == nil {
+			menu.Items = []MenuItem{}
+		}
+		config["menu"] = menu
+	}
+	if lc.TeamID != nil {
+		config["team_id"] = *lc.TeamID
+	}
+	if lc.Offline != nil {
+		if lc.Offline.Mode == "" {
+			delete(config, "offline")
+		} else {
+			config["offline"] = *lc.Offline
+		}
+	}
+	if lc.HideAgentNames != nil {
+		config["hide_agent_names"] = *lc.HideAgentNames
+	}
+	if lc.InactivityClose != nil {
+		config["inactivity_close"] = ""
+		if *lc.InactivityClose > 0 {
+			config["inactivity_close"] = strconv.Itoa(*lc.InactivityClose) + "m"
+		}
 	}
 	config["brand_name"] = lc.Name
 	config["website_url"] = lc.Website
@@ -257,7 +431,12 @@ func (c *Client) CreateLiveChat(ctx context.Context, lc LiveChat, language strin
 	if !ok {
 		language, texts = "en-US", liveChatTexts["en-US"]
 	}
-	audience := map[string]any{"allow_start_conversation": true, "start_conversation_button_text": texts[2]}
+	liveChatDefaults(&lc)
+	lastName, err := c.lastNameAttribute(ctx, lc, language)
+	if err != nil {
+		return 0, "", err
+	}
+	audience := map[string]any{"allow_start_conversation": true, "prevent_reply_to_closed_conversation": true, "start_conversation_button_text": texts[2]}
 	config := map[string]any{
 		"theme":                "light",
 		"show_powered_by":      false,
@@ -275,7 +454,7 @@ func (c *Client) CreateLiveChat(ctx context.Context, lc LiveChat, language strin
 	if lc.Domains == nil {
 		lc.Domains = []string{TrustedDomain(lc.Website)}
 	}
-	applyLiveChat(config, lc)
+	applyLiveChat(config, lc, lastName)
 	body := map[string]any{"name": lc.Name, "channel": "livechat", "enabled": true, "csat_enabled": false, "config": config}
 	var out struct {
 		ID   int64  `json:"id"`
@@ -329,15 +508,67 @@ func (c *Client) GetLiveChat(ctx context.Context, id int64) (LiveChat, error) {
 			domains = append(domains, d)
 		}
 	}
+	// Missing keys read as off or empty.
+	menu, offline := Menu{Items: []MenuItem{}}, Offline{}
+	for key, out := range map[string]any{"menu": &menu, "offline": &offline} {
+		if b, err := json.Marshal(config[key]); err == nil {
+			_ = json.Unmarshal(b, out)
+		}
+	}
+	if menu.Items == nil {
+		menu.Items = []MenuItem{}
+	}
+	team, _ := config["team_id"].(float64)
+	hide, _ := config["hide_agent_names"].(bool)
+	minutes := 0
+	if d, err := time.ParseDuration(str(config, "inactivity_close")); err == nil && d > 0 {
+		minutes = max(1, int(d/time.Minute))
+	}
 	return LiveChat{
-		Name:     str(inbox, "name"),
-		Website:  str(config, "website_url"),
-		Color:    str(config, "branding", "light", "colors", "primary"),
-		LogoURL:  str(config, "branding", "light", "logo_url"),
-		Greeting: str(config, "greeting_message"),
-		Position: str(config, "launcher", "position"),
-		Domains:  domains,
+		Name:            str(inbox, "name"),
+		Website:         str(config, "website_url"),
+		Color:           str(config, "branding", "light", "colors", "primary"),
+		LogoURL:         str(config, "branding", "light", "logo_url"),
+		Greeting:        str(config, "greeting_message"),
+		Position:        str(config, "launcher", "position"),
+		Domains:         domains,
+		PreChat:         readPreChat(config),
+		Menu:            &menu,
+		TeamID:          new(int64(team)),
+		Offline:         &offline,
+		HideAgentNames:  &hide,
+		InactivityClose: &minutes,
 	}, nil
+}
+
+// readPreChat reads the managed fields, from the visitors' override when it
+// has its own fields. Email and phone not in the form read as shown.
+func readPreChat(config map[string]any) *PreChatForm {
+	form, _ := config["prechat_form"].(map[string]any)
+	enabled, _ := form["enabled"].(bool)
+	p := &PreChatForm{Enabled: enabled, Email: FormField{Shown: true}, Phone: FormField{Shown: true}}
+	fields, _ := form["fields"].([]any)
+	if visitors, ok := form["visitors"].(map[string]any); ok {
+		if own, ok := visitors["fields"].([]any); ok {
+			fields = own
+		}
+	}
+	for _, f := range fields {
+		m, _ := f.(map[string]any)
+		key, _ := m["key"].(string)
+		shown, _ := m["enabled"].(bool)
+		required, _ := m["required"].(bool)
+		ff := FormField{Shown: shown, Required: shown && required}
+		switch key {
+		case "last_name":
+			p.LastName = ff
+		case "email":
+			p.Email = ff
+		case "phone":
+			p.Phone = ff
+		}
+	}
+	return p
 }
 
 // UpdateLiveChat writes lc into a live chat inbox, keeping its other settings.
@@ -347,9 +578,107 @@ func (c *Client) UpdateLiveChat(ctx context.Context, id int64, lc LiveChat) erro
 	if err != nil {
 		return err
 	}
-	applyLiveChat(config, lc)
+	language, _ := config["language"].(string)
+	lastName, err := c.lastNameAttribute(ctx, lc, language)
+	if err != nil {
+		return err
+	}
+	applyLiveChat(config, lc, lastName)
 	inbox["name"] = lc.Name
 	return c.do(ctx, http.MethodPut, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), inbox, nil)
+}
+
+// lastNameAttribute returns the id of the contact custom attribute last_name
+// when the form shows it, creating the attribute once; else 0.
+func (c *Client) lastNameAttribute(ctx context.Context, lc LiveChat, language string) (int64, error) {
+	if lc.PreChat == nil || !lc.PreChat.LastName.Shown {
+		return 0, nil
+	}
+	var attrs []struct {
+		ID  int64  `json:"id"`
+		Key string `json:"key"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/custom-attributes?applies_to=contact", nil, &attrs); err != nil {
+		return 0, err
+	}
+	for _, a := range attrs {
+		if a.Key == "last_name" {
+			return a.ID, nil
+		}
+	}
+	label := formLabel("last_name", language)
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	body := map[string]any{"name": label, "description": label, "applies_to": "contact", "key": "last_name", "data_type": "text", "values": []string{}, "regex": "", "regex_hint": ""}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/custom-attributes", body, &out); err != nil {
+		return 0, err
+	}
+	if out.ID <= 0 {
+		return 0, errors.New("libredesk: custom attribute create returned no id")
+	}
+	return out.ID, nil
+}
+
+// ListTeams returns the teams with their enabled agents counted from each
+// agent's teams, as v2.9.2 has no team members endpoint.
+// frugal: one request per agent; fine for small helpdesks.
+func (c *Client) ListTeams(ctx context.Context) ([]Team, error) {
+	teams := []Team{}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/teams", nil, &teams); err != nil {
+		return nil, err
+	}
+	if teams == nil {
+		teams = []Team{}
+	}
+	index := map[int64]int{}
+	for i := range teams {
+		teams[i].Members = 0
+		index[teams[i].ID] = i
+	}
+	var agents []struct {
+		ID      int64 `json:"id"`
+		Enabled bool  `json:"enabled"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/agents", nil, &agents); err != nil {
+		return nil, err
+	}
+	for _, a := range agents {
+		if !a.Enabled {
+			continue
+		}
+		var agent struct {
+			Teams []struct {
+				ID int64 `json:"id"`
+			} `json:"teams"`
+		}
+		if err := c.do(ctx, http.MethodGet, "/api/v1/agents/"+strconv.FormatInt(a.ID, 10), nil, &agent); err != nil {
+			return nil, err
+		}
+		for _, t := range agent.Teams {
+			if i, ok := index[t.ID]; ok {
+				teams[i].Members++
+			}
+		}
+	}
+	return teams, nil
+}
+
+// CreateTeam creates a round robin team with no business hours, SLA or
+// assignment cap, and returns its id. An empty timezone uses the helpdesk's.
+func (c *Client) CreateTeam(ctx context.Context, name string) (int64, error) {
+	body := map[string]any{"name": name, "emoji": "💬", "timezone": "", "conversation_assignment_type": "Round robin",
+		"business_hours_id": nil, "sla_policy_id": nil, "max_auto_assigned_conversations": 0, "weight": 0, "keep_assignee": false}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/teams", body, &out); err != nil {
+		return 0, err
+	}
+	if out.ID <= 0 {
+		return 0, errors.New("libredesk: team create returned no id")
+	}
+	return out.ID, nil
 }
 
 // RootURL returns the public Libredesk URL the widget loads from.
