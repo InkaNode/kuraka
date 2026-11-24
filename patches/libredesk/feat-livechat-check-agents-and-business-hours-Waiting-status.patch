@@ -1,0 +1,667 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 00:34:37 -0500
+Subject: [PATCH] feat(livechat): check agents and business hours, Waiting
+ status and chat team
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Adds-En: Before a live chat starts, the helpdesk checks business hours and online agents; without them the chat waits in the new Waiting status (or only offers email), and new chats go to the team chosen for the chat.
+Kuraka-Adds-Es: Antes de empezar un chat en vivo, el helpdesk revisa el horario y los agentes en línea; si no hay, el chat queda en el nuevo estado En espera (o solo ofrece correo), y los chats nuevos van al equipo elegido para el chat.
+Kuraka-Missing-En: Live chats always open as normal conversations without a team, even outside business hours or with nobody online, and the Waiting status is missing.
+Kuraka-Missing-Es: Los chats en vivo siempre se abren como conversaciones normales sin equipo, aunque sea fuera de horario o no haya nadie en línea, y falta el estado En espera.
+---
+ cmd/chat.go                                   |   7 +
+ cmd/handlers.go                               |   1 +
+ cmd/inboxes.go                                |   3 +
+ cmd/kuraka.go                                 | 139 ++++++++++++++++++
+ cmd/kuraka_test.go                            |  81 ++++++++++
+ cmd/widget_campaign.go                        |  17 ++-
+ .../apps/main/src/constants/conversation.js   |   1 +
+ .../admin/inbox/LivechatInboxForm.vue         |   2 +
+ i18n/en-US.json                               |   2 +
+ i18n/es-ES.json                               |   2 +
+ internal/conversation/conversation.go         |   1 +
+ internal/conversation/kuraka.go               |  30 ++++
+ internal/conversation/message.go              |   2 +
+ internal/conversation/queries.sql             |   2 +-
+ internal/conversation/status/models/models.go |   1 +
+ internal/inbox/channel/livechat/kuraka.go     |  67 +++++++++
+ internal/inbox/channel/livechat/livechat.go   |   3 +
+ internal/kuraka/livechat.go                   |  12 ++
+ internal/kuraka/migrate.go                    |   5 +
+ 19 files changed, 374 insertions(+), 4 deletions(-)
+ create mode 100644 internal/kuraka/livechat.go
+
+diff --git a/cmd/chat.go b/cmd/chat.go
+index 0ff19850..174eaa41 100644
+--- a/cmd/chat.go
++++ b/cmd/chat.go
+@@ -223,6 +223,12 @@ func handleChatInit(r *fastglue.Request) error {
+ 		return handleWidgetCampaignReply(r, req, inbox, initialConfig)
+ 	}
+ 
++	// The server decides whether nobody can take the chat now; the client is never trusted for it.
++	waiting, err := chatInitWaits(app, config)
++	if err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++
+ 	// Check if user is already authenticated (has session token).
+ 	contactID, _ = getWidgetContactID(r)
+ 	if contactID > 0 {
+@@ -292,6 +298,7 @@ func handleChatInit(r *fastglue.Request) error {
+ 		app.lo.Error("error inserting initial message", "conversation_uuid", conversationUUID, "error", err)
+ 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, app.i18n.T("globals.messages.errorSendingMessage"), nil, envelope.GeneralError)
+ 	}
++	startLiveChat(app, conversationUUID, config.TeamID, waiting)
+ 
+ 	// Process post-message hooks for the new conversation and initial message.
+ 	if err := app.conversation.ProcessIncomingMessageHooks(message, true); err != nil {
+diff --git a/cmd/handlers.go b/cmd/handlers.go
+index 45b927be..62fae7d0 100644
+--- a/cmd/handlers.go
++++ b/cmd/handlers.go
+@@ -390,6 +390,7 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
+ 	g.GET("/api/v1/widget/chat/help/articles/{article_slug}", rateLimit(optionalWidgetAuth(handleWidgetHelpArticle), "widget"))
+ 	g.POST("/api/v1/widget/chat/auth/exchange", rateLimit(validateWidgetInbox(handleAuthExchange), "widget"))
+ 	g.GET("/api/v1/widget/chat/auth/me", rateLimit(widgetAuth(handleWidgetAuthMe), "widget"))
++	g.GET("/api/v1/widget/chat/availability", rateLimit(validateWidgetInbox(handleChatAvailability), "widget"))
+ 	g.POST("/api/v1/widget/chat/conversations/init", rateLimit(widgetAuth(handleChatInit), "widget"))
+ 	g.GET("/api/v1/widget/chat/conversations", rateLimit(widgetAuth(handleGetConversations), "widget"))
+ 	g.POST("/api/v1/widget/chat/conversations/{uuid}/update-last-seen", rateLimit(widgetAuth(handleChatUpdateLastSeen), "widget"))
+diff --git a/cmd/inboxes.go b/cmd/inboxes.go
+index 43c32d7f..3f94aa68 100644
+--- a/cmd/inboxes.go
++++ b/cmd/inboxes.go
+@@ -571,6 +571,9 @@ func validateInbox(app *App, inbox imodels.Inbox, isUpdate bool) error {
+ 		if _, err := livechat.ParseInactivityClose(config.InactivityClose); err != nil {
+ 			return envelope.NewError(envelope.InputError, app.i18n.T("admin.inbox.livechat.inactivityClose.invalidDuration"), nil)
+ 		}
++		if err := validateLiveChatKuraka(app, config); err != nil {
++			return err
++		}
+ 
+ 		for _, branding := range []livechat.Branding{config.Branding.Light, config.Branding.Dark} {
+ 			if branding.Colors.Primary == "" {
+diff --git a/cmd/kuraka.go b/cmd/kuraka.go
+index a7707fb0..4ffe227d 100644
+--- a/cmd/kuraka.go
++++ b/cmd/kuraka.go
+@@ -1,7 +1,16 @@
+ package main
+ 
+ import (
++	"encoding/json"
++	"strconv"
++	"time"
++
++	bhmodels "github.com/abhinavxd/libredesk/internal/business_hours/models"
++	"github.com/abhinavxd/libredesk/internal/conversation"
+ 	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/envelope"
++	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
++	"github.com/abhinavxd/libredesk/internal/kuraka"
+ 	"github.com/zerodha/fastglue"
+ )
+ 
+@@ -28,3 +37,133 @@ func handleChatCloseConversation(r *fastglue.Request) error {
+ 	return r.SendEnvelope(true)
+ }
+ 
++// chatAvailability tells the widget whether a visitor asking for an agent can get one now.
++type chatAvailability struct {
++	Available       bool `json:"available"`
++	InBusinessHours bool `json:"in_business_hours"`
++	AgentsOnline    bool `json:"agents_online"`
++}
++
++// decideAvailability is available when now is in the business hours (nil = always) and an agent is online.
++func decideAvailability(now time.Time, hours *bhmodels.BusinessHours, loc *time.Location, agentsOnline int) (chatAvailability, error) {
++	inHours := true
++	if hours != nil {
++		var err error
++		if inHours, err = withinBusinessHours(*hours, now, loc); err != nil {
++			return chatAvailability{}, err
++		}
++	}
++	return chatAvailability{
++		Available:       inHours && agentsOnline > 0,
++		InBusinessHours: inHours,
++		AgentsOnline:    agentsOnline > 0,
++	}, nil
++}
++
++// liveChatAvailability uses the team's business hours and timezone when it has them, else the general ones.
++func liveChatAvailability(app *App, teamID int) (chatAvailability, error) {
++	var hoursID int
++	timezone := ""
++	if teamID > 0 {
++		if team, err := app.team.Get(teamID); err == nil {
++			hoursID, timezone = team.BusinessHoursID.Int, team.Timezone
++		}
++	}
++	if hoursID == 0 {
++		var id string
++		if b, err := app.setting.Get("app.business_hours_id"); err == nil && json.Unmarshal(b, &id) == nil {
++			hoursID, _ = strconv.Atoi(id)
++		}
++	}
++	if timezone == "" {
++		timezone = app.setting.GetAppTimezone()
++	}
++	loc, err := time.LoadLocation(timezone)
++	if err != nil {
++		return chatAvailability{}, err
++	}
++	var hours *bhmodels.BusinessHours
++	if hoursID > 0 {
++		h, err := app.businessHours.Get(hoursID)
++		if err != nil {
++			return chatAvailability{}, err
++		}
++		hours = &h
++	}
++	online, err := kuraka.AgentsOnline(app.db, teamID)
++	if err != nil {
++		return chatAvailability{}, err
++	}
++	return decideAvailability(time.Now(), hours, loc, online)
++}
++
++// handleChatAvailability returns whether an agent can take a chat now, without counts or names.
++func handleChatAvailability(r *fastglue.Request) error {
++	app := r.Context.(*App)
++	config, err := getWidgetConfig(r)
++	if err != nil {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, app.i18n.T("globals.messages.somethingWentWrong"), nil))
++	}
++	availability, err := liveChatAvailability(app, config.TeamID)
++	if err != nil {
++		app.lo.Error("error checking live chat availability", "error", err)
++		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, app.i18n.T("globals.messages.somethingWentWrong"), nil))
++	}
++	return r.SendEnvelope(availability)
++}
++
++// chatInitWaits reports whether a new chat starts as Waiting; with nobody available and offline mode email it returns a 403 error.
++func chatInitWaits(app *App, config livechat.Config) (bool, error) {
++	if config.Offline == nil {
++		return false, nil
++	}
++	availability, err := liveChatAvailability(app, config.TeamID)
++	if err != nil {
++		app.lo.Error("error checking live chat availability", "error", err)
++		return false, envelope.NewError(envelope.GeneralError, app.i18n.T("globals.messages.somethingWentWrong"), nil)
++	}
++	if availability.Available {
++		return false, nil
++	}
++	if config.Offline.Mode == livechat.OfflineEmail {
++		return false, envelope.NewError(envelope.PermissionError, app.i18n.T("widget.noAgentsEmail"), nil)
++	}
++	return true, nil
++}
++
++// validateLiveChatKuraka checks the team_id, menu and offline live chat config keys.
++func validateLiveChatKuraka(app *App, config livechat.Config) error {
++	if field := config.InvalidKurakaField(); field != "" {
++		return envelope.NewError(envelope.InputError, app.i18n.Ts("kuraka.liveChatInvalidField", "name", field), nil)
++	}
++	if config.TeamID > 0 {
++		// Not found is a 400 with the team not found message.
++		if _, err := app.team.Get(config.TeamID); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++// startLiveChat marks a new live chat Waiting when nobody can take it and assigns it to the inbox team,
++// through the manager so activities, team auto-assignment and automations run.
++func startLiveChat(app *App, conversationUUID string, teamID int, waiting bool) {
++	if !waiting && teamID == 0 {
++		return
++	}
++	system, err := app.user.GetSystemUser()
++	if err != nil {
++		app.lo.Error("error fetching system user", "error", err)
++		return
++	}
++	if waiting {
++		if err := app.conversation.UpdateConversationStatus(conversationUUID, 0, conversation.StatusWaiting, "", system); err != nil {
++			app.lo.Error("error setting live chat as waiting", "conversation_uuid", conversationUUID, "error", err)
++		}
++	}
++	if teamID > 0 {
++		if err := app.conversation.UpdateConversationTeamAssignee(conversationUUID, teamID, system); err != nil {
++			app.lo.Error("error assigning live chat to team", "conversation_uuid", conversationUUID, "team_id", teamID, "error", err)
++		}
++	}
++}
+diff --git a/cmd/kuraka_test.go b/cmd/kuraka_test.go
+index ea130752..db8b98cf 100644
+--- a/cmd/kuraka_test.go
++++ b/cmd/kuraka_test.go
+@@ -1,9 +1,13 @@
+ package main
+ 
+ import (
++	"strings"
+ 	"testing"
++	"time"
+ 
++	bhmodels "github.com/abhinavxd/libredesk/internal/business_hours/models"
+ 	"github.com/abhinavxd/libredesk/internal/conversation"
++	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
+ 	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
+ 	"github.com/abhinavxd/libredesk/internal/testutil"
+ 	"github.com/valyala/fasthttp"
+@@ -61,3 +65,80 @@ func TestWidgetCloseConversationRejectsWrongContactOrInbox(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestDecideAvailability(t *testing.T) {
++	lima, err := time.LoadLocation("America/Lima")
++	if err != nil {
++		t.Fatal(err)
++	}
++	hours := &bhmodels.BusinessHours{Hours: []byte(`{"Monday":{"open":"09:00","close":"17:00"}}`), Holidays: []byte(`[]`)}
++	holiday := &bhmodels.BusinessHours{Hours: hours.Hours, Holidays: []byte(`[{"name":"x","date":"2026-11-23"}]`)}
++	monday := func(clock string) time.Time {
++		at, _ := time.ParseInLocation("2006-01-02 15:04", "2026-11-23 "+clock, lima)
++		return at
++	}
++	tests := []struct {
++		name   string
++		now    time.Time
++		hours  *bhmodels.BusinessHours
++		loc    *time.Location
++		online int
++		want   chatAvailability
++	}{
++		{"no hours, nobody online", monday("03:00"), nil, lima, 0, chatAvailability{false, true, false}},
++		{"no hours, agent online", monday("03:00"), nil, lima, 2, chatAvailability{true, true, true}},
++		{"always open", monday("03:00"), &bhmodels.BusinessHours{IsAlwaysOpen: true}, lima, 1, chatAvailability{true, true, true}},
++		{"in hours", monday("10:00"), hours, lima, 1, chatAvailability{true, true, true}},
++		{"in hours, nobody online", monday("10:00"), hours, lima, 0, chatAvailability{false, true, false}},
++		{"after hours", monday("17:00"), hours, lima, 1, chatAvailability{false, false, true}},
++		{"holiday", monday("10:00"), holiday, lima, 1, chatAvailability{false, false, true}},
++		// 15:00 in Lima is 20:00 UTC: the timezone decides.
++		{"timezone in hours", monday("15:00"), hours, lima, 1, chatAvailability{true, true, true}},
++		{"timezone out of hours", monday("15:00"), hours, time.UTC, 1, chatAvailability{false, false, true}},
++	}
++	for _, tc := range tests {
++		got, err := decideAvailability(tc.now, tc.hours, tc.loc, tc.online)
++		if err != nil {
++			t.Fatalf("%s: %v", tc.name, err)
++		}
++		if got != tc.want {
++			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
++		}
++	}
++}
++
++func TestValidateLiveChatKuraka(t *testing.T) {
++	app := newValidatorTestApp(t)
++	items := func(n, labelLen, answerLen int) []livechat.MenuItem {
++		out := make([]livechat.MenuItem, n)
++		for i := range out {
++			out[i] = livechat.MenuItem{Label: strings.Repeat("é", labelLen), Answer: strings.Repeat("é", answerLen)}
++		}
++		return out
++	}
++	tests := []struct {
++		name    string
++		config  livechat.Config
++		wantErr bool
++	}{
++		{name: "nothing set", config: livechat.Config{}},
++		{name: "negative team", config: livechat.Config{TeamID: -1}, wantErr: true},
++		{name: "menu at limits", config: livechat.Config{Menu: &livechat.MenuConfig{Enabled: true, Items: items(8, 60, 1000), AgentButtonText: strings.Repeat("é", 60)}}},
++		{name: "too many items", config: livechat.Config{Menu: &livechat.MenuConfig{Items: items(9, 1, 1)}}, wantErr: true},
++		{name: "label too long", config: livechat.Config{Menu: &livechat.MenuConfig{Items: items(1, 61, 1)}}, wantErr: true},
++		{name: "empty label", config: livechat.Config{Menu: &livechat.MenuConfig{Items: items(1, 0, 1)}}, wantErr: true},
++		{name: "answer too long", config: livechat.Config{Menu: &livechat.MenuConfig{Items: items(1, 1, 1001)}}, wantErr: true},
++		{name: "agent button too long", config: livechat.Config{Menu: &livechat.MenuConfig{AgentButtonText: strings.Repeat("a", 61)}}, wantErr: true},
++		{name: "wait without email", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "wait"}}},
++		{name: "wait bad email", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "wait", Email: "nope"}}, wantErr: true},
++		{name: "both with email", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "both", Email: "help@example.com"}}},
++		{name: "email without email", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "email"}}, wantErr: true},
++		{name: "email with name", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "email", Email: "Help <help@example.com>"}}, wantErr: true},
++		{name: "unknown mode", config: livechat.Config{Offline: &livechat.OfflineConfig{Mode: "later", Email: "help@example.com"}}, wantErr: true},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			assertValidation(t, validateLiveChatKuraka(app, tc.config), tc.wantErr)
++		})
++	}
++}
+diff --git a/cmd/widget_campaign.go b/cmd/widget_campaign.go
+index df8fbbc8..6bb63b82 100644
+--- a/cmd/widget_campaign.go
++++ b/cmd/widget_campaign.go
+@@ -186,17 +186,28 @@ func campaignWithinHours(app *App, c proactive.Campaign, now time.Time, loc *tim
+ 	if err != nil {
+ 		return false, envelope.NewError(envelope.InputError, app.i18n.T("validation.invalidValue"), nil)
+ 	}
++	within, err := withinBusinessHours(hours, now, loc)
++	if err != nil {
++		return false, campaignInputError(app)
++	}
++	return within, nil
++}
++
++// withinBusinessHours reports whether now is inside the business hours in loc, holidays excluded.
++func withinBusinessHours(hours bhmodels.BusinessHours, now time.Time, loc *time.Location) (bool, error) {
+ 	if hours.IsAlwaysOpen {
+ 		return true, nil
+ 	}
+ 	local := now.In(loc)
+ 	var holidays []bhmodels.Holiday
+ 	var working map[string]bhmodels.WorkingHours
+-	if err := json.Unmarshal(hours.Holidays, &holidays); err != nil {
+-		return false, campaignInputError(app)
++	if len(hours.Holidays) > 0 {
++		if err := json.Unmarshal(hours.Holidays, &holidays); err != nil {
++			return false, err
++		}
+ 	}
+ 	if err := json.Unmarshal(hours.Hours, &working); err != nil {
+-		return false, campaignInputError(app)
++		return false, err
+ 	}
+ 	previousDate := local.AddDate(0, 0, -1)
+ 	previous := working[previousDate.Weekday().String()]
+diff --git a/frontend/apps/main/src/constants/conversation.js b/frontend/apps/main/src/constants/conversation.js
+index 4920a3b8..e5b5910e 100644
+--- a/frontend/apps/main/src/constants/conversation.js
++++ b/frontend/apps/main/src/constants/conversation.js
+@@ -12,6 +12,7 @@ export const CONVERSATION_DEFAULT_STATUSES = {
+   SNOOZED: 'Snoozed',
+   RESOLVED: 'Resolved',
+   CLOSED: 'Closed',
++  WAITING: 'Waiting',
+ }
+ 
+ export const CONVERSATION_DEFAULT_STATUSES_LIST = Object.values(CONVERSATION_DEFAULT_STATUSES);
+diff --git a/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue b/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
+index 95794332..8efb5351 100644
+--- a/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
++++ b/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
+@@ -2105,6 +2105,8 @@ const onSubmit = form.handleSubmit(
+       }
+     }
+     values.config.prechat_form = pc
++    // Keep config keys this form does not show (hide_agent_names, inactivity_close, team_id, menu, offline).
++    values.config = { ...props.initialValues?.config, ...values.config }
+ 
+     await props.submitForm(values)
+   },
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 24a2682d..fc66bd3e 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1582,6 +1582,7 @@
+   "kuraka.hoursSinceTagAdded": "Hours since tag added",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
++  "kuraka.liveChatInvalidField": "Invalid live chat setting: {name}",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
+   "kuraka.selectConditionTag": "Select the tag for the condition",
+   "kuraka.sortManual": "My order (drag)",
+@@ -1892,6 +1893,7 @@
+   "widget.menu.waitForAgent": "Wait for an agent",
+   "widget.ipBlocked": "Access denied",
+   "widget.newCampaign": "New proactive message",
++  "widget.noAgentsEmail": "No agents are available right now. Please email us and we'll get back to you.",
+   "widget.noArticles": "No published articles yet.",
+   "widget.prechatForm.continueToHuman": "Continue to a human",
+   "widget.prechatForm.startChat": "Start chat",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index f95158a6..fc45b37f 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -848,6 +848,7 @@
+   "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
++  "kuraka.liveChatInvalidField": "Ajuste del chat en vivo no válido: {name}",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
+   "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
+   "kuraka.sortManual": "Mi orden (arrastrar)",
+@@ -1905,6 +1906,7 @@
+   "widget.menu.talkToAgent": "Hablar con un agente",
+   "widget.menu.waitForAgent": "Esperar a un agente",
+   "widget.newCampaign": "Nuevo mensaje proactivo",
++  "widget.noAgentsEmail": "Ahora no hay agentes disponibles. Escríbenos por correo y te responderemos.",
+   "widget.noArticles": "Aún no hay artículos publicados.",
+   "widget.prechatForm.continueToHuman": "Hablar con un agente",
+   "widget.replyTeam": "Dirigir respuestas al equipo",
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index 4501854f..ece67d0f 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -904,6 +904,7 @@ func (c *Manager) ClaimUnassignedConversation(uuid string, assigneeID, expectedT
+ 
+ // afterUserAssignedHooks runs the side-effects shared by every user-assignment path.
+ func (c *Manager) afterUserAssignedHooks(uuid string, assigneeID int, actor umodels.User, previousValues map[string]string) error {
++	c.openIfWaiting(uuid, assigneeID, actor)
+ 	conversation, err := c.GetConversation(0, uuid, "")
+ 	if err != nil {
+ 		return err
+diff --git a/internal/conversation/kuraka.go b/internal/conversation/kuraka.go
+index d8498036..3048d58c 100644
+--- a/internal/conversation/kuraka.go
++++ b/internal/conversation/kuraka.go
+@@ -120,6 +120,36 @@ func (c *Manager) IsHumanAgent(id int) bool {
+ 	return err == nil && user.Type == umodels.UserTypeAgent && user.Enabled
+ }
+ 
++// StatusWaiting is the status of a live chat that nobody could take when it started.
++const StatusWaiting = "Waiting"
++
++// openIfWaiting moves a Waiting conversation to Open once a human agent is assigned to it or replies in it.
++// A zero actor means the agent itself.
++func (c *Manager) openIfWaiting(uuid string, agentID int, actor umodels.User) {
++	agent, err := c.userStore.GetAgentCachedOrLoad(agentID)
++	if err != nil || agent.Type != umodels.UserTypeAgent || !agent.Enabled || agent.Email.String == umodels.SystemUserEmail {
++		return
++	}
++	conversation, err := c.GetConversation(0, uuid, "")
++	if err != nil || conversation.Status.String != StatusWaiting {
++		return
++	}
++	if actor.ID == 0 {
++		actor = agent
++	}
++	if err := c.UpdateConversationStatus(uuid, 0, models.StatusOpen, "", actor); err != nil {
++		c.lo.Error("error opening waiting conversation", "uuid", uuid, "error", err)
++	}
++}
++
++// openIfWaitingOnReply opens a Waiting conversation when an agent sends a non-private reply in it.
++func (c *Manager) openIfWaitingOnReply(message *models.Message) {
++	if message.Type != models.MessageOutgoing || message.Private || message.SenderType != models.SenderTypeAgent {
++		return
++	}
++	c.openIfWaiting(message.ConversationUUID, message.SenderID, umodels.User{})
++}
++
+ // TagAddedAt is when the tag, matched ignoring case, was added to the conversation, or zero if it does not have it.
+ func (c *Manager) TagAddedAt(conversationID int, tag string) (time.Time, error) {
+ 	var addedAt time.Time
+diff --git a/internal/conversation/message.go b/internal/conversation/message.go
+index 1bb960ae..705e92ed 100644
+--- a/internal/conversation/message.go
++++ b/internal/conversation/message.go
+@@ -856,6 +856,8 @@ func (m *Manager) AfterMessageInsert(message *models.Message, inlineUUIDs []stri
+ 		m.BroadcastNewMessage(message, convItem, lastMessage)
+ 	}
+ 
++	m.openIfWaitingOnReply(message)
++
+ 	// Refetch the message to get all fields populated (e.g., author, media URLs).
+ 	refetchedMessage, err := m.GetMessage(message.UUID)
+ 	if err != nil {
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 01b1579c..575586a8 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -857,7 +857,7 @@ SET
+ WHERE 
+   uuid = $1
+   AND status_id IN (
+-    SELECT id FROM conversation_statuses WHERE name NOT IN ('Open')
++    SELECT id FROM conversation_statuses WHERE name NOT IN ('Open', 'Waiting')
+   )
+ RETURNING id, inbox_id, contact_id;
+ 
+diff --git a/internal/conversation/status/models/models.go b/internal/conversation/status/models/models.go
+index 97bc4901..929708dc 100644
+--- a/internal/conversation/status/models/models.go
++++ b/internal/conversation/status/models/models.go
+@@ -7,6 +7,7 @@ var DefaultStatuses = []string{
+ 	"Snoozed",
+ 	"Resolved",
+ 	"Closed",
++	"Waiting",
+ }
+ 
+ const (
+diff --git a/internal/inbox/channel/livechat/kuraka.go b/internal/inbox/channel/livechat/kuraka.go
+index 5a0a6552..92f0899f 100644
+--- a/internal/inbox/channel/livechat/kuraka.go
++++ b/internal/inbox/channel/livechat/kuraka.go
+@@ -4,9 +4,12 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"maps"
++	"strings"
+ 	"time"
++	"unicode/utf8"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/stringutil"
+ 	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ 	"github.com/volatiletech/null/v9"
+ )
+@@ -63,3 +66,67 @@ func ParseInactivityClose(value string) (time.Duration, error) {
+ 	}
+ 	return duration, nil
+ }
++
++// Offline modes: what the visitor can do when nobody is available.
++const (
++	OfflineWait  = "wait"
++	OfflineBoth  = "both"
++	OfflineEmail = "email"
++)
++
++// MenuConfig is the menu shown before any conversation.
++type MenuConfig struct {
++	Enabled         bool       `json:"enabled"`
++	Items           []MenuItem `json:"items"`
++	AgentButtonText string     `json:"agent_button_text"`
++}
++
++// MenuItem is a menu button and the answer shown when it is clicked.
++type MenuItem struct {
++	Label  string `json:"label"`
++	Answer string `json:"answer"`
++}
++
++// OfflineConfig sets what happens when the visitor asks for an agent and nobody is available.
++type OfflineConfig struct {
++	Mode  string `json:"mode"`
++	Email string `json:"email"`
++}
++
++// InvalidKurakaField returns the first invalid menu or offline config key, or "".
++func (c Config) InvalidKurakaField() string {
++	if c.TeamID < 0 {
++		return "team_id"
++	}
++	if m := c.Menu; m != nil {
++		if len(m.Items) > 8 {
++			return "menu.items"
++		}
++		for _, item := range m.Items {
++			if strings.TrimSpace(item.Label) == "" || utf8.RuneCountInString(item.Label) > 60 {
++				return "menu.items.label"
++			}
++			if strings.TrimSpace(item.Answer) == "" || utf8.RuneCountInString(item.Answer) > 1000 {
++				return "menu.items.answer"
++			}
++		}
++		if utf8.RuneCountInString(m.AgentButtonText) > 60 {
++			return "menu.agent_button_text"
++		}
++	}
++	if o := c.Offline; o != nil {
++		switch o.Mode {
++		case OfflineWait:
++			if o.Email != "" && !stringutil.ValidEmail(o.Email) {
++				return "offline.email"
++			}
++		case OfflineBoth, OfflineEmail:
++			if !stringutil.ValidEmail(o.Email) {
++				return "offline.email"
++			}
++		default:
++			return "offline.mode"
++		}
++	}
++	return ""
++}
+diff --git a/internal/inbox/channel/livechat/livechat.go b/internal/inbox/channel/livechat/livechat.go
+index e852c970..eccf1dac 100644
+--- a/internal/inbox/channel/livechat/livechat.go
++++ b/internal/inbox/channel/livechat/livechat.go
+@@ -193,6 +193,9 @@ type Config struct {
+ 	SessionDuration                string            `json:"session_duration"`
+ 	InactivityClose                string            `json:"inactivity_close"`
+ 	PreChatForm                    PreChatFormConfig `json:"prechat_form"`
++	TeamID                         int               `json:"team_id"`
++	Menu                           *MenuConfig       `json:"menu,omitempty"`
++	Offline                        *OfflineConfig    `json:"offline,omitempty"`
+ }
+ 
+ // Client represents a connected chat client
+diff --git a/internal/kuraka/livechat.go b/internal/kuraka/livechat.go
+new file mode 100644
+index 00000000..47aaa3ab
+--- /dev/null
++++ b/internal/kuraka/livechat.go
+@@ -0,0 +1,12 @@
++package kuraka
++
++import "github.com/jmoiron/sqlx"
++
++// AgentsOnline counts enabled human agents that are online, only members of teamID when it is not 0.
++func AgentsOnline(db *sqlx.DB, teamID int) (int, error) {
++	var n int
++	err := db.Get(&n, `SELECT COUNT(*) FROM users u
++  WHERE u.type = 'agent' AND u.enabled AND u.deleted_at IS NULL AND u.availability_status = 'online'
++  AND ($1 = 0 OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = u.id AND tm.team_id = $1))`, teamID)
++	return n, err
++}
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index 07944ad6..f08b9915 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -63,6 +63,11 @@ func Migrate(db *sqlx.DB) error {
+   ALTER TABLE team_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;
+   ALTER TABLE teams ADD COLUMN IF NOT EXISTS keep_assignee BOOLEAN NOT NULL DEFAULT false;
+  END $$`)
++	if err != nil {
++		return err
++	}
++	// Built-in Waiting status for live chats nobody can take yet; its label comes from i18n like the other defaults.
++	_, err = tx.Exec(`INSERT INTO conversation_statuses (name, category, icon) VALUES ('Waiting', 'open', 'kuraka:waiting') ON CONFLICT (name) DO NOTHING`)
+ 	if err != nil {
+ 		return err
+ 	}
