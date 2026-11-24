@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk automations**: **Hours since** conditions can **Count business hours only**, using the business hours of the assigned team or the default ones from General; nights, closed days and holidays do not count. Without business hours set up, those conditions never match. A new **Hours since tag added** condition counts from when the chosen tag was added.
 - **Libredesk Admin → General**: **Collapse activity events after** sets how many activity events in a row are shown before they start collapsed. The default is 2.
 - **Libredesk contacts**: contacts without a photo get their own solid avatar colour, one of 40, in the conversation list, messages, the contact panel and Contacts. Each contact always keeps the same colour.
+- **Libredesk in Spanish**: every screen is translated, including the 834 texts that were still in English, such as the automation conditions.
+- **Mail admin in Spanish**: Stalwart's admin follows the browser language when its account is left in English. Form names sent by the Stalwart server stay in English.
 
 ### Changed
 
@@ -27,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk patches**: the tag colour, rule icon, activity setting and team inbox order patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
 - **System → Updates**: the list refreshes on its own every 30 seconds, so versions found by the daily check show without reloading. **Check now** says whether updates were found.
 - **System → Customization**: when an addon no longer recognizes the page, it shows **Original design** with a tip on how to fix it, instead of a long message and a list of page elements.
-- **System**: the page has one card each for **Kuraka**, **Mail (Stalwart)** and **Helpdesk (Libredesk)**, with its versions, updates, patches and customization. **Patches** lists every patch Kuraka adds, each with what it adds under its name, folded, and opens on its own when some could not be applied. **Check now** moved to the top of the page.
+- **System**: the page has one card each for **Kuraka**, **Mail (Stalwart)** and **Helpdesk (Libredesk)**, with its versions, updates, patches and customization. **Patches** lists every patch Kuraka adds with what it adds, in the panel language, folded, and opens on its own when some could not be applied. **Check now** moved to the top of the page.
 
 ### Fixed
 
