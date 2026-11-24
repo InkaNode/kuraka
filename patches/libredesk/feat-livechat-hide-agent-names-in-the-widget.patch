@@ -1,0 +1,547 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 00:27:20 -0500
+Subject: [PATCH] feat(livechat): hide agent names in the widget
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: Live chats can hide agent names and photos, so visitors only see the brand name and logo.
+Kuraka-Adds-Es: Los chats en vivo pueden ocultar el nombre y la foto de los agentes, así el visitante solo ve el nombre y el logo de la marca.
+Kuraka-Missing-En: Visitors always see the name and photo of the agent who answers the chat.
+Kuraka-Missing-Es: El visitante siempre ve el nombre y la foto del agente que atiende el chat.
+---
+ cmd/chat.go                                   | 19 +++++--
+ cmd/chat_kuraka.go                            | 24 +++++++++
+ cmd/chat_kuraka_test.go                       | 52 +++++++++++++++++++
+ cmd/widget_campaign.go                        |  7 +++
+ cmd/widget_campaign_reply.go                  |  2 +-
+ cmd/widget_transcript.go                      |  3 ++
+ .../admin/inbox/LivechatInboxForm.vue         | 12 +++++
+ .../admin/inbox/livechatFormSchema.js         |  1 +
+ .../widget/src/components/ChatMessages.vue    | 23 +++++++-
+ .../apps/widget/src/components/ChatTitle.vue  | 11 ++--
+ .../src/components/ProactiveMessage.vue       | 23 +++++++-
+ i18n/en-US.json                               |  2 +
+ i18n/es-ES.json                               |  2 +
+ internal/inbox/channel/livechat/kuraka.go     | 48 +++++++++++++++++
+ internal/inbox/channel/livechat/livechat.go   | 48 +++++++++--------
+ 15 files changed, 244 insertions(+), 33 deletions(-)
+ create mode 100644 cmd/chat_kuraka.go
+ create mode 100644 cmd/chat_kuraka_test.go
+ create mode 100644 internal/inbox/channel/livechat/kuraka.go
+
+diff --git a/cmd/chat.go b/cmd/chat.go
+index af55ef02..c23872bc 100644
+--- a/cmd/chat.go
++++ b/cmd/chat.go
+@@ -305,7 +305,7 @@ func handleChatInit(r *fastglue.Request) error {
+ 	}
+ 
+ 	// Build response with conversation and messages and add business hours info.
+-	resp, err := buildConversationResponseWithBusinessHours(app, conversation)
++	resp, err := buildConversationResponseWithBusinessHours(app, conversation, config)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -490,9 +490,13 @@ func handleChatGetConversation(r *fastglue.Request) error {
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
++	config, err := getWidgetConfig(r)
++	if err != nil {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, err.Error(), nil))
++	}
+ 
+ 	// Build conversation response with messages and attachments.
+-	resp, err := buildConversationResponseWithBusinessHours(app, conversation)
++	resp, err := buildConversationResponseWithBusinessHours(app, conversation, config)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -535,6 +539,13 @@ func handleGetConversations(r *fastglue.Request) error {
+ 			}
+ 		}
+ 	}
++	config, err := getWidgetConfig(r)
++	if err != nil {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, err.Error(), nil))
++	}
++	for i := range chatConversations {
++		hideAgentNamesInConversation(config, &chatConversations[i])
++	}
+ 
+ 	return r.SendEnvelope(chatConversations)
+ }
+@@ -959,11 +970,13 @@ func checkConversationPermissions(app *App, config livechat.Config, isVisitor bo
+ }
+ 
+ // buildConversationResponseWithBusinessHours builds conversation response with business hours info
+-func buildConversationResponseWithBusinessHours(app *App, conversation cmodels.Conversation) (conversationResponseWithBusinessHours, error) {
++func buildConversationResponseWithBusinessHours(app *App, conversation cmodels.Conversation, config livechat.Config) (conversationResponseWithBusinessHours, error) {
+ 	widgetResp, err := app.conversation.BuildWidgetConversationResponse(conversation, true)
+ 	if err != nil {
+ 		return conversationResponseWithBusinessHours{}, err
+ 	}
++	hideAgentNamesInConversation(config, &widgetResp.Conversation)
++	hideAgentNamesInMessages(config, widgetResp.Messages)
+ 
+ 	resp := conversationResponseWithBusinessHours{
+ 		conversationResp: conversationResp{
+diff --git a/cmd/chat_kuraka.go b/cmd/chat_kuraka.go
+new file mode 100644
+index 00000000..bf966d09
+--- /dev/null
++++ b/cmd/chat_kuraka.go
+@@ -0,0 +1,24 @@
++package main
++
++import (
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
++)
++
++// hideAgentNamesInConversation replaces agent names and avatars with the brand name in a
++// widget conversation when the inbox has hide_agent_names.
++func hideAgentNamesInConversation(config livechat.Config, c *cmodels.ChatConversation) {
++	if c.Assignee != nil {
++		config.MaskAgent(c.Assignee.Type, &c.Assignee.FirstName, &c.Assignee.LastName, &c.Assignee.AvatarURL)
++	}
++	a := &c.LastChatMessage.Author
++	config.MaskAgent(a.Type, &a.FirstName, &a.LastName, &a.AvatarURL)
++	hideAgentNamesInMessages(config, c.UnreadMessages)
++}
++
++// hideAgentNamesInMessages does the same for widget messages.
++func hideAgentNamesInMessages(config livechat.Config, messages []cmodels.ChatMessage) {
++	for i := range messages {
++		config.MaskMessageAuthor(&messages[i].Author, &messages[i].Meta)
++	}
++}
+diff --git a/cmd/chat_kuraka_test.go b/cmd/chat_kuraka_test.go
+new file mode 100644
+index 00000000..c75e3f73
+--- /dev/null
++++ b/cmd/chat_kuraka_test.go
+@@ -0,0 +1,52 @@
++package main
++
++import (
++	"testing"
++
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/volatiletech/null/v9"
++)
++
++func TestHideAgentNamesInConversation(t *testing.T) {
++	newConv := func() cmodels.ChatConversation {
++		avatar := null.StringFrom("https://x/a.png")
++		c := cmodels.ChatConversation{
++			Assignee: &umodels.ChatUser{FirstName: "Ana", LastName: "Ruiz", AvatarURL: avatar, Type: umodels.UserTypeAgent, AvailabilityStatus: "away"},
++			UnreadMessages: []cmodels.ChatMessage{
++				{
++					Author: cmodels.MessageAuthor{FirstName: "Bot", AvatarURL: avatar, Type: umodels.UserTypeAIAssistant},
++					Meta:   []byte(`{"campaign_id":"123","proactive_sender":"Bot"}`),
++				},
++				{Author: cmodels.MessageAuthor{FirstName: "Visitor", AvatarURL: avatar, Type: umodels.UserTypeVisitor}},
++			},
++		}
++		c.LastChatMessage.Author = umodels.ChatUser{FirstName: "Ana", AvatarURL: avatar, Type: cmodels.SenderTypeAgent}
++		return c
++	}
++
++	c := newConv()
++	hideAgentNamesInConversation(livechat.Config{BrandName: "Acme"}, &c)
++	if c.Assignee.FirstName != "Ana" || !c.Assignee.AvatarURL.Valid {
++		t.Fatalf("names must be kept when hide_agent_names is off: %+v", c.Assignee)
++	}
++
++	c = newConv()
++	hideAgentNamesInConversation(livechat.Config{BrandName: "Acme", HideAgentNames: true}, &c)
++	if a := c.Assignee; a.FirstName != "Acme" || a.LastName != "" || a.AvatarURL.Valid || a.AvailabilityStatus != "away" {
++		t.Fatalf("assignee not masked: %+v", a)
++	}
++	if a := c.UnreadMessages[0].Author; a.FirstName != "Acme" || a.AvatarURL.Valid {
++		t.Fatalf("AI author not masked: %+v", a)
++	}
++	if a := c.UnreadMessages[1].Author; a.FirstName != "Visitor" || !a.AvatarURL.Valid {
++		t.Fatalf("visitor must be kept: %+v", a)
++	}
++	if a := c.LastChatMessage.Author; a.FirstName != "Acme" || a.AvatarURL.Valid {
++		t.Fatalf("last message author not masked: %+v", a)
++	}
++	if meta := string(c.UnreadMessages[0].Meta); meta != `{"campaign_id":"123"}` {
++		t.Fatalf("unexpected masked message metadata: %s", meta)
++	}
++}
+diff --git a/cmd/widget_campaign.go b/cmd/widget_campaign.go
+index 717b6a25..df8fbbc8 100644
+--- a/cmd/widget_campaign.go
++++ b/cmd/widget_campaign.go
+@@ -104,6 +104,13 @@ func handleWidgetCampaign(r *fastglue.Request) error {
+ 		if err != nil {
+ 			return sendErrorEnvelope(r, err)
+ 		}
++		if config.HideAgentNames {
++			c.snapshot.Sender, c.snapshot.Avatar = config.BrandName, ""
++			return r.SendEnvelope(struct {
++				proactive.Delivery
++				Snapshot proactive.Snapshot `json:"snapshot"`
++			}{Delivery: delivery, Snapshot: c.snapshot})
++		}
+ 		return r.SendEnvelope(delivery)
+ 	}
+ 	return r.SendEnvelope(nil)
+diff --git a/cmd/widget_campaign_reply.go b/cmd/widget_campaign_reply.go
+index 0d513d1d..bd535bc2 100644
+--- a/cmd/widget_campaign_reply.go
++++ b/cmd/widget_campaign_reply.go
+@@ -95,7 +95,7 @@ func handleWidgetCampaignReply(r *fastglue.Request, req chatInitReq, inbox imode
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+-	resp, err := buildConversationResponseWithBusinessHours(app, conversation)
++	resp, err := buildConversationResponseWithBusinessHours(app, conversation, config)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/cmd/widget_transcript.go b/cmd/widget_transcript.go
+index 5c8e0bf1..5cc2842b 100644
+--- a/cmd/widget_transcript.go
++++ b/cmd/widget_transcript.go
+@@ -32,6 +32,9 @@ func handleWidgetTranscript(r *fastglue.Request) error {
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
++	for i := range messages {
++		config.MaskMessageAuthor(&messages[i].Author, &messages[i].Meta)
++	}
+ 	filename := fmt.Sprintf("transcript-%s.txt", stringutil.SanitizeFilename(conversation.ReferenceNumber))
+ 	r.RequestCtx.Response.Header.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+ 	r.RequestCtx.Response.Header.Set("Cache-Control", "private, no-store")
+diff --git a/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue b/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
+index 435be10e..95794332 100644
+--- a/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
++++ b/frontend/apps/main/src/features/admin/inbox/LivechatInboxForm.vue
+@@ -293,6 +293,17 @@
+                     />
+                   </FormItem>
+                 </FormField>
++
++                <FormField v-slot="{ componentField, handleChange }" name="config.hide_agent_names">
++                  <FormItem>
++                    <SwitchField
++                      :title="$t('admin.inbox.livechat.hideAgentNames')"
++                      :description="$t('admin.inbox.livechat.hideAgentNames.description')"
++                      :checked="componentField.modelValue"
++                      @update:checked="handleChange"
++                    />
++                  </FormItem>
++                </FormField>
+               </AccordionContent>
+             </AccordionItem>
+             <AccordionItem value="branding" data-section="branding">
+@@ -1781,6 +1792,7 @@ const form = useForm({
+       website_url: '',
+       theme: 'light',
+       show_powered_by: true,
++      hide_agent_names: false,
+       language: 'en-US',
+       fallback_language: 'en-US',
+       branding: {
+diff --git a/frontend/apps/main/src/features/admin/inbox/livechatFormSchema.js b/frontend/apps/main/src/features/admin/inbox/livechatFormSchema.js
+index 6203ee83..4a98fb46 100644
+--- a/frontend/apps/main/src/features/admin/inbox/livechatFormSchema.js
++++ b/frontend/apps/main/src/features/admin/inbox/livechatFormSchema.js
+@@ -259,6 +259,7 @@ export const createFormSchema = (t) =>
+       website_url: optionalUrl(t),
+       theme: z.enum(['system', 'light', 'dark']),
+       show_powered_by: z.boolean(),
++      hide_agent_names: z.boolean().default(false),
+       language: z.string().min(1, { message: t('globals.messages.required') }),
+       fallback_language: z.string().optional(),
+       branding: z.object({
+diff --git a/frontend/apps/widget/src/components/ChatMessages.vue b/frontend/apps/widget/src/components/ChatMessages.vue
+index 4a02679f..2328c565 100644
+--- a/frontend/apps/widget/src/components/ChatMessages.vue
++++ b/frontend/apps/widget/src/components/ChatMessages.vue
+@@ -126,8 +126,24 @@
+               v-if="!groupWithNext"
+               class="text-[10px] text-muted-foreground mt-1 flex items-center gap-2"
+             >
+-              <span v-if="message.author.type === 'agent'">
+-                {{ message.author.first_name }} {{ message.author.last_name }}
++              <span
++                v-if="
++                  message.author.type === 'agent' ||
++                  (config.hide_agent_names && message.author.type === 'ai_assistant')
++                "
++                :class="{ 'flex items-center gap-1': config.hide_agent_names }"
++              >
++                <img
++                  v-if="config.hide_agent_names && brandLogo"
++                  :src="brandLogo"
++                  alt=""
++                  class="size-3.5 rounded-full object-cover"
++                />
++                {{
++                  config.hide_agent_names
++                    ? config.brand_name
++                    : `${message.author.first_name} ${message.author.last_name}`
++                }}
+                 •
+                 {{ getMessageTime(message.created_at) }}
+               </span>
+@@ -233,6 +249,9 @@ const { hasUserScrolled, scrollToBottom, scrollToOffset, handleScroll } = useSti
+ )
+ 
+ const config = computed(() => widgetStore.config)
++const brandLogo = computed(
++  () => widgetStore.branding?.logo_url || widgetStore.branding?.launcher?.logo_url
++)
+ const isTyping = computed(() => chatStore.isTyping)
+ const isLoadingConversation = computed(() => chatStore.isLoadingConversation)
+ const GROUP_WINDOW_MS = 60_000
+diff --git a/frontend/apps/widget/src/components/ChatTitle.vue b/frontend/apps/widget/src/components/ChatTitle.vue
+index 21ca1445..2e78a32c 100644
+--- a/frontend/apps/widget/src/components/ChatTitle.vue
++++ b/frontend/apps/widget/src/components/ChatTitle.vue
+@@ -121,11 +121,14 @@ const chatTitle = computed(() => {
+ 
+   const config = widgetStore.config
+   const assignee = chatStore.currentConversation?.assignee
++  const branding = widgetStore.branding
++  const brandLogo = (config.hide_agent_names && branding?.logo_url) || branding?.launcher?.logo_url
+   if (assignee?.id && assignee?.id > 0) {
++    const name = config.hide_agent_names ? config.brand_name : assignee.first_name
+     return {
+-      name: assignee.first_name,
+-      avatarUrl: assignee.avatar_url || '',
+-      avatarFallback: assignee.first_name.charAt(0).toUpperCase(),
++      name,
++      avatarUrl: (config.hide_agent_names ? brandLogo : assignee.avatar_url) || '',
++      avatarFallback: name.charAt(0).toUpperCase(),
+       availability_status: displayStatus(assignee.availability_status),
+       expectation: assignee.expectation || '',
+       hasAssignee: true
+@@ -134,7 +137,7 @@ const chatTitle = computed(() => {
+   // Default brand values
+   return {
+     name: config.brand_name,
+-    avatarUrl: widgetStore.branding?.launcher?.logo_url || '',
++    avatarUrl: brandLogo || '',
+     avatarFallback: config.brand_name.charAt(0).toUpperCase(),
+     availability_status: null,
+     hasAssignee: false
+diff --git a/frontend/apps/widget/src/components/ProactiveMessage.vue b/frontend/apps/widget/src/components/ProactiveMessage.vue
+index db6fd252..f5a27f98 100644
+--- a/frontend/apps/widget/src/components/ProactiveMessage.vue
++++ b/frontend/apps/widget/src/components/ProactiveMessage.vue
+@@ -1,12 +1,33 @@
+ <template>
+   <div class="flex flex-col items-start">
+     <div class="max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-5 break-words bg-muted text-foreground whitespace-pre-wrap">{{ pending.snapshot.message }}</div>
+-    <div class="text-[10px] text-muted-foreground mt-1">{{ pending.snapshot.sender }}</div>
++    <div
++      class="text-[10px] text-muted-foreground mt-1"
++      :class="{ 'flex items-center gap-1': widgetStore.config.hide_agent_names }"
++    >
++      <img
++        v-if="widgetStore.config.hide_agent_names && brandLogo"
++        :src="brandLogo"
++        alt=""
++        class="size-3.5 rounded-full object-cover"
++      />
++      {{
++        widgetStore.config.hide_agent_names ? widgetStore.config.brand_name : pending.snapshot.sender
++      }}
++    </div>
+   </div>
+ </template>
+ 
+ <script setup>
++import { computed } from 'vue'
++import { useWidgetStore } from '@widget/store/widget.js'
++
+ defineProps({
+   pending: { type: Object, required: true }
+ })
++
++const widgetStore = useWidgetStore()
++const brandLogo = computed(
++  () => widgetStore.branding?.logo_url || widgetStore.branding?.launcher?.logo_url
++)
+ </script>
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index bd4f0dbf..2774e0f0 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -420,6 +420,8 @@
+   "admin.inbox.livechat.showOfficeHoursInChat.description": "Show when the team will be next available",
+   "admin.inbox.livechat.showPoweredBy": "Show powered by",
+   "admin.inbox.livechat.showPoweredBy.description": "Show \"Powered by Libredesk\" when a conversation is open in the widget",
++  "admin.inbox.livechat.hideAgentNames": "Hide agent names",
++  "admin.inbox.livechat.hideAgentNames.description": "Show the brand name and logo instead of the agent's name and photo in the widget",
+   "admin.inbox.livechat.startConversationButtonText": "Start conversation button text",
+   "admin.inbox.livechat.tabs.appearance": "Appearance",
+   "admin.inbox.livechat.tabs.installation": "Installation",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 4ffe75ef..6d4a348b 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -239,6 +239,8 @@
+   "admin.inbox.livechat.showOfficeHoursInChat.description": "Mostrar cuándo el equipo estará disponible próximamente",
+   "admin.inbox.livechat.showPoweredBy": "Mostrar 'desarrollado por'",
+   "admin.inbox.livechat.showPoweredBy.description": "Mostrar \"Propulsado por Libredesk\" cuando una conversación está abierta en el widget",
++  "admin.inbox.livechat.hideAgentNames": "Ocultar nombres de agentes",
++  "admin.inbox.livechat.hideAgentNames.description": "Muestra el nombre y el logo de la marca en lugar del nombre y la foto del agente en el widget",
+   "admin.inbox.livechat.startConversationButtonText": "Texto del botón iniciar conversación",
+   "admin.inbox.livechat.tabs.appearance": "Apariencia",
+   "admin.inbox.livechat.tabs.installation": "Instalación",
+diff --git a/internal/inbox/channel/livechat/kuraka.go b/internal/inbox/channel/livechat/kuraka.go
+new file mode 100644
+index 00000000..555bb789
+--- /dev/null
++++ b/internal/inbox/channel/livechat/kuraka.go
+@@ -0,0 +1,48 @@
++package livechat
++
++import (
++	"encoding/json"
++	"maps"
++
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/volatiletech/null/v9"
++)
++
++// MaskAgent replaces an agent's name with the brand name and drops the avatar when
++// hide_agent_names is on. Contacts and visitors are left untouched.
++func (c Config) MaskAgent(userType string, firstName, lastName *string, avatarURL *null.String) {
++	if !c.HideAgentNames || (userType != umodels.UserTypeAgent && userType != umodels.UserTypeAIAssistant) {
++		return
++	}
++	*firstName, *lastName, *avatarURL = c.BrandName, "", null.String{}
++}
++
++// MaskMessageAuthor hides agent identity in the author and historical campaign metadata.
++func (c Config) MaskMessageAuthor(author *models.MessageAuthor, meta *json.RawMessage) {
++	if !c.HideAgentNames {
++		return
++	}
++	c.MaskAgent(author.Type, &author.FirstName, &author.LastName, &author.AvatarURL)
++	if len(*meta) == 0 {
++		return
++	}
++	var fields map[string]json.RawMessage
++	if err := json.Unmarshal(*meta, &fields); err == nil && fields["proactive_sender"] != nil {
++		delete(fields, "proactive_sender")
++		*meta, _ = json.Marshal(fields) // Unmarshal already validated each JSON value.
++	}
++}
++
++// maskAssignee copies and masks a full assignment update while preserving presence fields.
++func (c Config) maskAssignee(data map[string]any) map[string]any {
++	assignee, _ := data["assignee"].(map[string]any)
++	if _, hasName := assignee["first_name"]; !c.HideAgentNames || !hasName {
++		return data
++	}
++	data = maps.Clone(data)
++	assignee = maps.Clone(assignee)
++	assignee["first_name"], assignee["last_name"], assignee["avatar_url"] = c.BrandName, "", nil
++	data["assignee"] = assignee
++	return data
++}
+diff --git a/internal/inbox/channel/livechat/livechat.go b/internal/inbox/channel/livechat/livechat.go
+index 7c4d9bfb..0b692697 100644
+--- a/internal/inbox/channel/livechat/livechat.go
++++ b/internal/inbox/channel/livechat/livechat.go
+@@ -163,6 +163,7 @@ type Config struct {
+ 	WebsiteURL       string               `json:"website_url"`
+ 	Theme            string               `json:"theme"`
+ 	ShowPoweredBy    bool                 `json:"show_powered_by"`
++	HideAgentNames   bool                 `json:"hide_agent_names"`
+ 	Language         string               `json:"language"`
+ 	FallbackLanguage string               `json:"fallback_language"`
+ 	Users            AudienceConfig       `json:"users"`
+@@ -434,27 +435,29 @@ func (lc *LiveChat) Send(message models.OutboundMessage) error {
+ 		lc.signAvatarURL(&avatarURL)
+ 	}
+ 
++	data := models.ChatMessage{
++		UUID:             message.UUID,
++		ConversationUUID: message.ConversationUUID,
++		CreatedAt:        message.CreatedAt,
++		Content:          message.Content,
++		TextContent:      message.TextContent,
++		ContentType:      message.ContentType,
++		Meta:             message.Meta,
++		Author: models.MessageAuthor{
++			ID:                 message.SenderID,
++			FirstName:          sender.FirstName,
++			LastName:           sender.LastName,
++			AvatarURL:          avatarURL,
++			AvailabilityStatus: sender.AvailabilityStatus,
++			Type:               sender.Type,
++			LastActiveAt:       sender.LastActiveAt,
++		},
++		Attachments: message.Attachments,
++	}
++	lc.config.MaskMessageAuthor(&data.Author, &data.Meta)
+ 	messageData := map[string]any{
+ 		"type": "new_message",
+-		"data": models.ChatMessage{
+-			UUID:             message.UUID,
+-			ConversationUUID: message.ConversationUUID,
+-			CreatedAt:        message.CreatedAt,
+-			Content:          message.Content,
+-			TextContent:      message.TextContent,
+-			ContentType:      message.ContentType,
+-			Meta:             message.Meta,
+-			Author: models.MessageAuthor{
+-				ID:                 message.SenderID,
+-				FirstName:          sender.FirstName,
+-				LastName:           sender.LastName,
+-				AvatarURL:          avatarURL,
+-				AvailabilityStatus: sender.AvailabilityStatus,
+-				Type:               sender.Type,
+-				LastActiveAt:       sender.LastActiveAt,
+-			},
+-			Attachments: message.Attachments,
+-		},
++		"data": data,
+ 	}
+ 
+ 	messageJSON, err := json.Marshal(messageData)
+@@ -599,10 +602,11 @@ func (lc *LiveChat) BroadcastTypingToClients(conversationUUID string, contactID
+ }
+ 
+ // BroadcastMessageToClients broadcasts a new message to specific widget clients.
+-func (lc *LiveChat) BroadcastMessageToClients(conversationUUID string, contactID int, messageData any) {
++func (lc *LiveChat) BroadcastMessageToClients(conversationUUID string, contactID int, messageData models.ChatMessage) {
+ 	lc.clientsMutex.RLock()
+ 	defer lc.clientsMutex.RUnlock()
+ 
++	lc.config.MaskMessageAuthor(&messageData.Author, &messageData.Meta)
+ 	msg := map[string]any{
+ 		"type": "new_message",
+ 		"data": messageData,
+@@ -630,13 +634,13 @@ func (lc *LiveChat) BroadcastMessageToClients(conversationUUID string, contactID
+ }
+ 
+ // BroadcastConversationToClients broadcasts conversation updates to specific widget clients.
+-func (lc *LiveChat) BroadcastConversationToClients(conversationUUID string, contactID int, conversationData interface{}) {
++func (lc *LiveChat) BroadcastConversationToClients(conversationUUID string, contactID int, conversationData map[string]any) {
+ 	lc.clientsMutex.RLock()
+ 	defer lc.clientsMutex.RUnlock()
+ 
+ 	conversationMessage := map[string]any{
+ 		"type": "conversation_update",
+-		"data": conversationData,
++		"data": lc.config.maskAssignee(conversationData),
+ 	}
+ 
+ 	messageJSON, err := json.Marshal(conversationMessage)

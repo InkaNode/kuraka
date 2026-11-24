@@ -20,3 +20,4 @@ feat-i18n-complete-the-Spanish-translation.patch
 feat-admin-hide-the-Channels-menu-Kuraka-manages-inboxes.patch
 feat-teams-keep-the-assigned-agent-when-the-team-changes.patch
 feat-install-default-business-hours-08-00-to-17-00-set-in-Ge.patch
+feat-livechat-hide-agent-names-in-the-widget.patch
