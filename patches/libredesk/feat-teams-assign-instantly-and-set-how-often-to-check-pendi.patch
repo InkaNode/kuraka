@@ -1,0 +1,975 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 12:12:42 -0500
+Subject: [PATCH] feat(teams): assign instantly and set how often to check
+ pending conversations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: required
+Kuraka-Adds-En: Round robin teams can assign a conversation as soon as it reaches the team, and General and each team set how often to check conversations still without an agent.
+Kuraka-Adds-Es: Los equipos con Round robin pueden asignar una conversación apenas llega al equipo, y General y cada equipo definen cada cuánto revisar las que siguen sin agente.
+Kuraka-Missing-En: Conversations wait up to 5 minutes before they are assigned to an agent, and the time can only be changed in the config file.
+Kuraka-Missing-Es: Las conversaciones esperan hasta 5 minutos antes de asignarse a un agente, y ese tiempo solo se cambia en el archivo de configuración.
+---
+ cmd/init.go                                   |   4 +-
+ cmd/main.go                                   |   6 +-
+ cmd/settings.go                               |   3 +
+ cmd/teams.go                                  |  10 +-
+ config.sample.toml                            |   4 -
+ .../admin/general/GeneralSettingForm.vue      |  32 ++++
+ .../src/features/admin/general/formSchema.js  |   9 +-
+ .../src/features/admin/teams/TeamForm.vue     |  64 ++++++-
+ .../admin/teams/autoAssignIntervals.js        |   6 +
+ .../features/admin/teams/teamFormSchema.js    |   2 +
+ .../cypress/e2e/ui/generalSettingsForm.cy.js  |   4 +-
+ i18n/en-US.json                               |  15 ++
+ i18n/es-ES.json                               |  15 ++
+ internal/autoassigner/autoassigner.go         | 169 ++++++++++++++----
+ internal/autoassigner/autoassigner_test.go    |  85 +++++++++
+ internal/conversation/conversation.go         |  10 ++
+ internal/kuraka/migrate.go                    |   6 +
+ internal/setting/models/models.go             |   2 +
+ internal/team/models/models.go                |   2 +
+ internal/team/queries.sql                     |  10 +-
+ internal/team/team.go                         |   8 +-
+ schema.sql                                    |   2 +
+ 22 files changed, 406 insertions(+), 62 deletions(-)
+ create mode 100644 frontend/apps/main/src/features/admin/teams/autoAssignIntervals.js
+ create mode 100644 internal/autoassigner/autoassigner_test.go
+
+diff --git a/cmd/init.go b/cmd/init.go
+index 71aaac51..bef93ab1 100644
+--- a/cmd/init.go
++++ b/cmd/init.go
+@@ -665,12 +665,12 @@ func initAutomationEngine(db *sqlx.DB, i18n *i18n.I18n) *automation.Engine {
+ }
+ 
+ // initAutoAssigner initializes the auto assigner.
+-func initAutoAssigner(teamManager *team.Manager, userManager *user.Manager, conversationManager *conversation.Manager) *autoassigner.Engine {
++func initAutoAssigner(teamManager *team.Manager, userManager *user.Manager, conversationManager *conversation.Manager, settings *setting.Manager) *autoassigner.Engine {
+ 	systemUser, err := userManager.GetSystemUser()
+ 	if err != nil {
+ 		log.Fatalf("error fetching system user: %v", err)
+ 	}
+-	e, err := autoassigner.New(teamManager, conversationManager, systemUser, initLogger("autoassigner"))
++	e, err := autoassigner.New(teamManager, conversationManager, settings, systemUser, initLogger("autoassigner"))
+ 	if err != nil {
+ 		log.Fatalf("error initializing auto assigner: %v", err)
+ 	}
+diff --git a/cmd/main.go b/cmd/main.go
+index f705ba6a..7397594a 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -241,7 +241,6 @@ func main() {
+ 	}
+ 
+ 	var (
+-		autoAssignInterval          = ko.MustDuration("autoassigner.autoassign_interval")
+ 		unsnoozeInterval            = ko.MustDuration("conversation.unsnooze_interval")
+ 		draftRetentionDuration      = cmp.Or(ko.Duration("conversation.draft_retention_duration"), 360*time.Hour)
+ 		automationWorkers           = ko.MustInt("automation.worker_count")
+@@ -280,7 +279,7 @@ func main() {
+ 		conversation                = initConversations(i18n, sla, status, priority, wsHub, db, inbox, user, team, media, settings, csat, automation, template, webhook, notifDispatcher)
+ 		aiAgent                     = initAIAgent(db, i18n, ai, conversation, inbox, media, settings, user, notifier, rdb)
+ 		helpCenter                  = initHelpCenter(db, i18n, ai)
+-		autoassigner                = initAutoAssigner(team, user, conversation)
++		autoassigner                = initAutoAssigner(team, user, conversation, settings)
+ 		rateLimiter                 = initRateLimit(rdb)
+ 	)
+ 
+@@ -293,6 +292,7 @@ func main() {
+ 	}
+ 	automation.SetSystemUserID(systemUser.ID)
+ 	conversation.SetAIAgent(aiAgent)
++	conversation.SetTeamAssignedHook(autoassigner.Notify)
+ 
+ 	waClient := initWhatsAppClient()
+ 	waTemplates := initWhatsAppTemplates(db, i18n, waClient, inbox)
+@@ -300,7 +300,7 @@ func main() {
+ 	conversation.SetArticleReferenceStore(helpCenter)
+ 
+ 	go automation.Run(ctx, automationWorkers)
+-	go autoassigner.Run(ctx, autoAssignInterval)
++	go autoassigner.Run(ctx)
+ 	go conversation.RunUnsnoozer(ctx, unsnoozeInterval)
+ 	go conversation.RunInactivityCloser(ctx, systemUser)
+ 	go conversation.RunContinuity(ctx)
+diff --git a/cmd/settings.go b/cmd/settings.go
+index 7651b8a4..3ec2963c 100644
+--- a/cmd/settings.go
++++ b/cmd/settings.go
+@@ -67,6 +67,9 @@ func handleUpdateGeneralSettings(r *fastglue.Request) error {
+ 	if req.KeepAssigneeOnTeamChange != "off" && req.KeepAssigneeOnTeamChange != "new_team" && req.KeepAssigneeOnTeamChange != "both_teams" {
+ 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.keepAssigneeOnTeamChange.valid"), nil, envelope.InputError)
+ 	}
++	if req.AutoAssignInterval < 10 || req.AutoAssignInterval > 3600 {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, app.i18n.T("admin.general.autoAssignInterval.valid"), nil, envelope.InputError)
++	}
+ 
+ 	app.Lock()
+ 	oldLang := ko.String("app.lang")
+diff --git a/cmd/teams.go b/cmd/teams.go
+index 274e53ff..25519e40 100644
+--- a/cmd/teams.go
++++ b/cmd/teams.go
+@@ -72,7 +72,10 @@ func handleCreateTeam(r *fastglue.Request) error {
+ 	if req.Weight < 0 || req.Weight > 1000 {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
+ 	}
+-	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee)
++	if req.AutoAssignInterval.Valid && (req.AutoAssignInterval.Int < 10 || req.AutoAssignInterval.Int > 3600) {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("admin.general.autoAssignInterval.valid"), nil))
++	}
++	createdTeam, err := app.team.Create(req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee, req.AutoAssignInstant, req.AutoAssignInterval)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+@@ -98,7 +101,10 @@ func handleUpdateTeam(r *fastglue.Request) error {
+ 	if req.Weight < 0 || req.Weight > 1000 {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("kuraka.teamWeightRange"), nil))
+ 	}
+-	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee)
++	if req.AutoAssignInterval.Valid && (req.AutoAssignInterval.Int < 10 || req.AutoAssignInterval.Int > 3600) {
++		return sendErrorEnvelope(r, envelope.NewError(envelope.InputError, app.i18n.T("admin.general.autoAssignInterval.valid"), nil))
++	}
++	updatedTeam, err := app.team.Update(id, req.Name, req.Timezone, req.ConversationAssignmentType, req.BusinessHoursID, req.SLAPolicyID, req.Emoji.String, req.MaxAutoAssignedConversations, req.Weight, req.KeepAssignee, req.AutoAssignInstant, req.AutoAssignInterval)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
+diff --git a/config.sample.toml b/config.sample.toml
+index 3253b124..f171d6dc 100644
+--- a/config.sample.toml
++++ b/config.sample.toml
+@@ -135,10 +135,6 @@ max_steps = 6
+ # Conversation messages sent to the model as history. (5-100)
+ max_history_messages = 30
+ 
+-[autoassigner]
+-# How often to run automatic conversation assignment
+-autoassign_interval = "5m"
+-
+ [webhook]
+ # Number of webhook delivery workers
+ workers = 5
+diff --git a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+index af829e0c..5cdee420 100644
+--- a/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
++++ b/frontend/apps/main/src/features/admin/general/GeneralSettingForm.vue
+@@ -141,7 +141,38 @@
+             <FormMessage />
+           </FormItem>
+         </FormField>
++        <FormField v-slot="{ componentField }" name="auto_assign_interval">
++          <FormItem>
++            <FormLabel>{{ t('admin.general.autoAssignInterval') }}</FormLabel>
++            <FormControl>
++              <Select v-bind="componentField">
++                <SelectTrigger>
++                  <SelectValue />
++                </SelectTrigger>
++                <SelectContent>
++                  <SelectGroup>
++                    <SelectItem v-for="o in autoAssignIntervalOptions(t)" :key="o.value" :value="o.value">
++                      {{ o.label }}
++                    </SelectItem>
++                  </SelectGroup>
++                </SelectContent>
++              </Select>
++            </FormControl>
++            <FormDescription>{{ t('admin.general.autoAssignInterval.description') }}</FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
+       </FormGrid>
++      <FormField v-slot="{ componentField, handleChange }" name="auto_assign_instant">
++        <FormItem class="mt-5">
++          <SwitchField
++            :title="t('admin.general.autoAssignInstant')"
++            :description="t('admin.general.autoAssignInstant.description')"
++            :checked="componentField.modelValue"
++            @update:checked="handleChange"
++          />
++        </FormItem>
++      </FormField>
+     </fieldset>
+     <fieldset class="min-w-0">
+       <legend :class="SECTION_HEADING_CLASS">{{ t('globals.terms.branding') }}</legend>
+@@ -255,6 +286,7 @@ import { timeZones } from '@main/constants/timezones.js'
+ import { useI18n } from 'vue-i18n'
+ import SwitchField from '@shared-ui/components/SwitchField.vue'
+ import api from '@main/api/index.js'
++import { autoAssignIntervalOptions } from '@main/features/admin/teams/autoAssignIntervals.js'
+ 
+ const emitter = useEmitter()
+ const { t } = useI18n()
+diff --git a/frontend/apps/main/src/features/admin/general/formSchema.js b/frontend/apps/main/src/features/admin/general/formSchema.js
+index d70815e9..3fa6aa05 100644
+--- a/frontend/apps/main/src/features/admin/general/formSchema.js
++++ b/frontend/apps/main/src/features/admin/general/formSchema.js
+@@ -47,5 +47,12 @@ export const createFormSchema = (t) => z.object({
+     .min(1, { message: t('admin.general.activityCollapseAfter.valid') })
+     .max(50, { message: t('admin.general.activityCollapseAfter.valid') })
+     .optional(),
+-  keep_assignee_on_team_change: z.enum(['off', 'new_team', 'both_teams']).optional()
++  keep_assignee_on_team_change: z.enum(['off', 'new_team', 'both_teams']).optional(),
++  auto_assign_instant: z.boolean().optional(),
++  auto_assign_interval: z
++    .number({ message: t('admin.general.autoAssignInterval.valid') })
++    .int()
++    .min(10, { message: t('admin.general.autoAssignInterval.valid') })
++    .max(3600, { message: t('admin.general.autoAssignInterval.valid') })
++    .optional()
+ })
+diff --git a/frontend/apps/main/src/features/admin/teams/TeamForm.vue b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+index d386d462..03feb968 100644
+--- a/frontend/apps/main/src/features/admin/teams/TeamForm.vue
++++ b/frontend/apps/main/src/features/admin/teams/TeamForm.vue
+@@ -145,6 +145,52 @@
+       </FormField>
+     </FormGrid>
+ 
++    <FormGrid v-if="form.values.conversation_assignment_type === 'Round robin'" class="team-settings-grid">
++      <FormField v-slot="{ componentField }" name="auto_assign_instant">
++        <FormItem>
++          <FormLabel>{{ $t('kuraka.teamAutoAssignInstant') }}</FormLabel>
++          <FormControl>
++            <Select v-bind="componentField">
++              <SelectTrigger>
++                <SelectValue />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectGroup>
++                  <SelectItem value="general">{{ $t('kuraka.teamAutoAssignUseGeneral') }}</SelectItem>
++                  <SelectItem value="yes">{{ $t('kuraka.teamAutoAssignYes') }}</SelectItem>
++                  <SelectItem value="no">{{ $t('kuraka.teamAutoAssignNo') }}</SelectItem>
++                </SelectGroup>
++              </SelectContent>
++            </Select>
++          </FormControl>
++          <FormDescription>{{ $t('kuraka.teamAutoAssignInstantHelp') }}</FormDescription>
++          <FormMessage />
++        </FormItem>
++      </FormField>
++      <FormField v-slot="{ componentField }" name="auto_assign_interval">
++        <FormItem>
++          <FormLabel>{{ $t('kuraka.teamAutoAssignInterval') }}</FormLabel>
++          <FormControl>
++            <Select v-bind="componentField">
++              <SelectTrigger>
++                <SelectValue />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectGroup>
++                  <SelectItem :value="0">{{ $t('kuraka.teamAutoAssignUseGeneral') }}</SelectItem>
++                  <SelectItem v-for="o in autoAssignIntervalOptions(t)" :key="o.value" :value="o.value">
++                    {{ o.label }}
++                  </SelectItem>
++                </SelectGroup>
++              </SelectContent>
++            </Select>
++          </FormControl>
++          <FormDescription>{{ $t('kuraka.teamAutoAssignIntervalHelp') }}</FormDescription>
++          <FormMessage />
++        </FormItem>
++      </FormField>
++    </FormGrid>
++
+     <FormField v-slot="{ componentField, handleChange }" name="keep_assignee">
+       <FormItem>
+         <SwitchField
+@@ -169,6 +215,7 @@ import { Button } from '@shared-ui/components/ui/button/index.js'
+ import { useForm } from 'vee-validate'
+ import { toTypedSchema } from '@vee-validate/zod'
+ import { createTeamFormSchema } from './teamFormSchema.js'
++import { autoAssignIntervalOptions } from './autoAssignIntervals.js'
+ import {
+   Select,
+   SelectContent,
+@@ -226,7 +273,7 @@ const submitLabel = computed(() => {
+ const DEFAULT_TEAM_EMOJI = '👥'
+ 
+ const form = useForm({
+-  initialValues: { emoji: DEFAULT_TEAM_EMOJI },
++  initialValues: { emoji: DEFAULT_TEAM_EMOJI, auto_assign_instant: 'general', auto_assign_interval: 0 },
+   validationSchema: toTypedSchema(createTeamFormSchema(t))
+ })
+ 
+@@ -265,7 +312,9 @@ const onSubmit = form.handleSubmit((values) => {
+   props.submitForm({
+     ...values,
+     business_hours_id: values.business_hours_id > 0 ? values.business_hours_id : null,
+-    sla_policy_id: values.sla_policy_id > 0 ? values.sla_policy_id : null
++    sla_policy_id: values.sla_policy_id > 0 ? values.sla_policy_id : null,
++    auto_assign_instant: { yes: true, no: false }[values.auto_assign_instant] ?? null,
++    auto_assign_interval: values.auto_assign_interval > 0 ? values.auto_assign_interval : null
+   })
+ })
+ 
+@@ -273,7 +322,16 @@ watch(
+   () => props.initialValues,
+   (newValues) => {
+     if (Object.keys(newValues).length === 0) return
+-    form.setValues({ ...newValues, emoji: newValues.emoji || DEFAULT_TEAM_EMOJI }, false)
++    const instant = newValues.auto_assign_instant
++    form.setValues(
++      {
++        ...newValues,
++        emoji: newValues.emoji || DEFAULT_TEAM_EMOJI,
++        auto_assign_instant: instant == null ? 'general' : instant ? 'yes' : 'no',
++        auto_assign_interval: newValues.auto_assign_interval || 0
++      },
++      false
++    )
+   },
+   { immediate: true }
+ )
+diff --git a/frontend/apps/main/src/features/admin/teams/autoAssignIntervals.js b/frontend/apps/main/src/features/admin/teams/autoAssignIntervals.js
+new file mode 100644
+index 00000000..9aa4610c
+--- /dev/null
++++ b/frontend/apps/main/src/features/admin/teams/autoAssignIntervals.js
+@@ -0,0 +1,6 @@
++// Choices for how often round robin teams check conversations still without an agent, in seconds.
++export const autoAssignIntervalOptions = (t) =>
++  [10, 30, 60, 120, 300, 600, 900, 1800, 3600].map((s) => ({
++    value: s,
++    label: s < 60 ? t('kuraka.seconds', { n: s }) : s < 3600 ? t('kuraka.minutes', s / 60) : t('kuraka.hour')
++  }))
+diff --git a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+index 0f26b494..ff7aabf2 100644
+--- a/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
++++ b/frontend/apps/main/src/features/admin/teams/teamFormSchema.js
+@@ -14,6 +14,8 @@ export const createTeamFormSchema = (t) => z.object({
+   max_auto_assigned_conversations: z.coerce.number().default(0),
+   weight: z.coerce.number().int().min(0).max(1000).default(0),
+   keep_assignee: z.boolean().default(false),
++  auto_assign_instant: z.enum(['general', 'yes', 'no']).default('general'),
++  auto_assign_interval: z.number().int().default(0),
+   timezone: z.string({ required_error: t('globals.messages.required') }),
+   business_hours_id: z.number().optional().nullable(),
+   sla_policy_id: z.number().optional().nullable(),
+diff --git a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+index 83fa6030..f7cba87a 100644
+--- a/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
++++ b/frontend/cypress/e2e/ui/generalSettingsForm.cy.js
+@@ -16,7 +16,9 @@ describe('General settings form', () => {
+     'app.business_hours_id',
+     'app.show_conversation_subject',
+     'app.activity_collapse_after',
+-    'app.keep_assignee_on_team_change'
++    'app.keep_assignee_on_team_change',
++    'app.auto_assign_instant',
++    'app.auto_assign_interval'
+   ]
+ 
+   let original
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index fc66bd3e..081bf213 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -271,6 +271,11 @@
+   "admin.general.keepAssigneeOnTeamChange.valid": "Choose one of the options",
+   "admin.general.allowedFileUploadExtensions": "Allowed file upload extensions",
+   "admin.general.allowedFileUploadExtensions.description": "Use `*` to permit all file types. For example: `jpg, png, pdf`",
++  "admin.general.autoAssignInstant": "Assign instantly",
++  "admin.general.autoAssignInstant.description": "Round robin teams give a conversation to an agent as soon as it reaches the team. Each team can change this.",
++  "admin.general.autoAssignInterval": "Check pending conversations every",
++  "admin.general.autoAssignInterval.description": "Round robin teams also look for conversations still without an agent, for example when nobody was available. Each team can change this.",
++  "admin.general.autoAssignInterval.valid": "Choose a time between 10 seconds and 1 hour",
+   "admin.general.businessHours.placeholder": "Select business hours",
+   "admin.general.faviconURL": "Favicon URL",
+   "admin.general.faviconURL.valid": "Favicon URL should be a valid URL",
+@@ -1579,17 +1584,27 @@
+   "kuraka.displayAs": "Display as",
+   "kuraka.expandSidebar": "Expand sidebar",
+   "kuraka.groupByWeight": "Group by weight",
++  "kuraka.hour": "1 hour",
+   "kuraka.hoursSinceTagAdded": "Hours since tag added",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
+   "kuraka.liveChatInvalidField": "Invalid live chat setting: {name}",
++  "kuraka.minutes": "{n} minute | {n} minutes",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
++  "kuraka.seconds": "{n} seconds",
+   "kuraka.selectConditionTag": "Select the tag for the condition",
+   "kuraka.sortManual": "My order (drag)",
+   "kuraka.sortName": "Alphabetical",
+   "kuraka.sortTeamInboxes": "Sort team inboxes",
+   "kuraka.sortWeight": "By weight",
+   "kuraka.switchInbox": "Switch inbox",
++  "kuraka.teamAutoAssignInstant": "Assign instantly",
++  "kuraka.teamAutoAssignInstantHelp": "Give a conversation to an agent as soon as it reaches this team.",
++  "kuraka.teamAutoAssignInterval": "Check pending conversations every",
++  "kuraka.teamAutoAssignIntervalHelp": "How often this team looks for conversations still without an agent.",
++  "kuraka.teamAutoAssignNo": "No",
++  "kuraka.teamAutoAssignUseGeneral": "Use the general setting",
++  "kuraka.teamAutoAssignYes": "Yes",
+   "kuraka.teamKeepAssignee": "Keep the assigned agent",
+   "kuraka.teamKeepAssigneeHelp": "When a conversation moves to this team, its assigned agent stays. Admin → General sets whether the previous team must also have this on.",
+   "kuraka.teamWeight": "Weight",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index fc45b37f..a480ca46 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -112,6 +112,11 @@
+   "admin.general.activityCollapseAfter": "Contraer eventos de actividad a partir de",
+   "admin.general.activityCollapseAfter.description": "En una conversación, los grupos con más eventos de actividad que este número se muestran contraídos.",
+   "admin.general.activityCollapseAfter.valid": "Escribe un número entre 1 y 50",
++  "admin.general.autoAssignInstant": "Asignar al instante",
++  "admin.general.autoAssignInstant.description": "Los equipos con Round robin pasan una conversación a un agente apenas llega al equipo. Cada equipo puede cambiarlo.",
++  "admin.general.autoAssignInterval": "Revisar pendientes cada",
++  "admin.general.autoAssignInterval.description": "Los equipos con Round robin también buscan conversaciones que siguen sin agente, por ejemplo cuando no había nadie disponible. Cada equipo puede cambiarlo.",
++  "admin.general.autoAssignInterval.valid": "Elige un tiempo entre 10 segundos y 1 hora",
+   "admin.general.keepAssigneeOnTeamChange": "Mantener al agente asignado al cambiar de equipo",
+   "admin.general.keepAssigneeOnTeamChange.bothTeams": "Cuando ambos equipos lo tienen activado",
+   "admin.general.keepAssigneeOnTeamChange.description": "Activa Mantener al agente asignado en cada equipo que deba mantenerlo.",
+@@ -845,17 +850,27 @@
+   "kuraka.displayAs": "Mostrar como",
+   "kuraka.expandSidebar": "Expandir barra",
+   "kuraka.groupByWeight": "Agrupar por peso",
++  "kuraka.hour": "1 hora",
+   "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
+   "kuraka.liveChatInvalidField": "Ajuste del chat en vivo no válido: {name}",
++  "kuraka.minutes": "{n} minuto | {n} minutos",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
++  "kuraka.seconds": "{n} segundos",
+   "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
+   "kuraka.sortManual": "Mi orden (arrastrar)",
+   "kuraka.sortName": "Alfabético",
+   "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
+   "kuraka.sortWeight": "Por peso",
+   "kuraka.switchInbox": "Cambiar de buzón",
++  "kuraka.teamAutoAssignInstant": "Asignar al instante",
++  "kuraka.teamAutoAssignInstantHelp": "Pasar una conversación a un agente apenas llega a este equipo.",
++  "kuraka.teamAutoAssignInterval": "Revisar pendientes cada",
++  "kuraka.teamAutoAssignIntervalHelp": "Cada cuánto este equipo busca conversaciones que siguen sin agente.",
++  "kuraka.teamAutoAssignNo": "No",
++  "kuraka.teamAutoAssignUseGeneral": "Usar el general",
++  "kuraka.teamAutoAssignYes": "Sí",
+   "kuraka.teamKeepAssignee": "Mantener al agente asignado",
+   "kuraka.teamKeepAssigneeHelp": "Cuando una conversación pasa a este equipo, su agente asignado se queda. Admin → General define si el equipo anterior también debe tenerlo activado.",
+   "kuraka.teamWeight": "Peso",
+diff --git a/internal/autoassigner/autoassigner.go b/internal/autoassigner/autoassigner.go
+index 943219f7..1bb37330 100644
+--- a/internal/autoassigner/autoassigner.go
++++ b/internal/autoassigner/autoassigner.go
+@@ -3,6 +3,7 @@ package autoassigner
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"math/rand"
+@@ -14,6 +15,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/conversation/models"
+ 	tmodels "github.com/abhinavxd/libredesk/internal/team/models"
+ 	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/jmoiron/sqlx/types"
+ 	"github.com/mr-karan/balance"
+ 	"github.com/zerodha/logf"
+ )
+@@ -25,6 +27,11 @@ var (
+ 
+ const (
+ 	AssignmentTypeRoundRobin = "Round robin"
++
++	// tickInterval is how often the engine checks which teams are due, the shortest allowed check interval.
++	tickInterval = 10 * time.Second
++	// defaultCheckInterval is used when app.auto_assign_interval cannot be read.
++	defaultCheckInterval = 5 * time.Minute
+ )
+ 
+ type conversationStore interface {
+@@ -38,6 +45,10 @@ type teamStore interface {
+ 	GetMembers(teamID int) ([]tmodels.TeamMember, error)
+ }
+ 
++type settingsStore interface {
++	Get(key string) (types.JSONText, error)
++}
++
+ // Engine represents a manager for assigning unassigned conversations
+ // to team agents in a round-robin pattern.
+ type Engine struct {
+@@ -46,9 +57,15 @@ type Engine struct {
+ 	balanceMu              sync.Mutex
+ 	teamMaxAutoAssignments map[int]int
+ 
++	// lastRun holds when each team was last checked, only used by the Run goroutine.
++	lastRun map[int]time.Time
++	// notify receives team IDs that just got a conversation, for instant assignment.
++	notify chan int
++
+ 	systemUser        umodels.User
+ 	conversationStore conversationStore
+ 	teamStore         teamStore
++	settingsStore     settingsStore
+ 	lo                *logf.Logger
+ 	closed            bool
+ 	closedMu          sync.Mutex
+@@ -57,10 +74,13 @@ type Engine struct {
+ 
+ // New initializes a new Engine instance, set up with the provided team manager,
+ // conversation manager, and logger.
+-func New(teamStore teamStore, conversationStore conversationStore, systemUser umodels.User, lo *logf.Logger) (*Engine, error) {
++func New(teamStore teamStore, conversationStore conversationStore, settingsStore settingsStore, systemUser umodels.User, lo *logf.Logger) (*Engine, error) {
+ 	var e = Engine{
+ 		conversationStore:      conversationStore,
+ 		teamStore:              teamStore,
++		settingsStore:          settingsStore,
++		lastRun:                make(map[int]time.Time),
++		notify:                 make(chan int, 256),
+ 		systemUser:             systemUser,
+ 		lo:                     lo,
+ 		teamMaxAutoAssignments: make(map[int]int),
+@@ -70,9 +90,10 @@ func New(teamStore teamStore, conversationStore conversationStore, systemUser um
+ }
+ 
+ // Run initiates the conversation assignment process and is to be invoked as a goroutine.
+-// This function continuously assigns unassigned conversations to agents at regular intervals.
+-func (e *Engine) Run(ctx context.Context, autoAssignInterval time.Duration) {
+-	ticker := time.NewTicker(autoAssignInterval)
++// Every tickInterval it checks the round robin teams whose check interval has passed, and it checks
++// a team right away when Notify reports a new conversation for it and the team assigns instantly.
++func (e *Engine) Run(ctx context.Context) {
++	ticker := time.NewTicker(tickInterval)
+ 	defer ticker.Stop()
+ 
+ 	e.wg.Add(1)
+@@ -82,25 +103,114 @@ func (e *Engine) Run(ctx context.Context, autoAssignInterval time.Duration) {
+ 		select {
+ 		case <-ctx.Done():
+ 			return
+-		case <-ticker.C:
+-			e.closedMu.Lock()
+-			closed := e.closed
+-			e.closedMu.Unlock()
+-			if closed {
++		case teamID := <-e.notify:
++			if e.isClosed() {
+ 				return
+ 			}
+-			// Reload the balancer with latest team and user data.
+-			if err := e.reloadBalancer(); err != nil {
+-				e.lo.Error("error reloading balancer", "error", err)
++			notified := map[int]bool{teamID: true}
++		drain:
++			for {
++				select {
++				case id := <-e.notify:
++					notified[id] = true
++				default:
++					break drain
++				}
+ 			}
+-			// Start assigning conversations.
+-			if err := e.assignConversations(); err != nil {
+-				e.lo.Error("error assigning conversations", "error", err)
++			e.runDue(func(t tmodels.Team, instant bool, _ time.Duration) bool { return instant && notified[t.ID] })
++		case now := <-ticker.C:
++			if e.isClosed() {
++				return
+ 			}
++			e.runDue(func(t tmodels.Team, _ bool, interval time.Duration) bool { return e.isDue(now, t.ID, interval) })
+ 		}
+ 	}
+ }
+ 
++// Notify asks for an instant check of a team that just got a conversation. It never blocks;
++// if the queue is full the periodic check picks the conversation up.
++func (e *Engine) Notify(teamID int) {
++	select {
++	case e.notify <- teamID:
++	default:
++	}
++}
++
++// isDue reports whether a team's check interval has passed at now. Half a tick of slack so a 5 minute
++// interval runs at 5 minutes, not 5 minutes and one tick. A team never checked is always due.
++func (e *Engine) isDue(now time.Time, teamID int, interval time.Duration) bool {
++	return now.Add(tickInterval/2).Sub(e.lastRun[teamID]) >= interval
++}
++
++func (e *Engine) isClosed() bool {
++	e.closedMu.Lock()
++	defer e.closedMu.Unlock()
++	return e.closed
++}
++
++// runDue checks the round robin teams for which due returns true, given each team's effective
++// instant and interval settings (the team's own value, else the general one).
++func (e *Engine) runDue(due func(team tmodels.Team, instant bool, interval time.Duration) bool) {
++	teams, err := e.teamStore.GetAll()
++	if err != nil {
++		e.lo.Error("error fetching teams", "error", err)
++		return
++	}
++	instant, interval := e.generalSettings()
++	var selected []tmodels.Team
++	ids := make(map[int]bool)
++	for _, t := range teams {
++		if t.ConversationAssignmentType != AssignmentTypeRoundRobin {
++			continue
++		}
++		ti, tv := instant, interval
++		if t.AutoAssignInstant.Valid {
++			ti = t.AutoAssignInstant.Bool
++		}
++		if t.AutoAssignInterval.Valid {
++			tv = time.Duration(t.AutoAssignInterval.Int) * time.Second
++		}
++		if due(t, ti, tv) {
++			selected = append(selected, t)
++			ids[t.ID] = true
++		}
++	}
++	if len(selected) == 0 {
++		return
++	}
++	now := time.Now()
++	for _, t := range selected {
++		e.lastRun[t.ID] = now
++	}
++	// Reload the balancer with latest team and user data.
++	e.balanceMu.Lock()
++	e.populateTeamBalancer(selected)
++	e.balanceMu.Unlock()
++	if err := e.assignConversations(ids); err != nil {
++		e.lo.Error("error assigning conversations", "error", err)
++	}
++}
++
++// generalSettings reads app.auto_assign_instant and app.auto_assign_interval (seconds), falling back to on and 5 minutes.
++func (e *Engine) generalSettings() (bool, time.Duration) {
++	instant, interval := true, defaultCheckInterval
++	if b, err := e.settingsStore.Get("app.auto_assign_instant"); err == nil {
++		if err := json.Unmarshal(b, &instant); err != nil {
++			e.lo.Error("error parsing auto assign instant setting", "error", err)
++			instant = true
++		}
++	}
++	if b, err := e.settingsStore.Get("app.auto_assign_interval"); err == nil {
++		var secs int
++		if err := json.Unmarshal(b, &secs); err != nil || secs < 10 {
++			e.lo.Error("invalid auto assign interval setting", "value", string(b))
++		} else {
++			interval = time.Duration(secs) * time.Second
++		}
++	}
++	return instant, interval
++}
++
+ // Close signals the Engine to stop its auto-assignment process.
+ // It sets the closed flag, which will cause the Run loop to exit.
+ func (e *Engine) Close() {
+@@ -113,25 +223,8 @@ func (e *Engine) Close() {
+ 	e.wg.Wait()
+ }
+ 
+-// reloadBalancer updates the round-robin balancer with the latest user and team data.
+-func (e *Engine) reloadBalancer() error {
+-	e.balanceMu.Lock()
+-	defer e.balanceMu.Unlock()
+-
+-	err := e.populateTeamBalancer()
+-	if err != nil {
+-		return err
+-	}
+-	return nil
+-}
+-
+-// populateTeamBalancer populates the team balancer pool with the team members.
+-func (e *Engine) populateTeamBalancer() error {
+-	teams, err := e.teamStore.GetAll()
+-	if err != nil {
+-		return err
+-	}
+-
++// populateTeamBalancer populates the team balancer pool with the members of the given teams. Callers hold balanceMu.
++func (e *Engine) populateTeamBalancer(teams []tmodels.Team) {
+ 	for _, team := range teams {
+ 		if team.ConversationAssignmentType != AssignmentTypeRoundRobin {
+ 			continue
+@@ -189,12 +282,11 @@ func (e *Engine) populateTeamBalancer() error {
+ 		// Set max auto assigned conversations for the team
+ 		e.teamMaxAutoAssignments[team.ID] = team.MaxAutoAssignedConversations
+ 	}
+-	return nil
+ }
+ 
+ // assignConversations function fetches conversations that have been assigned to teams but not to any individual user,
+-// and then proceeds to assign them to team members based on a round-robin strategy.
+-func (e *Engine) assignConversations() error {
++// and then proceeds to assign them to team members based on a round-robin strategy. Only conversations of the given teams are assigned.
++func (e *Engine) assignConversations(teamIDs map[int]bool) error {
+ 	unassignedConversations, err := e.conversationStore.GetUnassignedConversations()
+ 	if err != nil {
+ 		return fmt.Errorf("fetching unassigned conversations: %w", err)
+@@ -206,6 +298,9 @@ func (e *Engine) assignConversations() error {
+ 
+ 	for _, conv := range unassignedConversations {
+ 		teamID := conv.AssignedTeamID.Int
++		if !teamIDs[teamID] {
++			continue
++		}
+ 		teamMax := e.teamMaxAutoAssignments[teamID]
+ 		poolSize := e.poolSize(teamID)
+ 
+diff --git a/internal/autoassigner/autoassigner_test.go b/internal/autoassigner/autoassigner_test.go
+new file mode 100644
+index 00000000..7e66e993
+--- /dev/null
++++ b/internal/autoassigner/autoassigner_test.go
+@@ -0,0 +1,85 @@
++package autoassigner
++
++import (
++	"testing"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	tmodels "github.com/abhinavxd/libredesk/internal/team/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/jmoiron/sqlx/types"
++	"github.com/volatiletech/null/v9"
++	"github.com/zerodha/logf"
++)
++
++type fakeStore struct {
++	teams   []tmodels.Team
++	convs   []models.Conversation
++	claimed map[string]int
++}
++
++func (f *fakeStore) GetUnassignedConversations() ([]models.Conversation, error) {
++	var out []models.Conversation
++	for _, c := range f.convs {
++		if _, ok := f.claimed[c.UUID]; !ok {
++			out = append(out, c)
++		}
++	}
++	return out, nil
++}
++func (f *fakeStore) ClaimUnassignedConversation(uuid string, userID, _ int, _ umodels.User) error {
++	f.claimed[uuid] = userID
++	return nil
++}
++func (f *fakeStore) ActiveUserConversationsCount(int) (int, error) { return 0, nil }
++func (f *fakeStore) GetAll() ([]tmodels.Team, error)                { return f.teams, nil }
++func (f *fakeStore) GetMembers(teamID int) ([]tmodels.TeamMember, error) {
++	return []tmodels.TeamMember{{ID: teamID * 10}}, nil
++}
++func (f *fakeStore) Get(key string) (types.JSONText, error) {
++	return map[string]types.JSONText{"app.auto_assign_instant": types.JSONText("true"), "app.auto_assign_interval": types.JSONText("300")}[key], nil
++}
++
++func TestRunDue(t *testing.T) {
++	rr := AssignmentTypeRoundRobin
++	f := &fakeStore{
++		teams: []tmodels.Team{
++			{ID: 1, ConversationAssignmentType: rr},
++			{ID: 2, ConversationAssignmentType: rr, AutoAssignInstant: null.BoolFrom(false)},
++			{ID: 3, ConversationAssignmentType: rr, AutoAssignInterval: null.IntFrom(10)},
++			{ID: 4, ConversationAssignmentType: "Manual"},
++		},
++		claimed: map[string]int{},
++	}
++	for i := 1; i <= 4; i++ {
++		f.convs = append(f.convs, models.Conversation{UUID: string(rune('0' + i)), AssignedTeamID: null.IntFrom(i)})
++	}
++	lo := logf.New(logf.Opts{})
++	e, _ := New(f, f, f, umodels.User{}, &lo)
++
++	notified := map[int]bool{1: true, 2: true, 4: true}
++	e.runDue(func(tm tmodels.Team, instant bool, _ time.Duration) bool { return instant && notified[tm.ID] })
++	if len(f.claimed) != 1 || f.claimed["1"] != 10 {
++		t.Fatalf("instant: want only team 1 assigned, got %v", f.claimed)
++	}
++
++	tick := func(now time.Time) {
++		e.runDue(func(tm tmodels.Team, _ bool, interval time.Duration) bool { return e.isDue(now, tm.ID, interval) })
++	}
++	f.convs = append(f.convs, models.Conversation{UUID: "5", AssignedTeamID: null.IntFrom(1)})
++	tick(time.Now())
++	if f.claimed["2"] != 20 || f.claimed["3"] != 30 || f.claimed["5"] != 0 || f.claimed["4"] != 0 {
++		t.Fatalf("first tick: want teams 2 and 3 assigned, team 1 not due yet, got %v", f.claimed)
++	}
++
++	f.convs = append(f.convs, models.Conversation{UUID: "6", AssignedTeamID: null.IntFrom(3)}, models.Conversation{UUID: "7", AssignedTeamID: null.IntFrom(2)})
++	tick(time.Now().Add(20 * time.Second))
++	if f.claimed["6"] != 30 || f.claimed["7"] != 0 {
++		t.Fatalf("second tick: want only team 3 assigned, got %v", f.claimed)
++	}
++
++	tick(time.Now().Add(5 * time.Minute))
++	if f.claimed["5"] != 10 || f.claimed["7"] != 20 {
++		t.Fatalf("after 5 minutes: want teams 1 and 2 assigned, got %v", f.claimed)
++	}
++}
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index ece67d0f..f71d831d 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -109,6 +109,8 @@ type Manager struct {
+ 	slaStore                   slaStore
+ 	articleReferenceStore      articleReferenceStore
+ 	settingsStore              settingsStore
++	// onTeamAssigned is called after a conversation is assigned to a team, for instant auto assignment.
++	onTeamAssigned             func(teamID int)
+ 	csatStore                  csatStore
+ 	webhookStore               webhookStore
+ 	dispatcher                 notificationDispatcher
+@@ -144,6 +146,11 @@ type AIAgentEngine interface {
+ 	AssistantExpectation(userID int) string
+ }
+ 
++// SetTeamAssignedHook sets the function called after a conversation is assigned to a team.
++func (c *Manager) SetTeamAssignedHook(fn func(teamID int)) {
++	c.onTeamAssigned = fn
++}
++
+ // SetAIAgent wires the AI agent engine after construction to avoid an import cycle.
+ func (c *Manager) SetAIAgent(e AIAgentEngine) {
+ 	c.aiAgent = e
+@@ -997,6 +1004,9 @@ func (c *Manager) UpdateConversationTeamAssignee(uuid string, teamID int, actor
+ 		"assigned_team_id": teamID,
+ 	})
+ 
++	if c.onTeamAssigned != nil {
++		c.onTeamAssigned(teamID)
++	}
+ 	return nil
+ }
+ 
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index f08b9915..b385a5d2 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -62,6 +62,8 @@ func Migrate(db *sqlx.DB) error {
+   END IF;
+   ALTER TABLE team_members ADD COLUMN IF NOT EXISTS position INT NOT NULL DEFAULT 0;
+   ALTER TABLE teams ADD COLUMN IF NOT EXISTS keep_assignee BOOLEAN NOT NULL DEFAULT false;
++  ALTER TABLE teams ADD COLUMN IF NOT EXISTS auto_assign_instant BOOLEAN NULL;
++  ALTER TABLE teams ADD COLUMN IF NOT EXISTS auto_assign_interval INT NULL CHECK (auto_assign_interval BETWEEN 10 AND 3600);
+  END $$`)
+ 	if err != nil {
+ 		return err
+@@ -79,5 +81,9 @@ func Migrate(db *sqlx.DB) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	_, err = tx.Exec(`INSERT INTO settings (key, value) VALUES ('app.auto_assign_instant', 'true'::jsonb), ('app.auto_assign_interval', '300'::jsonb) ON CONFLICT (key) DO NOTHING`)
++	if err != nil {
++		return err
++	}
+ 	return tx.Commit()
+ }
+diff --git a/internal/setting/models/models.go b/internal/setting/models/models.go
+index 96849d75..d83bd75a 100644
+--- a/internal/setting/models/models.go
++++ b/internal/setting/models/models.go
+@@ -13,6 +13,8 @@ type General struct {
+ 	ShowConversationSubject     bool     `json:"app.show_conversation_subject"`
+ 	ActivityCollapseAfter       int      `json:"app.activity_collapse_after"`
+ 	KeepAssigneeOnTeamChange    string   `json:"app.keep_assignee_on_team_change"`
++	AutoAssignInstant           bool     `json:"app.auto_assign_instant"`
++	AutoAssignInterval          int      `json:"app.auto_assign_interval"`
+ }
+ 
+ type EmailNotification struct {
+diff --git a/internal/team/models/models.go b/internal/team/models/models.go
+index 6dfbf83d..8a4195c3 100644
+--- a/internal/team/models/models.go
++++ b/internal/team/models/models.go
+@@ -22,6 +22,8 @@ type Team struct {
+ 	MaxAutoAssignedConversations int         `db:"max_auto_assigned_conversations" json:"max_auto_assigned_conversations"`
+ 	Weight                       int         `db:"weight" json:"weight"`
+ 	KeepAssignee                 bool        `db:"keep_assignee" json:"keep_assignee"`
++	AutoAssignInstant            null.Bool   `db:"auto_assign_instant" json:"auto_assign_instant"`
++	AutoAssignInterval           null.Int    `db:"auto_assign_interval" json:"auto_assign_interval"`
+ }
+ 
+ type TeamCompact struct {
+diff --git a/internal/team/queries.sql b/internal/team/queries.sql
+index 14a45383..4cf352fc 100644
+--- a/internal/team/queries.sql
++++ b/internal/team/queries.sql
+@@ -1,5 +1,5 @@
+ -- name: get-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee, auto_assign_instant, auto_assign_interval from teams order by updated_at desc;
+ 
+ -- name: get-teams-compact
+ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%') order by name limit NULLIF($2, 0) offset $3;
+@@ -8,10 +8,10 @@ SELECT id, name, emoji from teams where ($1 = '' or name ilike '%' || $1 || '%')
+ SELECT id, name, emoji from teams where id = ANY($1) order by name;
+ 
+ -- name: get-user-teams
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee, auto_assign_instant, auto_assign_interval from teams WHERE id IN (SELECT team_id FROM team_members WHERE user_id = $1) order by updated_at desc;
+ 
+ -- name: get-team
+-SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee from teams where id = $1;
++SELECT id, created_at, updated_at, name, emoji, conversation_assignment_type, max_auto_assigned_conversations, business_hours_id, sla_policy_id, timezone, weight, keep_assignee, auto_assign_instant, auto_assign_interval from teams where id = $1;
+ 
+ -- name: get-team-members
+ SELECT u.id, t.id as team_id, u.availability_status
+@@ -21,10 +21,10 @@ JOIN teams t ON t.id = tm.team_id
+ WHERE t.id = $1 AND u.deleted_at IS NULL AND u.type = 'agent' AND u.enabled = true;
+ 
+ -- name: insert-team
+-INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations, weight, keep_assignee) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
++INSERT INTO teams (name, timezone, conversation_assignment_type, business_hours_id, sla_policy_id, emoji, max_auto_assigned_conversations, weight, keep_assignee, auto_assign_instant, auto_assign_interval) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
+ 
+ -- name: update-team
+-UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, weight = $9, keep_assignee = $10, updated_at = now() where id = $1 RETURNING *;
++UPDATE teams set name = $2, timezone = $3, conversation_assignment_type = $4, business_hours_id = $5, sla_policy_id = $6, emoji = $7, max_auto_assigned_conversations = $8, weight = $9, keep_assignee = $10, auto_assign_instant = $11, auto_assign_interval = $12, updated_at = now() where id = $1 RETURNING *;
+ 
+ -- name: upsert-user-teams
+ WITH delete_old_teams AS (
+diff --git a/internal/team/team.go b/internal/team/team.go
+index 4c1bc800..54e72183 100644
+--- a/internal/team/team.go
++++ b/internal/team/team.go
+@@ -117,9 +117,9 @@ func (u *Manager) Get(id int) (models.Team, error) {
+ }
+ 
+ // Create creates a new team.
+-func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool) (models.Team, error) {
++func (u *Manager) Create(name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool, autoAssignInstant null.Bool, autoAssignInterval null.Int) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee); err != nil {
++	if err := u.q.InsertTeam.Get(&team, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee, autoAssignInstant, autoAssignInterval); err != nil {
+ 		if dbutil.IsUniqueViolationError(err) {
+ 			return team, envelope.NewError(envelope.GeneralError, u.i18n.T("errors.alreadyExistsTeam"), nil)
+ 		}
+@@ -130,9 +130,9 @@ func (u *Manager) Create(name, timezone, conversationAssignmentType string, busi
+ }
+ 
+ // Update updates an existing team.
+-func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool) (models.Team, error) {
++func (u *Manager) Update(id int, name, timezone, conversationAssignmentType string, businessHrsID, slaPolicyID null.Int, emoji string, maxAutoAssignedConversations, weight int, keepAssignee bool, autoAssignInstant null.Bool, autoAssignInterval null.Int) (models.Team, error) {
+ 	var team models.Team
+-	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee); err != nil {
++	if err := u.q.UpdateTeam.Get(&team, id, name, timezone, conversationAssignmentType, businessHrsID, slaPolicyID, emoji, maxAutoAssignedConversations, weight, keepAssignee, autoAssignInstant, autoAssignInterval); err != nil {
+ 		u.lo.Error("error updating team", "error", err)
+ 		return team, envelope.NewError(envelope.GeneralError, u.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+diff --git a/schema.sql b/schema.sql
+index 22078eea..fe901652 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -1123,6 +1123,8 @@ VALUES
+ 	('app.show_conversation_subject', 'true'::jsonb),
+ 	('app.activity_collapse_after', '2'::jsonb),
+ 	('app.keep_assignee_on_team_change', '"off"'::jsonb),
++	('app.auto_assign_instant', 'true'::jsonb),
++	('app.auto_assign_interval', '300'::jsonb),
+ 	('ai_agent.faq_learning_enabled', 'false'::jsonb),
+     ('notification.email.username', '"admin@yourcompany.com"'::jsonb),
+     ('notification.email.host', '""'::jsonb),
