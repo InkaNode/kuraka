@@ -1,0 +1,583 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 00:30:24 -0500
+Subject: [PATCH] feat(livechat): visitors can end the chat and see when it
+ ends
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: Visitors can end a live chat after confirming, and the widget shows right away when the chat was ended or closed by an agent, with a button to start a new one.
+Kuraka-Adds-Es: El visitante puede terminar el chat en vivo después de confirmar, y el chat muestra al momento cuando se terminó o un agente lo cerró, con un botón para empezar uno nuevo.
+Kuraka-Missing-En: Visitors cannot end a chat, and the widget does not show when an agent closes it.
+Kuraka-Missing-Es: El visitante no puede terminar el chat, y el chat no muestra cuando un agente lo cierra.
+---
+ cmd/chat.go                                   | 23 +++----
+ cmd/handlers.go                               |  1 +
+ cmd/kuraka.go                                 | 30 +++++++++
+ cmd/kuraka_test.go                            | 63 +++++++++++++++++++
+ .../apps/widget/src/components/ChatHeader.vue | 59 ++++++++++++++++-
+ .../widget/src/components/ChatMessages.vue    |  2 +
+ frontend/apps/widget/src/store/chat.js        |  4 ++
+ frontend/apps/widget/src/views/ChatView.vue   | 29 +++++----
+ .../apps/widget/src/websocket.status.test.js  | 50 +++++++++++++++
+ i18n/en-US.json                               |  5 ++
+ i18n/es-ES.json                               |  5 ++
+ internal/conversation/conversation.go         | 11 ++--
+ internal/conversation/queries.sql             |  5 +-
+ internal/conversation/unsnoozer.go            | 18 ++++--
+ 14 files changed, 263 insertions(+), 42 deletions(-)
+ create mode 100644 cmd/kuraka.go
+ create mode 100644 cmd/kuraka_test.go
+ create mode 100644 frontend/apps/widget/src/websocket.status.test.js
+
+diff --git a/cmd/chat.go b/cmd/chat.go
+index c23872bc..0ff19850 100644
+--- a/cmd/chat.go
++++ b/cmd/chat.go
+@@ -616,6 +616,9 @@ func handleChatSubmitHandoffForm(r *fastglue.Request) error {
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, err)
+ 	}
++	if err := canReply(r, conversation); err != nil {
++		return sendErrorEnvelope(r, err)
++	}
+ 	config, err := getWidgetConfig(r)
+ 	if err != nil {
+ 		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, app.i18n.T("globals.messages.somethingWentWrong"), nil))
+@@ -1455,22 +1458,12 @@ func getSessionDuration(config livechat.Config) time.Duration {
+ 	return d
+ }
+ 
+-// canReply checks if the conversation is closed and if the sender is allowed to reply based on inbox settings.
++// canReply rejects widget replies to ended chats.
+ func canReply(r *fastglue.Request, conversation cmodels.Conversation) error {
+-	if conversation.Status.String != cmodels.StatusClosed {
+-		return nil
+-	}
+-	app := r.Context.(*App)
+-	lcConfig, err := getWidgetConfig(r)
+-	if err != nil {
+-		return envelope.NewError(envelope.GeneralError, app.i18n.T("globals.messages.somethingWentWrong"), nil)
+-	}
+-	preventReply := lcConfig.Visitors.PreventReplyToClosedConversation
+-	if !getWidgetIsVisitor(r) {
+-		preventReply = lcConfig.Users.PreventReplyToClosedConversation
+-	}
+-	if preventReply {
+-		return envelope.NewError(envelope.PermissionError, app.i18n.T("widget.conversationClosed"), nil)
++	switch conversation.Status.String {
++	case cmodels.StatusResolved, cmodels.StatusClosed:
++		app := r.Context.(*App)
++		return envelope.NewError(envelope.PermissionError, app.i18n.T("widget.chatEnded"), nil)
+ 	}
+ 	return nil
+ }
+diff --git a/cmd/handlers.go b/cmd/handlers.go
+index 95541f57..45b927be 100644
+--- a/cmd/handlers.go
++++ b/cmd/handlers.go
+@@ -397,6 +397,7 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
+ 	g.GET("/api/v1/widget/chat/conversations/{uuid}/transcript", rateLimit(widgetAuth(handleWidgetTranscript), "widget"))
+ 	g.POST("/api/v1/widget/chat/conversations/{uuid}/message", rateLimit(widgetAuth(handleChatSendMessage), "widget"))
+ 	g.POST("/api/v1/widget/chat/conversations/{uuid}/handoff-form", rateLimit(widgetAuth(handleChatSubmitHandoffForm), "widget"))
++	g.POST("/api/v1/widget/chat/conversations/{uuid}/close", rateLimit(widgetAuth(handleChatCloseConversation), "widget"))
+ 	g.POST("/api/v1/widget/media/upload", rateLimit(widgetAuth(handleWidgetMediaUpload), "widget"))
+ 
+ 	// WhatsApp.
+diff --git a/cmd/kuraka.go b/cmd/kuraka.go
+new file mode 100644
+index 00000000..a7707fb0
+--- /dev/null
++++ b/cmd/kuraka.go
+@@ -0,0 +1,30 @@
++package main
++
++import (
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/zerodha/fastglue"
++)
++
++// handleChatCloseConversation lets the widget contact end their own conversation.
++func handleChatCloseConversation(r *fastglue.Request) error {
++	var (
++		app              = r.Context.(*App)
++		conversationUUID = r.RequestCtx.UserValue("uuid").(string)
++	)
++
++	_, conversation, err := getContactConversation(r, conversationUUID)
++	if err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++
++	actor, err := app.user.GetSystemUser()
++	if err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++
++	if err := app.conversation.UpdateConversationStatus(conversation.UUID, 0, cmodels.StatusClosed, "", actor); err != nil {
++		return sendErrorEnvelope(r, err)
++	}
++	return r.SendEnvelope(true)
++}
++
+diff --git a/cmd/kuraka_test.go b/cmd/kuraka_test.go
+new file mode 100644
+index 00000000..ea130752
+--- /dev/null
++++ b/cmd/kuraka_test.go
+@@ -0,0 +1,63 @@
++package main
++
++import (
++	"testing"
++
++	"github.com/abhinavxd/libredesk/internal/conversation"
++	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
++	"github.com/abhinavxd/libredesk/internal/testutil"
++	"github.com/valyala/fasthttp"
++	"github.com/zerodha/fastglue"
++	"github.com/zerodha/logf"
++)
++
++func TestWidgetCloseConversationRejectsWrongContactOrInbox(t *testing.T) {
++	db := testutil.NewDB(t, "widget_close_ownership")
++	lo := logf.New(logf.Opts{})
++	lang := testutil.NewI18n(t)
++	manager, err := conversation.New(nil, lang, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
++		conversation.Opts{DB: db, Lo: &lo})
++	if err != nil {
++		t.Fatal(err)
++	}
++	app := &App{conversation: manager, i18n: lang, lo: &lo}
++
++	var ownerID, otherContactID, inboxID, otherInboxID int
++	var uuid string
++	for _, contactID := range []*int{&ownerID, &otherContactID} {
++		if err := db.Get(contactID, `INSERT INTO users (type, first_name, last_name) VALUES ('contact', 'Customer', '') RETURNING id`); err != nil {
++			t.Fatal(err)
++		}
++	}
++	for _, inboxID := range []*int{&inboxID, &otherInboxID} {
++		if err := db.Get(inboxID, `INSERT INTO inboxes (name, channel) VALUES ('Chat', 'livechat') RETURNING id`); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := db.Get(&uuid, `INSERT INTO conversations (contact_id, inbox_id, status_id)
++		VALUES ($1, $2, (SELECT id FROM conversation_statuses WHERE name = 'Open')) RETURNING uuid`, ownerID, inboxID); err != nil {
++		t.Fatal(err)
++	}
++
++	for _, tc := range []struct {
++		name      string
++		contactID int
++		inboxID   int
++	}{
++		{"wrong contact", otherContactID, inboxID},
++		{"wrong inbox", ownerID, otherInboxID},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			ctx := &fasthttp.RequestCtx{}
++			ctx.SetUserValue("uuid", uuid)
++			ctx.SetUserValue(ctxWidgetContactID, tc.contactID)
++			ctx.SetUserValue(ctxWidgetInbox, imodels.Inbox{ID: tc.inboxID})
++			if err := handleChatCloseConversation(&fastglue.Request{RequestCtx: ctx, Context: app}); err != nil {
++				t.Fatal(err)
++			}
++			if status := ctx.Response.StatusCode(); status != fasthttp.StatusForbidden {
++				t.Fatalf("status = %d, want %d", status, fasthttp.StatusForbidden)
++			}
++		})
++	}
++}
+diff --git a/frontend/apps/widget/src/components/ChatHeader.vue b/frontend/apps/widget/src/components/ChatHeader.vue
+index 075193aa..76f41ab7 100644
+--- a/frontend/apps/widget/src/components/ChatHeader.vue
++++ b/frontend/apps/widget/src/components/ChatHeader.vue
+@@ -13,6 +13,17 @@
+       <ChatTitle />
+     </div>
+     <div class="flex items-center gap-2 ml-auto">
++      <Button
++        v-if="canEndChat"
++        type="button"
++        variant="ghost"
++        size="sm"
++        :aria-expanded="confirmingEnd"
++        :disabled="ending"
++        @click="confirmingEnd = true"
++      >
++        {{ $t('widget.endChat') }}
++      </Button>
+       <DropdownMenu v-if="!widgetStore.isMobileFullScreen || canDownloadTranscript">
+         <DropdownMenuTrigger as-child>
+           <Button type="button" variant="ghost" size="sm" :aria-label="$t('globals.terms.more')">
+@@ -41,12 +52,26 @@
+       <CloseWidgetButton />
+     </div>
+   </div>
++  <div
++    v-if="confirmingEnd && canEndChat"
++    role="group"
++    aria-labelledby="end-chat-confirm"
++    class="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted text-sm"
++  >
++    <span id="end-chat-confirm" class="flex-1">{{ $t('widget.endChatConfirm') }}</span>
++    <Button type="button" variant="destructive" size="sm" :disabled="ending" @click="endChat">
++      {{ $t('widget.endChatYes') }}
++    </Button>
++    <Button type="button" variant="ghost" size="sm" :disabled="ending" @click="confirmingEnd = false">
++      {{ $t('globals.messages.cancel') }}
++    </Button>
++  </div>
+ </template>
+ 
+ <script setup>
+ import { Button } from '@shared-ui/components/ui/button'
+ import { ArrowLeft, Ellipsis, Maximize2, Minimize2, Download } from 'lucide-vue-next'
+-import { computed, ref } from 'vue'
++import { computed, ref, watch } from 'vue'
+ import {
+   DropdownMenu,
+   DropdownMenuTrigger,
+@@ -68,7 +93,39 @@ const canDownloadTranscript = computed(
+   () => widgetStore.config.features?.transcript && !!chatStore.currentConversation?.uuid
+ )
+ 
++const confirmingEnd = ref(false)
++const ending = ref(false)
++const canEndChat = computed(
++  () => !!chatStore.currentConversation?.uuid && !chatStore.isCurrentConversationEnded
++)
++watch([() => chatStore.currentConversation?.uuid, canEndChat], () => {
++  confirmingEnd.value = false
++})
++
+ const emit = defineEmits(['goBack', 'error'])
++const endChat = async () => {
++  if (ending.value || !canEndChat.value) return
++  ending.value = true
++  const conversation = chatStore.currentConversation
++  let statusChanged = false
++  const stopWatchingStatus = watch(
++    () => conversation.status,
++    () => { statusChanged = true },
++    { flush: 'sync' }
++  )
++  try {
++    await api.closeChatConversation(conversation.uuid)
++    if (chatStore.currentConversation === conversation && !statusChanged) {
++      chatStore.updateCurrentConversation({ uuid: conversation.uuid, status: 'Closed' })
++    }
++    confirmingEnd.value = false
++  } catch (error) {
++    emit('error', handleHTTPError(error).message)
++  } finally {
++    stopWatchingStatus()
++    ending.value = false
++  }
++}
+ const downloadTranscript = async () => {
+   if (downloading.value) return
+   downloading.value = true
+diff --git a/frontend/apps/widget/src/components/ChatMessages.vue b/frontend/apps/widget/src/components/ChatMessages.vue
+index 2328c565..c1ee6aee 100644
+--- a/frontend/apps/widget/src/components/ChatMessages.vue
++++ b/frontend/apps/widget/src/components/ChatMessages.vue
+@@ -273,6 +273,7 @@ const messageRows = computed(() => {
+   }))
+ })
+ const suggestedReplyMessageUUID = computed(() => {
++  if (chatStore.isCurrentConversationEnded) return ''
+   const lastMessage = chatStore.getCurrentConversationLastMessage
+   if (
+     lastMessage?.author?.type === 'ai_assistant' &&
+@@ -284,6 +285,7 @@ const suggestedReplyMessageUUID = computed(() => {
+   return ''
+ })
+ const pendingHandoffMessageUUID = computed(() => {
++  if (chatStore.isCurrentConversationEnded) return ''
+   const lastMessage = chatStore.getCurrentConversationLastMessage
+   return lastMessage?.meta?.handoff_form_pending ? lastMessage.uuid : ''
+ })
+diff --git a/frontend/apps/widget/src/store/chat.js b/frontend/apps/widget/src/store/chat.js
+index 897f59a1..4621cab7 100644
+--- a/frontend/apps/widget/src/store/chat.js
++++ b/frontend/apps/widget/src/store/chat.js
+@@ -30,6 +30,9 @@ export const useChatStore = defineStore('chat', () => {
+   const getCurrentConversationLastMessage = computed(
+     () => getCurrentConversationMessages.value.at(-1) || null
+   )
++  const isCurrentConversationEnded = computed(() =>
++    ['Resolved', 'Closed'].includes(currentConversation.value?.status)
++  )
+   const hasConversations = computed(() => conversations.value?.length > 0)
+   const getConversations = computed(() => {
+     if (conversations.value) {
+@@ -275,6 +278,7 @@ export const useChatStore = defineStore('chat', () => {
+     currentConversation,
+     isLoadingConversations,
+     isLoadingConversation,
++    isCurrentConversationEnded,
+ 
+     getCurrentConversationMessages,
+     getCurrentConversationLastMessage,
+diff --git a/frontend/apps/widget/src/views/ChatView.vue b/frontend/apps/widget/src/views/ChatView.vue
+index 4b1c830b..61f34a0a 100644
+--- a/frontend/apps/widget/src/views/ChatView.vue
++++ b/frontend/apps/widget/src/views/ChatView.vue
+@@ -33,14 +33,20 @@
+ 
+     <!-- Message input (only when pre-chat form is not shown) -->
+     <MessageInput
+-      v-if="!showPreChatForm && !isConversationClosed && !hasPendingHandoffForm"
++      v-if="!showPreChatForm && !chatStore.isCurrentConversationEnded && !hasPendingHandoffForm"
+       ref="messageInput"
+       @error="handleError"
+     />
+ 
+-    <!-- Closed conversation notice -->
+-    <div v-if="isConversationClosed" class="border-t p-4 text-center text-sm text-muted-foreground">
+-      {{ $t('widget.conversationClosed') }}
++    <!-- Ended conversation notice -->
++    <div
++      v-if="chatStore.isCurrentConversationEnded"
++      class="border-t p-4 flex flex-col items-center gap-3 text-sm"
++    >
++      <p role="status" class="text-muted-foreground">{{ $t('widget.chatEnded') }}</p>
++      <Button v-if="canStartNewConversation" type="button" size="sm" @click="startNewChat">
++        {{ $t('widget.startNewChat') }}
++      </Button>
+     </div>
+   </div>
+ </template>
+@@ -50,6 +56,8 @@ import { ref, computed } from 'vue'
+ import { useWidgetStore } from '@widget/store/widget.js'
+ import { useUserStore } from '@widget/store/user.js'
+ import { useChatStore } from '@widget/store/chat.js'
++import { useStartConversation } from '@widget/composables/useStartConversation.js'
++import { Button } from '@shared-ui/components/ui/button'
+ import { handleHTTPError } from '@shared-ui/utils/http.js'
+ import api, { saveSession } from '@widget/api/index.js'
+ import WidgetError from '@widget/components/WidgetError.vue'
+@@ -65,6 +73,7 @@ const proactive = useProactiveStore()
+ const widgetStore = useWidgetStore()
+ const userStore = useUserStore()
+ const chatStore = useChatStore()
++const { canStartNewConversation, startNewConversation } = useStartConversation()
+ const errorMessage = ref('')
+ const messageInput = ref(null)
+ const preChatFormSubmitted = ref(false)
+@@ -99,14 +108,10 @@ const showPreChatForm = computed(() => {
+   return isAnonymous || isNewConversation
+ })
+ 
+-// Check if conversation is closed and replies are not allowed
+-const isConversationClosed = computed(() => {
+-  const status = chatStore.currentConversation?.status
+-  if (status !== 'Closed') return false
+-
+-  const settingsKey = userStore.isVisitor ? 'visitors' : 'users'
+-  return config.value?.[settingsKey]?.prevent_reply_to_closed_conversation ?? false
+-})
++const startNewChat = () => {
++  preChatFormSubmitted.value = false
++  startNewConversation()
++}
+ const hasPendingHandoffForm = computed(() => {
+   return !!chatStore.getCurrentConversationLastMessage?.meta?.handoff_form_pending
+ })
+diff --git a/frontend/apps/widget/src/websocket.status.test.js b/frontend/apps/widget/src/websocket.status.test.js
+new file mode 100644
+index 00000000..4fe393a6
+--- /dev/null
++++ b/frontend/apps/widget/src/websocket.status.test.js
+@@ -0,0 +1,50 @@
++// @vitest-environment jsdom
++import { describe, test, expect, beforeEach, vi } from 'vitest'
++import { createPinia, setActivePinia } from 'pinia'
++import { useChatStore } from './store/chat.js'
++import { WidgetWebSocketClient } from './websocket.js'
++
++vi.mock('./store/widget.js', () => ({ useWidgetStore: () => ({}) }))
++vi.mock('@shared-ui/composables/useNotificationSound.js', () => ({ playNotificationSound: vi.fn() }))
++
++describe('Widget websocket conversation status', () => {
++  let chatStore
++
++  beforeEach(() => {
++    setActivePinia(createPinia())
++    chatStore = useChatStore()
++    chatStore.addConversationToList({ uuid: 'convo-1', status: 'Open' })
++    chatStore.addConversationToList({ uuid: 'convo-2', status: 'Open' })
++    chatStore.setCurrentConversation({ uuid: 'convo-1', status: 'Open' })
++  })
++
++  const receive = (data) => {
++    const client = new WidgetWebSocketClient()
++    client.socket = {}
++    client.handleMessage({
++      target: client.socket,
++      data: JSON.stringify({ type: 'conversation_update', data })
++    })
++  }
++
++  test.each(['Resolved', 'Closed'])('updates the current conversation and list to %s', (status) => {
++    receive({ uuid: 'convo-1', status })
++
++    expect(chatStore.currentConversation.status).toBe(status)
++    expect(chatStore.isCurrentConversationEnded).toBe(true)
++    expect(chatStore.conversations.find((c) => c.uuid === 'convo-1').status).toBe(status)
++    expect(chatStore.conversations.find((c) => c.uuid === 'convo-2').status).toBe('Open')
++
++    receive({ uuid: 'convo-1', status: 'Open' })
++
++    expect(chatStore.isCurrentConversationEnded).toBe(false)
++    expect(chatStore.conversations.find((c) => c.uuid === 'convo-1').status).toBe('Open')
++  })
++
++  test('updates only the list entry for another conversation', () => {
++    receive({ uuid: 'convo-2', status: 'Resolved' })
++
++    expect(chatStore.currentConversation.status).toBe('Open')
++    expect(chatStore.conversations.find((c) => c.uuid === 'convo-2').status).toBe('Resolved')
++  })
++})
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 2774e0f0..d721bc2c 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1871,6 +1871,11 @@
+   "widget.campaignUrlLimit": "Add up to 20 page patterns.",
+   "widget.campaignsHint": "Show a message on matching pages before the chat is opened. A conversation is created only when someone replies to it.",
+   "widget.conversationClosed": "This conversation has been closed",
++  "widget.chatEnded": "This chat has ended",
++  "widget.endChat": "End chat",
++  "widget.endChatConfirm": "End this chat?",
++  "widget.endChatYes": "Yes",
++  "widget.startNewChat": "Start a new chat",
+   "widget.conversationNotPermitted": "You cannot access this conversation. Sign in with the account that started it.",
+   "widget.deletedCampaign": "Deleted message",
+   "widget.dismissPreviews": "Dismiss all previews",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 6d4a348b..c38c62f2 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -1053,6 +1053,11 @@
+   "webhook.sendTest": "Enviar prueba",
+   "webhook.sentSuccessfully": "Webhook enviado correctamente",
+   "widget.conversationClosed": "Esta conversación ha sido cerrada",
++  "widget.chatEnded": "Este chat ha terminado",
++  "widget.endChat": "Terminar chat",
++  "widget.endChatConfirm": "¿Terminar este chat?",
++  "widget.endChatYes": "Sí",
++  "widget.startNewChat": "Iniciar un chat nuevo",
+   "widget.ipBlocked": "Acceso denegado",
+   "widget.prechatForm.startChat": "Iniciar chat",
+   "conversationStatus.fixedName": "El nombre del estado no se puede cambiar después de crearlo.",
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index 82b4565b..e8ce6ed1 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -796,14 +796,15 @@ func (c *Manager) GetConversations(viewingUserID, userID int, teamIDs []int, lis
+ 
+ // ReOpenConversation reopens a conversation if it's snoozed, resolved or closed.
+ func (c *Manager) ReOpenConversation(conversationUUID string, actor umodels.User) (bool, error) {
+-	var conversationID int
+-	if err := c.q.ReOpenConversation.QueryRow(conversationUUID).Scan(&conversationID); err != nil {
++	var conversationID, inboxID, contactID int
++	if err := c.q.ReOpenConversation.QueryRow(conversationUUID).Scan(&conversationID, &inboxID, &contactID); err != nil {
+ 		if err == sql.ErrNoRows {
+ 			return false, nil
+ 		}
+ 		c.lo.Error("error reopening conversation", "uuid", conversationUUID, "error", err)
+ 		return false, envelope.NewError(envelope.GeneralError, c.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
++	c.BroadcastConversationToWidget(conversationUUID, contactID, inboxID, map[string]any{"status": models.StatusOpen})
+ 
+ 	// Reopening revives any first response or resolution deadline the resolved status had nulled.
+ 	if err := c.slaStore.EvaluateConversationSLA(conversationID); err != nil {
+@@ -1144,6 +1145,7 @@ func (c *Manager) UpdateConversationStatus(uuid string, statusID int, status, sn
+ 		c.lo.Error("error updating conversation status", "error", err)
+ 		return envelope.NewError(envelope.GeneralError, c.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
++	c.BroadcastConversationToWidget(uuid, conversationBeforeChange.ContactID, conversationBeforeChange.InboxID, map[string]any{"status": status})
+ 
+ 	// Stamps a just-resolved resolution SLA immediately and recomputes the cached deadline.
+ 	if err := c.slaStore.EvaluateConversationSLA(conversationBeforeChange.ID); err != nil {
+@@ -1214,11 +1216,6 @@ func (c *Manager) UpdateConversationStatus(uuid string, statusID int, status, sn
+ 		c.automation.EvaluateConversationUpdateRules(conversation, amodels.EventConversationStatusChange, amodels.PreviousValues(conversationBeforeChange), actor)
+ 	}
+ 
+-	// Broadcast conversation update to widget clients.
+-	c.BroadcastConversationToWidget(uuid, conversationBeforeChange.ContactID, conversationBeforeChange.InboxID, map[string]any{
+-		"status": status,
+-	})
+-
+ 	return nil
+ }
+ 
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 9a5dc51d..451f62e7 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -2,7 +2,8 @@
+ UPDATE conversations
+ SET snoozed_until = NULL, status_id = (SELECT id FROM conversation_statuses WHERE name = 'Open')
+ WHERE snoozed_until <= NOW()
+-  AND status_id = (SELECT id FROM conversation_statuses WHERE name = 'Snoozed');
++  AND status_id = (SELECT id FROM conversation_statuses WHERE name = 'Snoozed')
++RETURNING uuid, contact_id, inbox_id;
+ 
+ -- name: insert-conversation
+ -- $11 = rate limit window start (timestamptz), $12 = max conversations (0 = unlimited)
+@@ -823,7 +824,7 @@ WHERE
+   AND status_id IN (
+     SELECT id FROM conversation_statuses WHERE name NOT IN ('Open')
+   )
+-RETURNING id;
++RETURNING id, inbox_id, contact_id;
+ 
+ -- name: get-conversation-by-message-id
+ SELECT
+diff --git a/internal/conversation/unsnoozer.go b/internal/conversation/unsnoozer.go
+index 07b0e791..ca912320 100644
+--- a/internal/conversation/unsnoozer.go
++++ b/internal/conversation/unsnoozer.go
+@@ -5,6 +5,8 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"time"
++
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
+ )
+ 
+ // RunUnsnoozer runs the conversation unsnoozer.
+@@ -23,15 +25,21 @@ func (c *Manager) RunUnsnoozer(ctx context.Context, unsnoozeInterval time.Durati
+ 
+ // unsnoozeAll unsnoozes all snoozed conversations.
+ func (c *Manager) unsnoozeAll(ctx context.Context) {
+-	res, err := c.q.UnsnoozeAll.ExecContext(ctx)
+-	if err != nil {
++	var reopened []struct {
++		UUID      string `db:"uuid"`
++		ContactID int    `db:"contact_id"`
++		InboxID   int    `db:"inbox_id"`
++	}
++	if err := c.q.UnsnoozeAll.SelectContext(ctx, &reopened); err != nil {
+ 		if !errors.Is(err, context.Canceled) {
+ 			c.lo.Error("error unsnoozing all conversations", "error", err)
+ 		}
+ 		return
+ 	}
+-	rows, _ := res.RowsAffected()
+-	if rows > 0 {
+-		c.lo.Info(fmt.Sprintf("unsnoozed %d conversations", rows))
++	for _, conv := range reopened {
++		c.BroadcastConversationToWidget(conv.UUID, conv.ContactID, conv.InboxID, map[string]any{"status": models.StatusOpen})
++	}
++	if len(reopened) > 0 {
++		c.lo.Info(fmt.Sprintf("unsnoozed %d conversations", len(reopened)))
+ 	}
+ }
