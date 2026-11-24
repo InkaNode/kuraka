@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -38,7 +39,7 @@ func httpURL(raw string) bool {
 // cleanLiveChat trims and validates the fields; a website without a scheme gets
 // https:// and allowed domains are reduced to hosts.
 func cleanLiveChat(lc *libredesk.LiveChat) error {
-	for _, p := range []*string{&lc.Name, &lc.Website, &lc.Color, &lc.LogoURL, &lc.Greeting, &lc.Position} {
+	for _, p := range []*string{&lc.Name, &lc.Website, &lc.Color, &lc.LogoURL, &lc.Greeting, &lc.Position, &lc.Theme, &lc.LauncherLogoURL} {
 		*p = strings.TrimSpace(*p)
 	}
 	if lc.Website != "" && !strings.Contains(lc.Website, "://") {
@@ -79,6 +80,10 @@ func cleanLiveChat(lc *libredesk.LiveChat) error {
 		return invalid("greeting")
 	case lc.Position != "left" && lc.Position != "right":
 		return invalid("position")
+	case !slices.Contains([]string{"", "light", "dark", "system"}, lc.Theme):
+		return invalid("theme")
+	case lc.LauncherLogoURL != "" && !httpURL(lc.LauncherLogoURL):
+		return invalid("launcher_logo_url")
 	}
 	return cleanLiveChatFlow(lc)
 }
@@ -292,9 +297,10 @@ func (s *Server) createLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	if err != nil {
 		return nil, err
 	}
-	if in.LogoURL == "" {
+	if in.LogoURL == "" || in.LauncherLogoURL == "" {
 		if b, err := s.resolvedBranding(r.Context(), "desk", &d.TenantID); err == nil {
-			in.LogoURL = b.Logo
+			in.LogoURL = cmp.Or(in.LogoURL, b.Logo)
+			in.LauncherLogoURL = cmp.Or(in.LauncherLogoURL, b.Icon)
 		}
 	}
 	language := "en-US"
@@ -349,6 +355,11 @@ func (s *Server) updateLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	}
 	if err := cleanLiveChat(&in); err != nil {
 		return nil, err
+	}
+	if in.LauncherLogoURL == "" {
+		if b, err := s.resolvedBranding(r.Context(), "desk", &h.TenantID); err == nil {
+			in.LauncherLogoURL = b.Icon
+		}
 	}
 	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {

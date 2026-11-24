@@ -68,7 +68,7 @@ func TestLiveChats(t *testing.T) {
 	in := map[string]any{"helpdesk_id": ha, "language": "es", "name": " Ventas ", "website_url": "www.a.test", "color": "#1a2b3c", "logo_url": "", "greeting": "Hola", "position": "left"}
 
 	item := map[string]string{"label": "Pedidos", "answer": "Revisa tu correo."}
-	for field, value := range map[string]any{"name": "", "website_url": "ftp://a.test", "color": "red", "logo_url": "javascript:x", "position": "top", "allowed_domains": []string{"a*.test"},
+	for field, value := range map[string]any{"name": "", "website_url": "ftp://a.test", "color": "red", "logo_url": "javascript:x", "position": "top", "allowed_domains": []string{"a*.test"}, "theme": "blue", "launcher_logo_url": "javascript:x",
 		"menu":             map[string]any{"enabled": true, "items": slices.Repeat([]any{item}, 9)},
 		"offline":          map[string]string{"mode": "both", "email": "not-an-email"},
 		"inactivity_close": -1,

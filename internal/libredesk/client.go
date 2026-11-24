@@ -202,6 +202,9 @@ type LiveChat struct {
 	LogoURL  string `json:"logo_url"`
 	Greeting string `json:"greeting"`
 	Position string `json:"position"`
+	// Theme is "light", "dark" or "system"; "" keeps the current one.
+	Theme           string `json:"theme"`
+	LauncherLogoURL string `json:"launcher_logo_url"`
 	// Domains are the sites the widget may load on; nil keeps the current
 	// ones (the website on creation) and empty allows any site.
 	Domains []string `json:"allowed_domains"`
@@ -421,6 +424,10 @@ func applyLiveChat(config map[string]any, lc LiveChat, lastName int64) {
 		child(b, "colors")["primary"] = lc.Color
 		child(b, "launcher")["color"] = lc.Color
 		b["logo_url"] = lc.LogoURL
+		child(b, "launcher")["logo_url"] = lc.LauncherLogoURL
+	}
+	if lc.Theme != "" {
+		config["theme"] = lc.Theme
 	}
 }
 
@@ -531,6 +538,8 @@ func (c *Client) GetLiveChat(ctx context.Context, id int64) (LiveChat, error) {
 		LogoURL:         str(config, "branding", "light", "logo_url"),
 		Greeting:        str(config, "greeting_message"),
 		Position:        str(config, "launcher", "position"),
+		Theme:           str(config, "theme"),
+		LauncherLogoURL: str(config, "branding", "light", "launcher", "logo_url"),
 		Domains:         domains,
 		PreChat:         readPreChat(config),
 		Menu:            &menu,

@@ -454,7 +454,7 @@ func TestLiveChat(t *testing.T) {
 			t.Errorf("TrustedDomain(%q) = %q, want %q", in, got, want)
 		}
 	}
-	lc := LiveChat{Name: "Ventas", Website: "https://www.shop.test", Color: "#112233", LogoURL: "https://shop.test/l.png", Greeting: "Hola", Position: "left"}
+	lc := LiveChat{Name: "Ventas", Website: "https://www.shop.test", Color: "#112233", LogoURL: "https://shop.test/l.png", LauncherLogoURL: "https://shop.test/i.png", Greeting: "Hola", Position: "left"}
 	var created, updated map[string]any
 	c := newTest(t, func(w http.ResponseWriter, r *http.Request) {
 		checkAuth(t, r)
@@ -489,17 +489,20 @@ func TestLiveChat(t *testing.T) {
 		cfg["inactivity_close"] != "30m" || cfg["team_id"] != nil || cfg["visitors"].(map[string]any)["prevent_reply_to_closed_conversation"] != true {
 		t.Fatalf("create flow: %v", cfg)
 	}
-	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "¿Cómo podemos ayudarte?" ||
+	if created["channel"] != "livechat" || cfg["language"] != "es-ES" || cfg["introduction_message"] != "¿Cómo podemos ayudarte?" || cfg["theme"] != "light" ||
+		cfg["branding"].(map[string]any)["light"].(map[string]any)["launcher"].(map[string]any)["logo_url"] != "https://shop.test/i.png" ||
 		cfg["launcher"].(map[string]any)["position"] != "left" || dark["colors"].(map[string]any)["primary"] != "#112233" ||
 		!reflect.DeepEqual(cfg["trusted_domains"], []any{"*.shop.test"}) {
 		t.Fatalf("create body: %v", created)
 	}
+	lc.Theme = "dark"
 	if err := c.UpdateLiveChat(ctx, 9, lc); err != nil {
 		t.Fatal(err)
 	}
 	cfg = updated["config"].(map[string]any)
 	launcher := cfg["launcher"].(map[string]any)
-	if updated["name"] != "Ventas" || updated["secret"] != "••••" || launcher["position"] != "left" || launcher["icon_scale"] != 80.0 ||
+	if updated["name"] != "Ventas" || cfg["theme"] != "dark" ||
+		cfg["branding"].(map[string]any)["dark"].(map[string]any)["launcher"].(map[string]any)["logo_url"] != "https://shop.test/i.png" || updated["secret"] != "••••" || launcher["position"] != "left" || launcher["icon_scale"] != 80.0 ||
 		cfg["home_apps"] == nil || cfg["greeting_message"] != "Hola" || cfg["trusted_domains"] != nil {
 		t.Fatalf("update body: %v", updated)
 	}

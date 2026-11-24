@@ -242,10 +242,12 @@ async function chatDialog(view, existing, notice, onSaved) {
   const name = textInput({ required: true, maxlength: 128, autocomplete: 'off', value: s.name });
   const website = textInput({ class: 'mono', required: true, inputmode: 'url', autocomplete: 'off', spellcheck: 'false', value: s.website_url });
   const color = h('input', { type: 'color', value: HEX.test(s.color) ? s.color : DEFAULT_COLOR });
+  const theme = select({ value: s.theme || 'light', options: ['light', 'dark', 'system'].map(value => ({ value, label: t(`livechat.theme.${value}`) })) });
   const logo = textInput({ class: 'mono', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', value: s.logo_url || '' });
+  const launcherLogo = textInput({ class: 'mono', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', value: s.launcher_logo_url || '' });
   const greeting = h('textarea', { rows: 3, maxlength: 500 }, s.greeting || '');
   const domains = h('textarea', { class: 'mono', rows: 3, spellcheck: 'false', autocomplete: 'off' }, (s.allowed_domains || []).join('\n'));
-  const inputs = { name, website_url: website, color, logo_url: logo, greeting, allowed_domains: domains };
+  const inputs = { name, website_url: website, color, theme, logo_url: logo, launcher_logo_url: launcherLogo, greeting, allowed_domains: domains };
 
   let position = s.position === 'left' ? 'left' : 'right';
   const positionName = uid('position');
@@ -280,8 +282,10 @@ async function chatDialog(view, existing, notice, onSaved) {
     field({ label: t('livechat.website'), input: website, help: t('livechat.website.help') }),
     language ? field({ label: t('livechat.language'), input: language, help: t('livechat.language.help') }) : null,
     field({ label: t('livechat.color'), input: color }),
+    field({ label: t('livechat.theme'), input: theme }),
     positionGroup,
     field({ label: t('livechat.logo'), input: logo, help: t(existing ? 'livechat.logo.help.edit' : 'livechat.logo.help') }),
+    field({ label: t('livechat.launcherLogo'), input: launcherLogo, help: t('livechat.launcherLogo.help') }),
     field({ label: t('livechat.greeting'), input: greeting, help: t('livechat.greeting.help') }),
     domainsField,
     prechat.node,
@@ -290,8 +294,8 @@ async function chatDialog(view, existing, notice, onSaved) {
     button({ label: t(existing ? 'save' : 'create'), variant: 'primary', type: 'submit' }));
   submitForm(form, async () => {
     for (const el of form.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
-    const values = { name: name.value.trim(), website_url: website.value.trim(), color: color.value, position,
-      logo_url: logo.value.trim(), greeting: greeting.value.trim(), allowed_domains: parseDomains(domains.value),
+    const values = { name: name.value.trim(), website_url: website.value.trim(), color: color.value, theme: theme.value, position,
+      logo_url: logo.value.trim(), launcher_logo_url: launcherLogo.value.trim(), greeting: greeting.value.trim(), allowed_domains: parseDomains(domains.value),
       prechat_form: prechat.value(), menu: menu.value(), team_id: team.value(), ...availability.value() };
     const result = existing
       ? await api('PUT', chatPath(view, existing.id), values)
