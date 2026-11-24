@@ -22,9 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk contacts**: contacts without a photo get their own solid avatar colour, one of 40, in the conversation list, messages, the contact panel and Contacts. Each contact always keeps the same colour.
 - **Libredesk in Spanish**: every screen is translated, including the 834 texts that were still in English, such as the automation conditions.
 - **Mail admin in Spanish**: Stalwart's admin follows the browser language when its account is left in English. Form names sent by the Stalwart server stay in English.
+- **Libredesk teams**: **Keep the assigned agent** keeps a conversation's agent when it moves to that team. **Admin → General** chooses whether the new team is enough or both teams need it on. The default is **No**, as before.
+- **Libredesk business hours**: new helpdesks start with Monday to Friday, 08:00 to 17:00, already chosen in **Admin → General**.
 
 ### Changed
 
+- **Libredesk admin**: the **Channels** menu is hidden, because Kuraka creates and manages the inboxes. Its addresses open Admin instead.
 - **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
 - **Libredesk patches**: the tag colour, rule icon, activity setting and team inbox order patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
 - **System → Updates**: the list refreshes on its own every 30 seconds, so versions found by the daily check show without reloading. **Check now** says whether updates were found.
