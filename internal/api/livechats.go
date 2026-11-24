@@ -92,39 +92,49 @@ func liveChatDetail(lc store.LiveChat, settings libredesk.LiveChat, rootURL stri
 	return out
 }
 
-// tenantHelpdesk returns a ready helpdesk of the domain's tenant and its client.
-func (s *Server) tenantHelpdesk(ctx context.Context, d store.Domain, id int64) (HelpdeskAPI, error) {
-	h, err := s.st.GetHelpdesk(ctx, id)
-	if err != nil {
-		return nil, err
+// widgetBase is the helpdesk's public address: https://<name> for a helpdesk
+// provisioned by Kuraka, else the Libredesk Root URL.
+func widgetBase(ctx context.Context, h store.Helpdesk, client HelpdeskAPI) (string, error) {
+	if deskContainer(h) != "" {
+		return deskURL(h), nil
 	}
-	if h.TenantID != d.TenantID {
-		return nil, authz.ErrNotFound
-	}
-	if h.Status == "pending" {
-		return nil, helpdeskNotReady
-	}
-	return s.helpdeskClient(h)
+	return client.RootURL(ctx)
 }
 
-func (s *Server) authorizedLiveChat(r *http.Request) (store.LiveChat, HelpdeskAPI, error) {
+// tenantHelpdesk returns a ready helpdesk of the domain's tenant and its client.
+func (s *Server) tenantHelpdesk(ctx context.Context, d store.Domain, id int64) (store.Helpdesk, HelpdeskAPI, error) {
+	h, err := s.st.GetHelpdesk(ctx, id)
+	if err != nil {
+		return h, nil, err
+	}
+	if h.TenantID != d.TenantID {
+		return h, nil, authz.ErrNotFound
+	}
+	if h.Status == "pending" {
+		return h, nil, helpdeskNotReady
+	}
+	client, err := s.helpdeskClient(h)
+	return h, client, err
+}
+
+func (s *Server) authorizedLiveChat(r *http.Request) (store.LiveChat, store.Helpdesk, HelpdeskAPI, error) {
 	d, err := s.authorizedDomain(r)
 	if err != nil {
-		return store.LiveChat{}, nil, err
+		return store.LiveChat{}, store.Helpdesk{}, nil, err
 	}
 	id, err := positiveID(r.PathValue("chat"), "chat")
 	if err != nil {
-		return store.LiveChat{}, nil, err
+		return store.LiveChat{}, store.Helpdesk{}, nil, err
 	}
 	lc, err := s.st.GetLiveChat(r.Context(), id)
 	if err != nil {
-		return lc, nil, err
+		return lc, store.Helpdesk{}, nil, err
 	}
 	if lc.DomainID != d.ID {
-		return lc, nil, authz.ErrNotFound
+		return lc, store.Helpdesk{}, nil, authz.ErrNotFound
 	}
-	client, err := s.tenantHelpdesk(r.Context(), d, lc.HelpdeskID)
-	return lc, client, err
+	h, client, err := s.tenantHelpdesk(r.Context(), d, lc.HelpdeskID)
+	return lc, h, client, err
 }
 
 func liveChatFailure(message string, err error) error {
@@ -163,7 +173,7 @@ func (s *Server) createLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	if err := cleanLiveChat(&in.LiveChat); err != nil {
 		return nil, err
 	}
-	client, err := s.tenantHelpdesk(r.Context(), d, in.HelpdeskID)
+	h, client, err := s.tenantHelpdesk(r.Context(), d, in.HelpdeskID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +186,7 @@ func (s *Server) createLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	if in.Language == "es" {
 		language = "es-ES"
 	}
-	root, err := client.RootURL(r.Context())
+	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
@@ -195,7 +205,7 @@ func (s *Server) createLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 }
 
 func (s *Server) liveChat(_ http.ResponseWriter, r *http.Request) (any, error) {
-	lc, client, err := s.authorizedLiveChat(r)
+	lc, h, client, err := s.authorizedLiveChat(r)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +213,7 @@ func (s *Server) liveChat(_ http.ResponseWriter, r *http.Request) (any, error) {
 	if err != nil {
 		return nil, liveChatFailure("Live chat could not be read", err)
 	}
-	root, err := client.RootURL(r.Context())
+	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
@@ -211,7 +221,7 @@ func (s *Server) liveChat(_ http.ResponseWriter, r *http.Request) (any, error) {
 }
 
 func (s *Server) updateLiveChat(_ http.ResponseWriter, r *http.Request) (any, error) {
-	lc, client, err := s.authorizedLiveChat(r)
+	lc, h, client, err := s.authorizedLiveChat(r)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +232,7 @@ func (s *Server) updateLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 	if err := cleanLiveChat(&in); err != nil {
 		return nil, err
 	}
-	root, err := client.RootURL(r.Context())
+	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
@@ -238,7 +248,7 @@ func (s *Server) updateLiveChat(_ http.ResponseWriter, r *http.Request) (any, er
 
 // deleteLiveChat also forgets a chat already deleted in the helpdesk.
 func (s *Server) deleteLiveChat(_ http.ResponseWriter, r *http.Request) (any, error) {
-	lc, client, err := s.authorizedLiveChat(r)
+	lc, _, client, err := s.authorizedLiveChat(r)
 	if err != nil {
 		return nil, err
 	}

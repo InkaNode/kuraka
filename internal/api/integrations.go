@@ -559,7 +559,7 @@ func (s *Server) createHelpdeskAgent(_ http.ResponseWriter, r *http.Request) (an
 			s.log.Error("helpdesk agent link failed", "helpdesk_id", h.ID, "agent_id", agentID, "error", err)
 		}
 	}
-	out := map[string]any{"email": email, "url": "https://" + h.Name}
+	out := map[string]any{"email": email, "url": deskURL(h)}
 	if generated {
 		out["password"] = password
 	}

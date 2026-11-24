@@ -26,7 +26,20 @@ function snippet(widget) {
     `<script async src=${JSON.stringify(`${base}/widget.js`)}></script>`;
 }
 
+// publicURL: browsers block public sites from loading http, localhost or LAN addresses.
+function publicURL(raw) {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && u.hostname.includes('.') && u.hostname !== '127.0.0.1';
+  } catch { return false; }
+}
+
 function codeDialog(chat) {
+  if (!publicURL(chat.widget.base_url)) {
+    const dialog = modal({ title: t('livechat.code.title', { name: chat.name }), body: errorBox({ message: t('livechat.code.private', { url: chat.widget.base_url }) }),
+      actions: [button({ label: t('close'), onClick: () => dialog.close() })] });
+    return dialog;
+  }
   const code = snippet(chat.widget);
   const side = t(chat.settings.position === 'left' ? 'livechat.side.left' : 'livechat.side.right');
   const prompt = t('livechat.ai.prompt', { code, side, color: chat.settings.color, origin: chat.widget.base_url.replace(/\/+$/, '') });

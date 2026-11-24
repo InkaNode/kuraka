@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/InkaNode/kuraka/internal/libredesk"
+	"github.com/InkaNode/kuraka/internal/store"
 )
 
 func (f *fakeHelpdesk) CreateLiveChat(_ context.Context, lc libredesk.LiveChat, language string) (int64, string, error) {
@@ -106,4 +107,19 @@ func TestLiveChats(t *testing.T) {
 		t.Fatal("failed create persisted a chat")
 	}
 	deniedAudit(t, cb, "livechat.create")
+
+	hd.liveChatErr = nil
+	sealed, err := h.s.box.Seal([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desk, err := h.st.CreateHelpdesk(context.Background(), store.Helpdesk{TenantID: a, Kind: "libredesk", Name: "desk.a.test", URL: "http://kuraka-a-desk:9000", Status: "ready", APISecretEnc: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in["helpdesk_id"] = desk.ID
+	provisioned := object(t, ca.do("POST", base, in, 201))
+	if base := provisioned["widget"].(map[string]any)["base_url"]; base != "https://desk.a.test" {
+		t.Fatalf("provisioned base_url: %v", base)
+	}
 }

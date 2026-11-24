@@ -63,6 +63,8 @@ Package `internal/libredesk`: `Ping`, `SystemAPIKey`, `ListInboxes`, `CreateEmai
 
 **Disconnect:** delete the Libredesk inbox (best effort), destroy the app password, delete the link.
 
+**Live chat embed code:** `widget.base_url` is the helpdesk's public address: `https://<name>` for a helpdesk provisioned by Kuraka, the Libredesk Root URL (`app.root_url`) for one connected by URL. If it is not a public HTTPS address (http, localhost, 127.0.0.1, ::1 or a host without a dot), the panel shows a warning instead of the code.
+
 ## Migration tool (Phase 5)
 
 Package `internal/migrate` copies one mailbox from any IMAP server into a Stalwart mailbox:

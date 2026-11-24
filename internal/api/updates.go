@@ -158,6 +158,9 @@ func deskContainer(h store.Helpdesk) string {
 	return u.Hostname()
 }
 
+// deskURL is the public address of a helpdesk provisioned by Kuraka.
+func deskURL(h store.Helpdesk) string { return "https://" + h.Name }
+
 // updateResult is written by deploy/apply-updates.sh. Current is the tag the
 // compose project runs after the attempt and Version its upstream version
 // (Libredesk only).
