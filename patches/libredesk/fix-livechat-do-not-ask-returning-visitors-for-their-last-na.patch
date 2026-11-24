@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 01:01:18 -0500
+Subject: [PATCH] fix(livechat): do not ask returning visitors for their last
+ name again
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: Visitors who already chatted are not asked for their last name again when they start a new chat.
+Kuraka-Adds-Es: Los visitantes que ya chatearon no vuelven a ver la pregunta del apellido al empezar un chat nuevo.
+Kuraka-Missing-En: Visitors who already chatted are asked for their last name again on every new chat.
+Kuraka-Missing-Es: Los visitantes que ya chatearon vuelven a ver la pregunta del apellido en cada chat nuevo.
+---
+ frontend/apps/widget/src/components/PreChatForm.vue | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/frontend/apps/widget/src/components/PreChatForm.vue b/frontend/apps/widget/src/components/PreChatForm.vue
+index 7ba48c56..2f6dcbca 100644
+--- a/frontend/apps/widget/src/components/PreChatForm.vue
++++ b/frontend/apps/widget/src/components/PreChatForm.vue
+@@ -327,9 +327,9 @@ const formFields = computed(() => config.value.fields || [])
+ const sortedFields = computed(() => {
+   let fields = formFields.value.filter((field) => field.enabled)
+ 
+-  // If user has session token, exclude default name, email and phone fields
++  // If user has session token, exclude default name, email and phone fields and Kuraka's last name
+   if (props.excludeDefaultFields) {
+-    fields = fields.filter((field) => !['name', 'email', 'phone'].includes(field.key))
++    fields = fields.filter((field) => !['name', 'last_name', 'email', 'phone'].includes(field.key))
+   }
+ 
+   return fields.sort((a, b) => (a.order || 0) - (b.order || 0))
