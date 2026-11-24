@@ -12,17 +12,17 @@ Kuraka-Adds-Es: La administración de correo está en español cuando el navegad
 Kuraka-Missing-En: The mail admin is only in English.
 Kuraka-Missing-Es: La administración de correo está solo en inglés.
 ---
- src/i18n/es.json  | 673 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/i18n/es.json  | 767 ++++++++++++++++++++++++++++++++++++++++++++++
  src/i18n/index.ts |   7 +-
- 2 files changed, 678 insertions(+), 2 deletions(-)
+ 2 files changed, 772 insertions(+), 2 deletions(-)
  create mode 100644 src/i18n/es.json
 
 diff --git a/src/i18n/es.json b/src/i18n/es.json
 new file mode 100644
-index 0000000..df30725
+index 0000000..97bfe56
 --- /dev/null
 +++ b/src/i18n/es.json
-@@ -0,0 +1,673 @@
+@@ -0,0 +1,767 @@
 +{
 +  "accounts": "Cuentas",
 +  "actions": {
@@ -542,20 +542,58 @@ index 0000000..df30725
 +      "detail": "{{label}}: {{detail}}",
 +      "test": "{{operator}} {{values}}",
 +      "slot": "{{days}} {{start}}–{{end}}",
-+      "withoutCopy": "{{addresses}} sin conservar una copia",
-+      "always": "Para cada mensaje",
-+      "if": "Si {{conditions}}",
-+      "except": "{{when}}, excepto si {{exceptions}}",
-+      "noActions": "no hacer nada",
-+      "then": "entonces {{actions}}",
-+      "thenStop": "entonces {{actions}} y dejar de procesar más reglas",
-+      "sentence": "{{when}}, {{then}}."
++      "allAndAny": "{{all}}, y además {{any}}",
++      "rule": {
++        "always_then": "Para cada mensaje, {{actions}}.",
++        "always_thenStop": "Para cada mensaje, {{actions}} y no aplicar más reglas.",
++        "always_onlyStop": "Para cada mensaje, no aplicar más reglas.",
++        "always_nothing": "Para cada mensaje, no hacer nada.",
++        "alwaysExcept_then": "Para cada mensaje, excepto si {{exceptions}}, {{actions}}.",
++        "alwaysExcept_thenStop": "Para cada mensaje, excepto si {{exceptions}}, {{actions}} y no aplicar más reglas.",
++        "alwaysExcept_onlyStop": "Para cada mensaje, excepto si {{exceptions}}, no aplicar más reglas.",
++        "alwaysExcept_nothing": "Para cada mensaje, excepto si {{exceptions}}, no hacer nada.",
++        "if_then": "Si {{conditions}}, {{actions}}.",
++        "if_thenStop": "Si {{conditions}}, {{actions}} y no aplicar más reglas.",
++        "if_onlyStop": "Si {{conditions}}, no aplicar más reglas.",
++        "if_nothing": "Si {{conditions}}, no hacer nada.",
++        "ifExcept_then": "Si {{conditions}}, excepto si {{exceptions}}, {{actions}}.",
++        "ifExcept_thenStop": "Si {{conditions}}, excepto si {{exceptions}}, {{actions}} y no aplicar más reglas.",
++        "ifExcept_onlyStop": "Si {{conditions}}, excepto si {{exceptions}}, no aplicar más reglas.",
++        "ifExcept_nothing": "Si {{conditions}}, excepto si {{exceptions}}, no hacer nada."
++      },
++      "action": {
++        "clearKeywords": "quitar todas las etiquetas agregadas por reglas anteriores",
++        "clearFlag": "quitar la bandera",
++        "removeKeywords_one": "quitar la etiqueta {{keywords}}",
++        "removeKeywords_other": "quitar las etiquetas {{keywords}}",
++        "markRead": "marcarlo como leído",
++        "flag": "marcarlo con bandera",
++        "markNotJunk": "marcarlo como no spam",
++        "addKeywords_one": "agregar la etiqueta {{keywords}}",
++        "addKeywords_other": "agregar las etiquetas {{keywords}}",
++        "setImportance": "poner la importancia en {{level}}",
++        "redirect": "redirigirlo a {{addresses}}",
++        "redirectWithoutCopy": "redirigirlo a {{addresses}} sin conservar una copia",
++        "reply": "responder con una plantilla",
++        "replySubject": "responder con {{subject}}",
++        "replyEveryMessage": "responder a cada mensaje",
++        "replySubjectEveryMessage": "responder con {{subject}} a cada mensaje",
++        "replyDays_one": "responder como máximo una vez al día por remitente",
++        "replyDays_other": "responder como máximo una vez cada {{count}} días por remitente",
++        "replySubjectDays_one": "responder con {{subject}} como máximo una vez al día por remitente",
++        "replySubjectDays_other": "responder con {{subject}} como máximo una vez cada {{count}} días por remitente",
++        "copyTo": "copiarlo a {{mailboxes}}",
++        "moveTo": "moverlo a {{mailboxes}}",
++        "discard": "borrarlo para siempre",
++        "reject": "rechazarlo",
++        "rejectReason": "rechazarlo con {{reason}}"
++      }
 +    },
 +    "issue": {
 +      "rejectNotAlone": "Una regla que rechaza correo no puede tener otras acciones.",
-+      "rejectNeedsAuthentication": "Una regla que rechaza correo debe cumplir todas las condiciones y exigir un remitente autenticado.",
 +      "forwardingNotAllowed": "Tu cuenta no tiene permitido reenviar correo, por lo que esta regla no se puede guardar mientras esté activada.",
-+      "scheduleTooManySlots": "Las condiciones de horario adyacentes se combinan en una sola, que puede tener como máximo {{max}} franjas horarias."
++      "sizeInvalid": "Un tamaño debe ser de al menos 1 KB y como máximo {{max}}.",
++      "keywordConflict": "Una regla no puede agregar y quitar la misma etiqueta."
 +    },
 +    "loadFailed": "No se pudieron cargar las reglas de correo.",
 +    "enableRule": "Activar {{name}}",
@@ -583,30 +621,86 @@ index 0000000..df30725
 +    "chooseMailbox": "Elige un buzón",
 +    "unknownMailbox": "Buzón desconocido ({{id}})",
 +    "builder": {
-+      "all": "todas",
-+      "any": "alguna",
-+      "matchMode": "Condiciones que deben cumplirse",
-+      "rejectNeedsAuthentication": "Rechazar requiere que se cumplan todas las condiciones, incluido un remitente autenticado.",
 +      "conditionN": "Condición {{n}}",
 +      "exceptionN": "Excepción {{n}}",
-+      "actionN": "Acción {{n}}",
-+      "ifPrefix": "Si",
-+      "ifSuffix": "de estas condiciones se cumplen",
-+      "ifOne": "Si se cumple esta condición",
-+      "ifNone": "Para cada mensaje",
 +      "noConditions": "Sin condiciones, la regla se aplica a cada mensaje.",
 +      "addCondition": "Agregar condición",
-+      "except": "Excepto si se cumple alguna de estas",
 +      "addException": "Agregar excepción",
-+      "then": "Entonces",
-+      "addAction": "Agregar acción",
-+      "conditions": "Condiciones",
 +      "rejectNotAlone": "Rechazar debe ser la única acción.",
 +      "rejectStops": "Una regla que rechaza correo siempre detiene el procesamiento de más reglas.",
 +      "actionRequired": "Agrega al menos una acción.",
-+      "missingFields": "Completa {{fields}}."
++      "missingFields": "Completa {{fields}}.",
++      "replyEveryMessage": "Con 0 días entre respuestas, cada mensaje recibe una respuesta.",
++      "onlyStop": "Sin otras acciones, un mensaje que coincide solo evita que se apliquen las reglas siguientes.",
++      "moveToHint": "Moverlo a Correo no deseado también lo marca como spam.",
++      "markNotJunkHint": "Evita que el mensaje vaya a Correo no deseado.",
++      "keywordsToAdd": "Etiquetas para agregar",
++      "keywordsToRemove": "Etiquetas para quitar",
++      "discardHint": "El mensaje no pasa por la Papelera.",
++      "rejectHint": "Rechazar debe ser la única acción. Solo se avisa al remitente cuando se puede verificar su dirección; si no, el mensaje se borra sin aviso.",
++      "alternativeN": "Alternativa {{n}}",
++      "addAlternative": "Agregar alternativa",
++      "which": "Condiciones",
++      "what": "Acciones",
++      "conditionsHint": "Un mensaje debe cumplir todas las condiciones.",
++      "alternatives": "Alternativas",
++      "alternativesHint": "Un mensaje debe cumplir al menos una alternativa.",
++      "alternativesHintAnd": "Además, un mensaje debe cumplir al menos una alternativa.",
++      "addAlternativeHint": "Para aceptar una de varias condiciones, por ejemplo dos remitentes.",
++      "exceptions": "Excepciones",
++      "exceptionsHint": "La regla no se aplica a un mensaje que cumple alguna excepción.",
++      "addExceptionHint": "Excluye mensajes que de otro modo coincidirían.",
++      "and": "y",
++      "or": "o",
++      "preview": "Resumen",
++      "previewIncomplete": "Nada todavía: elige qué hacer con los mensajes que coinciden.",
++      "whenItRuns": "Las reglas se aplican al correo nuevo cuando llega. Guardar no cambia los mensajes que ya están en tus buzones.",
++      "noActions": "Aún no hay acciones. Elige al menos una abajo.",
++      "noActionsReadOnly": "Sin acciones.",
++      "addAction": "Agregar acción",
++      "addAnotherAction": "Agregar otra acción",
++      "stopHint": "Las reglas que están debajo de esta en la lista no se aplican a los mensajes que coinciden.",
++      "group": {
++        "file": "Archivar",
++        "mark": "Marcar",
++        "answer": "Responder",
++        "remove": "Borrar"
++      },
++      "itemField": "{{item}}: {{field}}"
 +    },
-+    "removeItem": "Quitar {{label}}"
++    "removeItem": "Quitar {{label}}",
++    "action": {
++      "markRead": "Marcar como leído",
++      "flag": "Marcar con bandera",
++      "clearFlag": "Quitar la bandera",
++      "markNotJunk": "Marcar como no spam",
++      "addKeywords": "Agregar etiquetas",
++      "removeKeywords": "Quitar etiquetas",
++      "clearKeywords": "Quitar todas las etiquetas agregadas por reglas anteriores",
++      "setImportance": "Poner la importancia",
++      "redirect": "Redirigir a otras direcciones",
++      "reply": "Responder con una plantilla",
++      "copyTo": "Copiar a",
++      "moveTo": "Mover a",
++      "discard": "Borrar para siempre",
++      "reject": "Rechazar con un mensaje",
++      "stopProcessing": "No aplicar más reglas"
++    },
++    "keyword": {
++      "seen": "Leído",
++      "flagged": "Con bandera",
++      "answered": "Respondido",
++      "forwarded": "Reenviado",
++      "draft": "Borrador",
++      "deleted": "Marcado para borrar",
++      "important": "Importante",
++      "junk": "Spam",
++      "notJunk": "No spam",
++      "phishing": "Phishing"
++    },
++    "trashMailbox": "Papelera",
++    "junkMailbox": "Correo no deseado",
++    "addMailbox": "Agregar otro buzón"
 +  },
 +  "schedule": {
 +    "add": "Agregar intervalo",
