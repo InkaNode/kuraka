@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Libredesk in Spanish**: every screen is translated, including the 834 texts that were still in English, such as the automation conditions.
 - **Mail admin in Spanish**: Stalwart's admin follows the browser language when its account is left in English. Form names sent by the Stalwart server stay in English.
 - **Libredesk teams**: **Keep the assigned agent** keeps a conversation's agent when it moves to that team. **Admin → General** chooses whether the new team is enough or both teams need it on. The default is **No**, as before.
+- **Stalwart 1.2**: Kuraka supports Stalwart `v1.2.x`, so System → Updates offers `v1.2.0` instead of waiting. The update starts it once with `STALWART_UPDATE_ROLE_PERMISSIONS=true`, which adds the new mail rule, blocked and safe sender, calendar and Exchange permissions to the default roles. Stalwart 1.2 needs the web interface `v2.1.1` from this release, so update the web interface first.
 - **Libredesk business hours**: new helpdesks start with Monday to Friday, 08:00 to 17:00, already chosen in **Admin → General**.
 
 ### Changed
