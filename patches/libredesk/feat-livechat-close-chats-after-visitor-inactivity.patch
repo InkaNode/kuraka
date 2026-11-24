@@ -1,0 +1,494 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Tue, 24 Nov 2026 00:27:56 -0500
+Subject: [PATCH] feat(livechat): close chats after visitor inactivity
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: Live chats can close by themselves when the visitor does not answer the agent for a set time.
+Kuraka-Adds-Es: Los chats en vivo pueden cerrarse solos cuando el visitante no responde al agente durante un tiempo elegido.
+Kuraka-Missing-En: Live chats stay open until an agent closes them, even when the visitor left long ago.
+Kuraka-Missing-Es: Los chats en vivo siguen abiertos hasta que un agente los cierra, aunque el visitante se haya ido hace mucho.
+---
+ cmd/inboxes.go                                |   3 +
+ cmd/main.go                                   |   1 +
+ i18n/en-US.json                               |   1 +
+ i18n/es-ES.json                               |   1 +
+ internal/conversation/conversation.go         |  33 +++++-
+ internal/conversation/kuraka.go               |  74 +++++++++++++
+ internal/conversation/kuraka_test.go          | 103 ++++++++++++++++++
+ internal/conversation/queries.sql             |  37 ++++++-
+ internal/inbox/channel/livechat/kuraka.go     |  17 +++
+ internal/inbox/channel/livechat/livechat.go   |   1 +
+ .../inbox/channel/livechat/livechat_test.go   |  22 ++++
+ 11 files changed, 289 insertions(+), 4 deletions(-)
+
+diff --git a/cmd/inboxes.go b/cmd/inboxes.go
+index 8a0716fe..43c32d7f 100644
+--- a/cmd/inboxes.go
++++ b/cmd/inboxes.go
+@@ -568,6 +568,9 @@ func validateInbox(app *App, inbox imodels.Inbox, isUpdate bool) error {
+ 				return err
+ 			}
+ 		}
++		if _, err := livechat.ParseInactivityClose(config.InactivityClose); err != nil {
++			return envelope.NewError(envelope.InputError, app.i18n.T("admin.inbox.livechat.inactivityClose.invalidDuration"), nil)
++		}
+ 
+ 		for _, branding := range []livechat.Branding{config.Branding.Light, config.Branding.Dark} {
+ 			if branding.Colors.Primary == "" {
+diff --git a/cmd/main.go b/cmd/main.go
+index 3a43b63c..f705ba6a 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -302,6 +302,7 @@ func main() {
+ 	go automation.Run(ctx, automationWorkers)
+ 	go autoassigner.Run(ctx, autoAssignInterval)
+ 	go conversation.RunUnsnoozer(ctx, unsnoozeInterval)
++	go conversation.RunInactivityCloser(ctx, systemUser)
+ 	go conversation.RunContinuity(ctx)
+ 	go webhook.Run(ctx)
+ 	go notifier.Run(ctx)
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index d721bc2c..f74ecdf2 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -406,6 +406,7 @@
+   "admin.inbox.livechat.preventReplyToClosedConversation.description": "When enabled, users cannot reply to closed conversations",
+   "admin.inbox.livechat.preview.sampleAgentReply": "Happy to help, could you share a few details?",
+   "admin.inbox.livechat.preview.sampleUserMessage": "Hi! How do I get started?",
++  "admin.inbox.livechat.inactivityClose.invalidDuration": "Enter a duration between 1m and 168h, or leave it blank to disable closing due to inactivity.",
+   "admin.inbox.livechat.quickReplies.description": "One reply per line, up to 6. Shown when someone starts a new conversation.",
+   "admin.inbox.livechat.quickReplies.limit": "Add up to 6 quick replies.",
+   "admin.inbox.livechat.quickReplies.placeholder": "I have a question about billing\nHow do I reset my password?",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index c38c62f2..961c17da 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -1249,6 +1249,7 @@
+   "admin.inbox.livechat.prechatForm.handoffOnly.description": "Omite este formulario cuando se inicia un chat. Muéstralo cuando la IA necesite transferir la conversación a una persona.",
+   "admin.inbox.livechat.preview.sampleAgentReply": "Con gusto te ayudo, ¿puedes compartir algunos detalles?",
+   "admin.inbox.livechat.preview.sampleUserMessage": "¡Hola! ¿Cómo empiezo?",
++  "admin.inbox.livechat.inactivityClose.invalidDuration": "Ingresa una duración entre 1m y 168h, o deja el campo vacío para desactivar el cierre por inactividad.",
+   "admin.inbox.livechat.quickReplies.description": "Una respuesta por línea, hasta 6. Aparecen cuando alguien inicia una conversación nueva.",
+   "admin.inbox.livechat.quickReplies.limit": "Agrega hasta 6 respuestas rápidas.",
+   "admin.inbox.livechat.quickReplies.placeholder": "Tengo una pregunta sobre la facturación\n¿Cómo restablezco mi contraseña?",
+diff --git a/internal/conversation/conversation.go b/internal/conversation/conversation.go
+index e8ce6ed1..4501854f 100644
+--- a/internal/conversation/conversation.go
++++ b/internal/conversation/conversation.go
+@@ -422,6 +422,8 @@ type queries struct {
+ 	MarkMessagesContinuityEmailed   *sqlx.Stmt `query:"mark-messages-continuity-emailed"`
+ 	UpdateContinuityEmailTracking   *sqlx.Stmt `query:"update-continuity-email-tracking"`
+ 
++	GetInactiveLiveChatConversations *sqlx.Stmt `query:"get-inactive-live-chat-conversations"`
++
+ 	// Mention queries.
+ 	InsertMention *sqlx.Stmt `query:"insert-mention"`
+ 
+@@ -1103,6 +1105,10 @@ func (c *Manager) UpdateConversationPriority(uuid string, priorityID int, priori
+ 
+ // UpdateConversationStatus updates the status of a conversation.
+ func (c *Manager) UpdateConversationStatus(uuid string, statusID int, status, snoozeDur string, actor umodels.User) error {
++	return c.updateConversationStatus(uuid, statusID, status, snoozeDur, actor, nil)
++}
++
++func (c *Manager) updateConversationStatus(uuid string, statusID int, status, snoozeDur string, actor umodels.User, inactivity *inactivityCloseCandidate) error {
+ 	// Fetch the status name if status ID is provided.
+ 	if statusID > 0 {
+ 		s, err := c.statusStore.Get(statusID)
+@@ -1140,12 +1146,26 @@ func (c *Manager) UpdateConversationStatus(uuid string, statusID int, status, sn
+ 		return nil
+ 	}
+ 
+-	// Update the conversation status.
+-	if _, err := c.q.UpdateConversationStatus.Exec(uuid, status, snoozeUntil); err != nil {
++	var lastMessageID int64
++	var inactivityDuration string
++	if inactivity != nil {
++		if oldStatus != inactivity.Status {
++			return nil
++		}
++		lastMessageID = inactivity.LastMessageID
++		inactivityDuration = inactivity.Duration
++	}
++	result, err := c.q.UpdateConversationStatus.Exec(uuid, status, snoozeUntil, lastMessageID, oldStatus, inactivityDuration)
++	if err != nil {
+ 		c.lo.Error("error updating conversation status", "error", err)
+ 		return envelope.NewError(envelope.GeneralError, c.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 	}
+-	c.BroadcastConversationToWidget(uuid, conversationBeforeChange.ContactID, conversationBeforeChange.InboxID, map[string]any{"status": status})
++	if inactivity != nil {
++		updated, err := result.RowsAffected()
++		if err != nil || updated == 0 {
++			return err
++		}
++	}
+ 
+ 	// Stamps a just-resolved resolution SLA immediately and recomputes the cached deadline.
+ 	if err := c.slaStore.EvaluateConversationSLA(conversationBeforeChange.ID); err != nil {
+@@ -1216,6 +1236,13 @@ func (c *Manager) UpdateConversationStatus(uuid string, statusID int, status, sn
+ 		c.automation.EvaluateConversationUpdateRules(conversation, amodels.EventConversationStatusChange, amodels.PreviousValues(conversationBeforeChange), actor)
+ 	}
+ 
++	// Broadcast conversation update to widget clients.
++	widgetData := map[string]any{"status": status}
++	if inactivity != nil {
++		widgetData["close_reason"] = "inactivity"
++	}
++	c.BroadcastConversationToWidget(uuid, conversationBeforeChange.ContactID, conversationBeforeChange.InboxID, widgetData)
++
+ 	return nil
+ }
+ 
+diff --git a/internal/conversation/kuraka.go b/internal/conversation/kuraka.go
+index ac7368e7..d8498036 100644
+--- a/internal/conversation/kuraka.go
++++ b/internal/conversation/kuraka.go
+@@ -1,7 +1,9 @@
+ package conversation
+ 
+ import (
++	"context"
+ 	"database/sql"
++	"encoding/json"
+ 	"errors"
+ 	"slices"
+ 	"strings"
+@@ -9,9 +11,81 @@ import (
+ 
+ 	amodels "github.com/abhinavxd/libredesk/internal/automation/models"
+ 	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
+ 	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+ )
+ 
++type inactivityCloseCandidate struct {
++	UUID          string `db:"uuid"`
++	Status        string `db:"status"`
++	LastMessageID int64  `db:"last_message_id"`
++	Duration      string `db:"duration"`
++}
++
++// RunInactivityCloser checks for unanswered live chat replies once a minute.
++func (c *Manager) RunInactivityCloser(ctx context.Context, systemUser umodels.User) {
++	ticker := time.NewTicker(time.Minute)
++	defer ticker.Stop()
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-ticker.C:
++			c.closeInactiveLiveChats(ctx, systemUser)
++		}
++	}
++}
++
++func (c *Manager) closeInactiveLiveChats(ctx context.Context, systemUser umodels.User) {
++	if ctx.Err() != nil {
++		return
++	}
++	inboxes, err := c.inboxStore.GetAll()
++	if err != nil {
++		c.lo.Error("error fetching inboxes for inactivity close", "error", err)
++		return
++	}
++	now := time.Now()
++	for _, inbox := range inboxes {
++		if ctx.Err() != nil {
++			return
++		}
++		if inbox.Channel != livechat.ChannelLiveChat || !inbox.Enabled {
++			continue
++		}
++		var config livechat.Config
++		if err := json.Unmarshal(inbox.Config, &config); err != nil {
++			c.lo.Error("error reading live chat config for inactivity close", "inbox_id", inbox.ID, "error", err)
++			continue
++		}
++		duration, err := livechat.ParseInactivityClose(config.InactivityClose)
++		if err != nil {
++			c.lo.Error("invalid inactivity_close duration", "inbox_id", inbox.ID, "error", err)
++			continue
++		}
++		if duration == 0 {
++			continue
++		}
++
++		var candidates []inactivityCloseCandidate
++		if err := c.q.GetInactiveLiveChatConversations.SelectContext(ctx, &candidates, inbox.ID, now.Add(-duration), config.InactivityClose); err != nil {
++			if ctx.Err() != nil {
++				return
++			}
++			c.lo.Error("error selecting inactive live chats", "inbox_id", inbox.ID, "error", err)
++			continue
++		}
++		for _, candidate := range candidates {
++			if ctx.Err() != nil {
++				return
++			}
++			if err := c.updateConversationStatus(candidate.UUID, 0, models.StatusClosed, "", systemUser, &candidate); err != nil {
++				c.lo.Error("error closing inactive live chat", "conversation_uuid", candidate.UUID, "error", err)
++			}
++		}
++	}
++}
++
+ func tagChanges(previous, current []string) map[string]string {
+ 	var added, removed []string
+ 	for _, tag := range current {
+diff --git a/internal/conversation/kuraka_test.go b/internal/conversation/kuraka_test.go
+index 5741e446..b069e9e9 100644
+--- a/internal/conversation/kuraka_test.go
++++ b/internal/conversation/kuraka_test.go
+@@ -2,9 +2,13 @@ package conversation
+ 
+ import (
+ 	"testing"
++	"time"
+ 
+ 	amodels "github.com/abhinavxd/libredesk/internal/automation/models"
++	"github.com/abhinavxd/libredesk/internal/dbutil"
++	"github.com/abhinavxd/libredesk/internal/testutil"
+ 	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ func TestTagChanges(t *testing.T) {
+@@ -14,3 +18,102 @@ func TestTagChanges(t *testing.T) {
+ 	assert.Equal(t, map[string]string{amodels.ConversationTagsAdded: "", amodels.ConversationTagsRemoved: "VIP"}, tagChanges([]string{"VIP"}, nil))
+ 	assert.Equal(t, map[string]string{amodels.ConversationTagsAdded: "VIP", amodels.ConversationTagsRemoved: ""}, tagChanges(nil, []string{"VIP"}))
+ }
++
++func TestInactiveLiveChatSelection(t *testing.T) {
++	db := testutil.NewDB(t, "inactivity_close")
++	var q queries
++	require.NoError(t, dbutil.ScanSQLFile("queries.sql", &q, db, efs))
++	db.MustExec(`INSERT INTO conversation_statuses (name, category) VALUES ('Waiting', 'open'), ('Follow-up', 'waiting')`)
++
++	var agentID, assistantID, visitorID int64
++	for userType, id := range map[string]*int64{"agent": &agentID, "ai_assistant": &assistantID, "visitor": &visitorID} {
++		require.NoError(t, db.Get(id, `INSERT INTO users (type, first_name, last_name) VALUES ($1, $2, '') RETURNING id`, userType, userType))
++	}
++	newInbox := func(name, channel, config string, enabled bool) int {
++		t.Helper()
++		var id int
++		require.NoError(t, db.Get(&id, `INSERT INTO inboxes (name, channel, config, enabled) VALUES ($1, $2, $3, $4) RETURNING id`, name, channel, config, enabled))
++		return id
++	}
++	const config = `{"inactivity_close":"30m"}`
++	inboxID := newInbox("Chat", "livechat", config, true)
++	disabledID := newInbox("Disabled", "livechat", config, false)
++	emailID := newInbox("Email", "email", config, true)
++	unconfiguredID := newInbox("Unconfigured", "livechat", `{}`, true)
++	offID := newInbox("Off", "livechat", `{"inactivity_close":""}`, true)
++	otherID := newInbox("Other chat", "livechat", config, true)
++
++	type testMessage struct {
++		senderID int64
++		kind     string
++		private  bool
++		at       time.Time
++	}
++	cutoff := time.Now().UTC().Truncate(time.Second)
++	old := cutoff.Add(-time.Second)
++	recent := cutoff.Add(time.Second)
++	agentReply := testMessage{agentID, "outgoing", false, old}
++	insertMessage := func(uuid string, message testMessage) {
++		t.Helper()
++		_, err := db.Exec(`INSERT INTO conversation_messages (conversation_id, type, status, private, sender_id, sender_type, created_at)
++			SELECT c.id, $2::message_type, 'sent', $3::boolean, u.id,
++			       CASE WHEN u.type = 'visitor' THEN 'contact'::message_sender_type ELSE 'agent'::message_sender_type END, $5::timestamptz
++			FROM conversations c JOIN users u ON u.id = $4 WHERE c.uuid = $1`, uuid, message.kind, message.private, message.senderID, message.at)
++		require.NoError(t, err)
++	}
++	newConversation := func(inboxID int, status string, messages ...testMessage) string {
++		t.Helper()
++		var uuid string
++		require.NoError(t, db.Get(&uuid, `INSERT INTO conversations (inbox_id, status_id, contact_id)
++			VALUES ($1, (SELECT id FROM conversation_statuses WHERE name = $2), $3) RETURNING uuid`, inboxID, status, visitorID))
++		for _, message := range messages {
++			insertMessage(uuid, message)
++		}
++		return uuid
++	}
++
++	privateNote := testMessage{agentID, "outgoing", true, recent}
++	activity := testMessage{agentID, "activity", false, recent}
++	agentChat := newConversation(inboxID, "Open", agentReply, privateNote, activity)
++	aiChat := newConversation(inboxID, "Follow-up", testMessage{assistantID, "outgoing", false, old})
++	newConversation(inboxID, "Open", agentReply, testMessage{visitorID, "incoming", false, old}, privateNote, activity)
++	newConversation(inboxID, "Open", testMessage{agentID, "outgoing", false, cutoff})
++	newConversation(inboxID, "Open", testMessage{agentID, "outgoing", false, recent})
++	newConversation(inboxID, "Open", privateNote, activity)
++	for _, status := range []string{"Waiting", "Snoozed", "Resolved", "Closed"} {
++		newConversation(inboxID, status, agentReply)
++	}
++	for _, id := range []int{disabledID, emailID, unconfiguredID, offID, otherID} {
++		newConversation(id, "Open", agentReply)
++	}
++
++	var candidates []inactivityCloseCandidate
++	require.NoError(t, q.GetInactiveLiveChatConversations.Select(&candidates, inboxID, cutoff, "30m"))
++	var selected []string
++	for _, candidate := range candidates {
++		selected = append(selected, candidate.UUID)
++	}
++	require.ElementsMatch(t, []string{agentChat, aiChat}, selected)
++	for _, id := range []int{disabledID, emailID, unconfiguredID} {
++		var excluded []inactivityCloseCandidate
++		require.NoError(t, q.GetInactiveLiveChatConversations.Select(&excluded, id, cutoff, "30m"))
++		require.Empty(t, excluded)
++	}
++	var off []inactivityCloseCandidate
++	require.NoError(t, q.GetInactiveLiveChatConversations.Select(&off, offID, cutoff, ""))
++	require.Empty(t, off)
++
++	// A visitor reply after selection invalidates the pending close.
++	insertMessage(agentChat, testMessage{visitorID, "incoming", false, recent})
++	for _, candidate := range candidates {
++		result, err := q.UpdateConversationStatus.Exec(candidate.UUID, "Closed", time.Time{}, candidate.LastMessageID, candidate.Status, candidate.Duration)
++		require.NoError(t, err)
++		updated, err := result.RowsAffected()
++		require.NoError(t, err)
++		if candidate.UUID == agentChat {
++			require.Zero(t, updated)
++		} else {
++			require.EqualValues(t, 1, updated)
++		}
++	}
++}
+diff --git a/internal/conversation/queries.sql b/internal/conversation/queries.sql
+index 451f62e7..01b1579c 100644
+--- a/internal/conversation/queries.sql
++++ b/internal/conversation/queries.sql
+@@ -5,6 +5,26 @@ WHERE snoozed_until <= NOW()
+   AND status_id = (SELECT id FROM conversation_statuses WHERE name = 'Snoozed')
+ RETURNING uuid, contact_id, inbox_id;
+ 
++-- name: get-inactive-live-chat-conversations
++SELECT c.uuid, s.name AS status, m.id AS last_message_id, i.config->>'inactivity_close' AS duration
++FROM conversations c
++JOIN inboxes i ON i.id = c.inbox_id
++JOIN conversation_statuses s ON s.id = c.status_id
++JOIN LATERAL (
++    SELECT id, created_at, sender_id
++    FROM conversation_messages
++    WHERE conversation_id = c.id AND NOT private AND type <> 'activity'
++    ORDER BY created_at DESC, id DESC
++    LIMIT 1
++) m ON TRUE
++JOIN users sender ON sender.id = m.sender_id
++WHERE c.inbox_id = $1
++  AND i.enabled AND i.channel = 'livechat' AND i.deleted_at IS NULL
++  AND NULLIF(i.config->>'inactivity_close', '') = $3
++  AND s.name NOT IN ('Waiting', 'Snoozed', 'Resolved', 'Closed')
++  AND sender.type IN ('agent', 'ai_assistant')
++  AND m.created_at < $2;
++
+ -- name: insert-conversation
+ -- $11 = rate limit window start (timestamptz), $12 = max conversations (0 = unlimited)
+ -- $13 = subject reference marker template (placeholder: {ref})
+@@ -599,7 +619,22 @@ SET status_id        = (SELECT id FROM new_status),
+     closed_at        = COALESCE(closed_at,   CASE WHEN $2 = 'Closed'                                  THEN NOW() END),
+     snoozed_until    = CASE WHEN $2 = 'Snoozed' THEN $3::timestamptz ELSE NULL END,
+     updated_at       = NOW()
+-WHERE uuid = $1;
++WHERE uuid = $1
++  -- An inactivity close must still match the selected status, config, and last public message.
++  AND ($4::bigint = 0 OR (
++      status_id = (SELECT id FROM conversation_statuses WHERE name = $5)
++      AND EXISTS (
++          SELECT 1 FROM inboxes
++          WHERE id = conversations.inbox_id AND enabled AND channel = 'livechat' AND deleted_at IS NULL
++            AND config->>'inactivity_close' = $6
++      )
++      AND $4 = (
++          SELECT id FROM conversation_messages
++          WHERE conversation_id = conversations.id AND NOT private AND type <> 'activity'
++          ORDER BY created_at DESC, id DESC
++          LIMIT 1
++      )
++  ));
+ 
+ -- name: get-user-active-conversations-count
+ SELECT COUNT(*) FROM conversations WHERE status_id IN (SELECT id FROM conversation_statuses WHERE category = 'open') AND assigned_user_id = $1;
+diff --git a/internal/inbox/channel/livechat/kuraka.go b/internal/inbox/channel/livechat/kuraka.go
+index 555bb789..5a0a6552 100644
+--- a/internal/inbox/channel/livechat/kuraka.go
++++ b/internal/inbox/channel/livechat/kuraka.go
+@@ -2,7 +2,9 @@ package livechat
+ 
+ import (
+ 	"encoding/json"
++	"errors"
+ 	"maps"
++	"time"
+ 
+ 	"github.com/abhinavxd/libredesk/internal/conversation/models"
+ 	umodels "github.com/abhinavxd/libredesk/internal/user/models"
+@@ -46,3 +48,18 @@ func (c Config) maskAssignee(data map[string]any) map[string]any {
+ 	data["assignee"] = assignee
+ 	return data
+ }
++
++// ParseInactivityClose returns the configured duration, or zero when closing is disabled.
++func ParseInactivityClose(value string) (time.Duration, error) {
++	if value == "" {
++		return 0, nil
++	}
++	duration, err := time.ParseDuration(value)
++	if err != nil {
++		return 0, err
++	}
++	if duration < time.Minute || duration > 168*time.Hour {
++		return 0, errors.New("inactivity_close must be between 1m and 168h")
++	}
++	return duration, nil
++}
+diff --git a/internal/inbox/channel/livechat/livechat.go b/internal/inbox/channel/livechat/livechat.go
+index 0b692697..e852c970 100644
+--- a/internal/inbox/channel/livechat/livechat.go
++++ b/internal/inbox/channel/livechat/livechat.go
+@@ -191,6 +191,7 @@ type Config struct {
+ 	ShowOfficeHoursAfterAssignment bool              `json:"show_office_hours_after_assignment"`
+ 	ChatReplyExpectationMessage    string            `json:"chat_reply_expectation_message"`
+ 	SessionDuration                string            `json:"session_duration"`
++	InactivityClose                string            `json:"inactivity_close"`
+ 	PreChatForm                    PreChatFormConfig `json:"prechat_form"`
+ }
+ 
+diff --git a/internal/inbox/channel/livechat/livechat_test.go b/internal/inbox/channel/livechat/livechat_test.go
+index 63345f28..f58baf2a 100644
+--- a/internal/inbox/channel/livechat/livechat_test.go
++++ b/internal/inbox/channel/livechat/livechat_test.go
+@@ -3,8 +3,30 @@ package livechat
+ import (
+ 	"encoding/json"
+ 	"testing"
++	"time"
+ )
+ 
++func TestParseInactivityClose(t *testing.T) {
++	for _, test := range []struct {
++		input string
++		want  time.Duration
++	}{
++		{"", 0},
++		{"1m", time.Minute},
++		{"1h30m", 90 * time.Minute},
++		{"168h", 168 * time.Hour},
++	} {
++		if got, err := ParseInactivityClose(test.input); err != nil || got != test.want {
++			t.Errorf("ParseInactivityClose(%q) = %v, %v; want %v", test.input, got, err, test.want)
++		}
++	}
++	for _, input := range []string{"0s", "-1m", "59.999s", "168h1ns", "7d", "30 minutes", " "} {
++		if _, err := ParseInactivityClose(input); err == nil {
++			t.Errorf("ParseInactivityClose(%q) accepted an invalid duration", input)
++		}
++	}
++}
++
+ func TestResolvePreChatFormFallsBackToLegacyValues(t *testing.T) {
+ 	var config Config
+ 	if err := json.Unmarshal([]byte(`{
