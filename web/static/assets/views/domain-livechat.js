@@ -69,8 +69,10 @@ async function chatDialog(view, existing, notice, onSaved) {
     return;
   }
 
+  // CSP frame-ancestors: *.example.com does not cover example.com itself.
+  const apex = view.domain.name.toLowerCase().replace(/^www\./, '');
   const s = chat?.settings || { name: view.domain.name, website_url: view.domain.name, color: DEFAULT_COLOR, position: 'right', logo_url: '',
-    greeting: t('livechat.greeting.default'), allowed_domains: [`*.${view.domain.name.toLowerCase().replace(/^www\./, '')}`] };
+    greeting: t('livechat.greeting.default'), allowed_domains: [apex, `*.${apex}`] };
   const helpdesk = helpdesks.length > 1 ? select({ required: true, options: helpdesks.map(x => ({ value: String(x.id), label: x.name })) }) : null;
   const language = existing ? null : select({ value: getLang() === 'es' ? 'es' : 'en', options: [{ value: 'es', label: 'Español' }, { value: 'en', label: 'English' }] });
   const name = textInput({ required: true, maxlength: 128, autocomplete: 'off', value: s.name });
