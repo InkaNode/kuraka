@@ -166,3 +166,12 @@ func TestLiveChats(t *testing.T) {
 		t.Fatalf("provisioned base_url: %v", base)
 	}
 }
+
+func TestCleanLiveChatFlowWaitShowsEmail(t *testing.T) {
+	for mode, shown := range map[string]bool{"wait": true, "both": true, "email": false, "": false} {
+		lc := libredesk.LiveChat{PreChat: &libredesk.PreChatForm{Enabled: true}, Offline: &libredesk.Offline{Mode: mode, Email: "a@b.test"}}
+		if err := cleanLiveChatFlow(&lc); err != nil || lc.PreChat.Email.Shown != shown {
+			t.Fatalf("mode %q: err %v, email shown %v", mode, err, lc.PreChat.Email.Shown)
+		}
+	}
+}

@@ -91,6 +91,10 @@ func cleanLiveChat(lc *libredesk.LiveChat) error {
 // cleanLiveChatFlow validates the flow settings; nil ones are left alone.
 func cleanLiveChatFlow(lc *libredesk.LiveChat) error {
 	if p := lc.PreChat; p != nil {
+		// A waiting chat needs the visitor's email to answer later; Libredesk asks for it only then.
+		if o := lc.Offline; o != nil && (o.Mode == "wait" || o.Mode == "both") {
+			p.Email.Shown = true
+		}
 		for _, f := range []*libredesk.FormField{&p.LastName, &p.Email, &p.Phone} {
 			f.Required = f.Shown && f.Required
 		}
