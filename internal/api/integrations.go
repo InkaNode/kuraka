@@ -48,6 +48,9 @@ type HelpdeskAPI interface {
 	ListTeams(context.Context) ([]libredesk.Team, error)
 	CreateTeam(context.Context, string) (int64, error)
 	RootURL(context.Context) (string, error)
+	CreateWhatsApp(context.Context, libredesk.WhatsApp, string) (int64, error)
+	GetWhatsApp(context.Context, int64) (libredesk.WhatsApp, error)
+	UpdateWhatsApp(context.Context, int64, libredesk.WhatsApp, string) error
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)

@@ -127,6 +127,9 @@ type fakeHelpdesk struct {
 	liveChatLanguage              string
 	liveChatErr                   error
 	teams                         []libredesk.Team
+	whatsApps                     map[int64]libredesk.WhatsApp
+	whatsAppTokens                map[int64]string
+	whatsAppErr                   error
 }
 
 func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon, root string) error {

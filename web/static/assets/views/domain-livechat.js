@@ -27,7 +27,7 @@ function snippet(widget) {
 }
 
 // publicURL: browsers block public sites from loading http, localhost or LAN addresses.
-function publicURL(raw) {
+export function publicURL(raw) {
   try {
     const u = new URL(raw);
     return u.protocol === 'https:' && u.hostname.includes('.') && u.hostname !== '127.0.0.1';

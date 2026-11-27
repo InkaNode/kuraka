@@ -482,6 +482,12 @@ func (c *Client) CreateLiveChat(ctx context.Context, lc LiveChat, language strin
 // liveChatInbox reads a live chat inbox as a raw map. A missing inbox yields
 // ErrNotFound.
 func (c *Client) liveChatInbox(ctx context.Context, id int64) (map[string]any, map[string]any, error) {
+	return c.channelInbox(ctx, id, "livechat")
+}
+
+// channelInbox reads an inbox of the given channel as a raw map. A missing
+// inbox yields ErrNotFound.
+func (c *Client) channelInbox(ctx context.Context, id int64, channel string) (map[string]any, map[string]any, error) {
 	var inbox map[string]any
 	err := c.do(ctx, http.MethodGet, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), nil, &inbox)
 	if ae, ok := errors.AsType[*APIError](err); ok && ae.Status == http.StatusNotFound {
@@ -491,8 +497,8 @@ func (c *Client) liveChatInbox(ctx context.Context, id int64) (map[string]any, m
 		return nil, nil, err
 	}
 	config, ok := inbox["config"].(map[string]any)
-	if inbox["channel"] != "livechat" || !ok {
-		return nil, nil, errors.New("libredesk: not a live chat inbox")
+	if inbox["channel"] != channel || !ok {
+		return nil, nil, fmt.Errorf("libredesk: not a %s inbox", channel)
 	}
 	return inbox, config, nil
 }
