@@ -51,6 +51,9 @@ type HelpdeskAPI interface {
 	CreateWhatsApp(context.Context, libredesk.WhatsApp, string) (int64, error)
 	GetWhatsApp(context.Context, int64) (libredesk.WhatsApp, error)
 	UpdateWhatsApp(context.Context, int64, libredesk.WhatsApp, string) error
+	CreateMetaPage(context.Context, string, libredesk.MetaPage, string) (int64, error)
+	GetMetaPage(context.Context, int64, string) (libredesk.MetaPage, error)
+	UpdateMetaPage(context.Context, int64, string, libredesk.MetaPage, string) error
 }
 
 var _ DNSAPI = (*cloudflare.Client)(nil)

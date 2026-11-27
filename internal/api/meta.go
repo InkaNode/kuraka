@@ -32,18 +32,37 @@ func metaSecret(v string) bool {
 	return len(v) <= 2048 && strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
-// cleanWhatsApp trims and validates the fields; secrets are required only on create.
-func cleanWhatsApp(w *libredesk.WhatsApp, create bool) error {
-	for _, p := range []*string{&w.Name, &w.PhoneNumberID, &w.WABAID, &w.AccessToken, &w.AppSecret} {
+// metaInput holds the fields of every Meta channel: WhatsApp uses the phone
+// number and WABA ids, Messenger and Instagram the page id.
+type metaInput struct {
+	libredesk.WhatsApp
+	PageID string `json:"page_id"`
+}
+
+func (in metaInput) page() libredesk.MetaPage {
+	return libredesk.MetaPage{Name: in.Name, PageID: in.PageID, AccessToken: in.AccessToken, AppSecret: in.AppSecret}
+}
+
+func metaChannelName(channel string) bool {
+	return channel == "whatsapp" || channel == "messenger" || channel == "instagram"
+}
+
+// cleanMeta trims and validates the fields of channel; secrets are required only on create.
+func cleanMeta(channel string, in *metaInput, create bool) error {
+	w := &in.WhatsApp
+	for _, p := range []*string{&w.Name, &w.PhoneNumberID, &w.WABAID, &w.AccessToken, &w.AppSecret, &in.PageID} {
 		*p = strings.TrimSpace(*p)
 	}
+	whatsApp := channel == "whatsapp"
 	switch {
 	case w.Name == "" || utf8.RuneCountInString(w.Name) > 128:
 		return invalid("name")
-	case !metaID(w.PhoneNumberID):
+	case whatsApp && !metaID(w.PhoneNumberID):
 		return invalid("phone_number_id")
-	case !metaID(w.WABAID):
+	case whatsApp && !metaID(w.WABAID):
 		return invalid("waba_id")
+	case !whatsApp && !metaID(in.PageID):
+		return invalid("page_id")
 	case !metaSecret(w.AccessToken) || create && w.AccessToken == "":
 		return invalid("access_token")
 	case !metaSecret(w.AppSecret) || create && w.AppSecret == "":
@@ -59,7 +78,7 @@ func metaFailure(message string, err error) error {
 		return metaMissing
 	}
 	if ae, ok := errors.AsType[*libredesk.APIError](err); ok && (ae.Status == http.StatusBadRequest || ae.Status == http.StatusUnprocessableEntity) {
-		return &apiError{status: 422, code: "whatsapp_rejected", message: "WhatsApp details were rejected", cause: err}
+		return &apiError{status: 422, code: "whatsapp_rejected", message: "Meta details were rejected", cause: err}
 	}
 	return helpdeskFailure(message, err)
 }
@@ -69,14 +88,30 @@ func metaJSON(mc store.MetaChannel) map[string]any {
 }
 
 // metaDetail adds the settings and what Meta's webhook setup needs.
-func metaDetail(mc store.MetaChannel, w libredesk.WhatsApp, rootURL string) map[string]any {
+func metaDetail(mc store.MetaChannel, in metaInput, rootURL string) map[string]any {
 	out := metaJSON(mc)
-	out["settings"] = map[string]string{"name": w.Name, "phone_number_id": w.PhoneNumberID, "waba_id": w.WABAID}
+	path := "/webhooks/meta/"
+	if mc.Channel == "whatsapp" {
+		path = "/webhooks/whatsapp/"
+		out["settings"] = map[string]string{"name": in.Name, "phone_number_id": in.PhoneNumberID, "waba_id": in.WABAID}
+	} else {
+		out["settings"] = map[string]string{"name": in.Name, "page_id": in.PageID}
+	}
 	out["webhook"] = map[string]string{
-		"url":          strings.TrimRight(rootURL, "/") + "/webhooks/whatsapp/" + strconv.FormatInt(mc.InboxID, 10),
+		"url":          strings.TrimRight(rootURL, "/") + path + strconv.FormatInt(mc.InboxID, 10),
 		"verify_token": mc.VerifyToken,
 	}
 	return out
+}
+
+// readMeta reads a channel's settings from the helpdesk, without secrets.
+func readMeta(r *http.Request, client HelpdeskAPI, mc store.MetaChannel) (metaInput, error) {
+	if mc.Channel == "whatsapp" {
+		w, err := client.GetWhatsApp(r.Context(), mc.InboxID)
+		return metaInput{WhatsApp: w}, err
+	}
+	p, err := client.GetMetaPage(r.Context(), mc.InboxID, mc.Channel)
+	return metaInput{WhatsApp: libredesk.WhatsApp{Name: p.Name}, PageID: p.PageID}, err
 }
 
 func (s *Server) authorizedMetaChannel(r *http.Request) (store.MetaChannel, store.Helpdesk, HelpdeskAPI, error) {
@@ -120,16 +155,15 @@ func (s *Server) createMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 	var in struct {
 		HelpdeskID int64  `json:"helpdesk_id"`
 		Channel    string `json:"channel"`
-		libredesk.WhatsApp
+		metaInput
 	}
 	if err := decode(r, &in); err != nil {
 		return nil, err
 	}
-	// frugal: Messenger and Instagram join here once Libredesk has those channels.
-	if in.Channel != "whatsapp" {
+	if !metaChannelName(in.Channel) {
 		return nil, invalid("channel")
 	}
-	if err := cleanWhatsApp(&in.WhatsApp, true); err != nil {
+	if err := cleanMeta(in.Channel, &in.metaInput, true); err != nil {
 		return nil, err
 	}
 	h, client, err := s.tenantHelpdesk(r.Context(), d, in.HelpdeskID)
@@ -141,9 +175,14 @@ func (s *Server) createMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
 	token := rand.Text()
-	inboxID, err := client.CreateWhatsApp(r.Context(), in.WhatsApp, token)
+	var inboxID int64
+	if in.Channel == "whatsapp" {
+		inboxID, err = client.CreateWhatsApp(r.Context(), in.WhatsApp, token)
+	} else {
+		inboxID, err = client.CreateMetaPage(r.Context(), in.Channel, in.page(), token)
+	}
 	if err != nil {
-		return nil, metaFailure("WhatsApp creation failed", err)
+		return nil, metaFailure("Meta channel creation failed", err)
 	}
 	mc, err := s.st.CreateMetaChannel(r.Context(), store.MetaChannel{DomainID: d.ID, HelpdeskID: in.HelpdeskID, Channel: in.Channel, InboxID: inboxID, Name: in.Name, VerifyToken: token})
 	if err != nil {
@@ -152,7 +191,7 @@ func (s *Server) createMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 		_ = client.DeleteInbox(ctx, inboxID)
 		return nil, err
 	}
-	return reply{201, metaDetail(mc, in.WhatsApp, root)}, nil
+	return reply{201, metaDetail(mc, in.metaInput, root)}, nil
 }
 
 func (s *Server) metaChannel(_ http.ResponseWriter, r *http.Request) (any, error) {
@@ -160,9 +199,9 @@ func (s *Server) metaChannel(_ http.ResponseWriter, r *http.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	w, err := client.GetWhatsApp(r.Context(), mc.InboxID)
+	w, err := readMeta(r, client, mc)
 	if err != nil {
-		return nil, metaFailure("WhatsApp could not be read", err)
+		return nil, metaFailure("Meta channel could not be read", err)
 	}
 	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
@@ -176,19 +215,24 @@ func (s *Server) updateMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 	if err != nil {
 		return nil, err
 	}
-	var in libredesk.WhatsApp
+	var in metaInput
 	if err := decode(r, &in); err != nil {
 		return nil, err
 	}
-	if err := cleanWhatsApp(&in, false); err != nil {
+	if err := cleanMeta(mc.Channel, &in, false); err != nil {
 		return nil, err
 	}
 	root, err := widgetBase(r.Context(), h, client)
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
-	if err := client.UpdateWhatsApp(r.Context(), mc.InboxID, in, mc.VerifyToken); err != nil {
-		return nil, metaFailure("WhatsApp update failed", err)
+	if mc.Channel == "whatsapp" {
+		err = client.UpdateWhatsApp(r.Context(), mc.InboxID, in.WhatsApp, mc.VerifyToken)
+	} else {
+		err = client.UpdateMetaPage(r.Context(), mc.InboxID, mc.Channel, in.page(), mc.VerifyToken)
+	}
+	if err != nil {
+		return nil, metaFailure("Meta channel update failed", err)
 	}
 	if err := s.st.RenameMetaChannel(r.Context(), mc.ID, in.Name); err != nil {
 		return nil, err
@@ -204,7 +248,7 @@ func (s *Server) deleteMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 		return nil, err
 	}
 	if err := client.DeleteInbox(r.Context(), mc.InboxID); err != nil && !errors.Is(err, libredesk.ErrNotFound) {
-		return nil, helpdeskFailure("WhatsApp deletion failed", err)
+		return nil, helpdeskFailure("Meta channel deletion failed", err)
 	}
 	return reply{204, nil}, s.st.DeleteMetaChannel(r.Context(), mc.ID)
 }

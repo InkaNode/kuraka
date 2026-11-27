@@ -68,7 +68,6 @@ You need a VPS with 2 GB of RAM or more, Docker with Compose, ports 25, 80, 443,
 
 ## Roadmap
 
-- **Connect with Meta:** connect a tenant's WhatsApp, Messenger and Instagram accounts to its helpdesk from Kuraka. Libredesk already has WhatsApp; Messenger and Instagram are new channels. Each one needs a Meta app approved in Meta's app review, so Kuraka will guide that setup step by step.
 - **Other helpdesks:** connect mailboxes and live chats to helpdesks other than Libredesk.
 
 ## License

@@ -48,6 +48,81 @@ func (f *fakeHelpdesk) UpdateWhatsApp(_ context.Context, id int64, w libredesk.W
 	return nil
 }
 
+func (f *fakeHelpdesk) CreateMetaPage(_ context.Context, channel string, p libredesk.MetaPage, token string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.metaPages == nil {
+		f.metaPages = map[int64]libredesk.MetaPage{}
+	}
+	if f.whatsAppTokens == nil {
+		f.whatsAppTokens = map[int64]string{}
+	}
+	id := int64(len(f.metaPages) + 300)
+	f.metaPages[id], f.whatsAppTokens[id] = p, token
+	return id, nil
+}
+func (f *fakeHelpdesk) GetMetaPage(_ context.Context, id int64, _ string) (libredesk.MetaPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.metaPages[id]
+	if !ok {
+		return p, libredesk.ErrNotFound
+	}
+	p.AccessToken, p.AppSecret = "", ""
+	return p, nil
+}
+func (f *fakeHelpdesk) UpdateMetaPage(_ context.Context, id int64, _ string, p libredesk.MetaPage, token string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	old, ok := f.metaPages[id]
+	if !ok {
+		return libredesk.ErrNotFound
+	}
+	if p.AccessToken == "" {
+		p.AccessToken = old.AccessToken
+	}
+	if p.AppSecret == "" {
+		p.AppSecret = old.AppSecret
+	}
+	f.metaPages[id], f.whatsAppTokens[id] = p, token
+	return nil
+}
+
+func TestMetaPageChannels(t *testing.T) {
+	h, _, hd := integrations(t)
+	a := h.tenant("A")
+	da := h.domain(a, "a.test")
+	ca := h.admin(a, "a@admin.test")
+	ha := helpdesk(t, ca, a)
+	base := fmt.Sprintf("/domains/%d/meta", da)
+	in := map[string]any{"helpdesk_id": ha, "channel": "messenger", "name": "Página", "page_id": "777", "access_token": "EAApage", "app_secret": "abc"}
+
+	bad := map[string]any{}
+	for k, v := range in {
+		bad[k] = v
+	}
+	bad["page_id"] = "x1"
+	ca.do("POST", base, bad, 422)
+
+	ch := object(t, ca.do("POST", base, in, 201))
+	hook := ch["webhook"].(map[string]any)
+	if hook["url"] != "https://desk.example/webhooks/meta/300" || hook["verify_token"] != hd.whatsAppTokens[300] {
+		t.Fatalf("created: %v", ch)
+	}
+	path := fmt.Sprintf("%s/%.0f", base, ch["id"])
+	ca.do("PUT", path, map[string]any{"name": "Ventas", "page_id": "888"}, 200)
+	if p := hd.metaPages[300]; p.Name != "Ventas" || p.PageID != "888" || p.AccessToken != "EAApage" {
+		t.Fatalf("updated: %+v", p)
+	}
+	if s := object(t, ca.do("GET", path, nil, 200))["settings"].(map[string]any); s["page_id"] != "888" || s["access_token"] != nil {
+		t.Fatalf("get: %v", s)
+	}
+	in["channel"] = "instagram"
+	if hook := object(t, ca.do("POST", base, in, 201))["webhook"].(map[string]any); hook["url"] != "https://desk.example/webhooks/meta/301" {
+		t.Fatalf("instagram: %v", hook)
+	}
+}
+
 func TestMetaChannels(t *testing.T) {
 	h, _, hd := integrations(t)
 	a, b := h.tenant("A"), h.tenant("B")
