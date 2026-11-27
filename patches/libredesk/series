@@ -29,3 +29,4 @@ fix-livechat-do-not-ask-returning-visitors-for-their-last-na.patch
 fix-livechat-ask-for-an-email-when-nobody-can-take-the-chat.patch
 feat-teams-assign-instantly-and-set-how-often-to-check-pendi.patch
 fix-livechat-hide-ended-chats-from-continue-and-reopen-them.patch
+feat-inboxes-Messenger-and-Instagram-channels.patch

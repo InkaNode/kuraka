@@ -1,0 +1,1507 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Thu, 26 Nov 2026 21:20:44 -0500
+Subject: [PATCH] feat(inboxes): Messenger and Instagram channels
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: Messenger and Instagram inboxes receive and answer the messages sent to a Facebook Page or to the Instagram professional account linked to it. Instagram replies are text only.
+Kuraka-Adds-Es: Los buzones de Messenger e Instagram reciben y responden los mensajes enviados a una página de Facebook o a la cuenta profesional de Instagram vinculada a ella. Las respuestas de Instagram son solo texto.
+Kuraka-Missing-En: Libredesk has no Messenger or Instagram channel.
+Kuraka-Missing-Es: Libredesk no tiene canal de Messenger ni de Instagram.
+---
+ cmd/handlers.go                               |   4 +
+ cmd/inboxes.go                                |  24 ++
+ cmd/init.go                                   |  11 +
+ cmd/meta_webhook.go                           | 273 +++++++++++++++
+ .../src/components/icons/InstagramIcon.vue    |  15 +
+ .../src/components/icons/MessengerIcon.vue    |  15 +
+ .../apps/main/src/constants/channelIcons.js   |   6 +-
+ .../features/admin/inbox/MetaInboxForm.vue    | 260 ++++++++++++++
+ .../features/admin/inbox/metaFormSchema.js    |  16 +
+ .../main/src/views/admin/inbox/EditInbox.vue  |  23 ++
+ .../main/src/views/admin/inbox/InboxList.vue  |   4 +-
+ .../main/src/views/admin/inbox/InboxView.vue  |   8 +
+ .../main/src/views/admin/inbox/NewInbox.vue   |  37 ++
+ i18n/en-US.json                               |  12 +
+ i18n/es-ES.json                               |  12 +
+ internal/conversation/message.go              |   6 +-
+ internal/conversation/meta.go                 |  35 ++
+ internal/inbox/channel/meta/meta.go           | 322 ++++++++++++++++++
+ internal/inbox/channel/meta/meta_test.go      |  62 ++++
+ internal/inbox/inbox.go                       |   5 +-
+ internal/inbox/models/models.go               |   2 +-
+ internal/kuraka/migrate.go                    |   6 +
+ schema.sql                                    |   2 +-
+ 23 files changed, 1154 insertions(+), 6 deletions(-)
+ create mode 100644 cmd/meta_webhook.go
+ create mode 100644 frontend/apps/main/src/components/icons/InstagramIcon.vue
+ create mode 100644 frontend/apps/main/src/components/icons/MessengerIcon.vue
+ create mode 100644 frontend/apps/main/src/features/admin/inbox/MetaInboxForm.vue
+ create mode 100644 frontend/apps/main/src/features/admin/inbox/metaFormSchema.js
+ create mode 100644 internal/conversation/meta.go
+ create mode 100644 internal/inbox/channel/meta/meta.go
+ create mode 100644 internal/inbox/channel/meta/meta_test.go
+
+diff --git a/cmd/handlers.go b/cmd/handlers.go
+index 62fae7d0..91df9f91 100644
+--- a/cmd/handlers.go
++++ b/cmd/handlers.go
+@@ -405,6 +405,10 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
+ 	g.GET("/webhooks/whatsapp/{inbox_id}", rateLimit(handleWhatsAppWebhookVerify, "public"))
+ 	g.POST("/webhooks/whatsapp/{inbox_id}", handleWhatsAppWebhookEvent)
+ 
++	// Kuraka: Messenger and Instagram.
++	g.GET("/webhooks/meta/{inbox_id}", rateLimit(handleMetaWebhookVerify, "public"))
++	g.POST("/webhooks/meta/{inbox_id}", handleMetaWebhookEvent)
++
+ 	g.GET("/api/v1/whatsapp/contacts/{contact_id}/open-conversation", perm(handleGetWhatsAppOpenConversation, "conversations:read"))
+ 
+ 	// WhatsApp templates.
+diff --git a/cmd/inboxes.go b/cmd/inboxes.go
+index 3f94aa68..dfa96f29 100644
+--- a/cmd/inboxes.go
++++ b/cmd/inboxes.go
+@@ -18,6 +18,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/email"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/email/oauth"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
++	metaChannel "github.com/abhinavxd/libredesk/internal/inbox/channel/meta"
+ 	whatsappChannel "github.com/abhinavxd/libredesk/internal/inbox/channel/whatsapp"
+ 	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
+ 	wtmodels "github.com/abhinavxd/libredesk/internal/whatsapp/template/models"
+@@ -215,6 +216,9 @@ func handleCreateInbox(r *fastglue.Request) error {
+ 	if createdInbox.Channel == whatsappChannel.ChannelWhatsApp {
+ 		go postSaveWhatsAppTasks(app, createdInbox.ID)
+ 	}
++	if metaChannel.IsMeta(createdInbox.Channel) {
++		go subscribeMetaPage(app, createdInbox.ID)
++	}
+ 
+ 	// Clear passwords before returning.
+ 	if err := createdInbox.ClearPasswords(); err != nil {
+@@ -280,6 +284,9 @@ func handleUpdateInbox(r *fastglue.Request) error {
+ 	if updatedInbox.Channel == whatsappChannel.ChannelWhatsApp {
+ 		go postSaveWhatsAppTasks(app, id)
+ 	}
++	if metaChannel.IsMeta(updatedInbox.Channel) {
++		go subscribeMetaPage(app, id)
++	}
+ 
+ 	// Clear passwords before returning.
+ 	if err := updatedInbox.ClearPasswords(); err != nil {
+@@ -511,6 +518,23 @@ func validateInbox(app *App, inbox imodels.Inbox, isUpdate bool) error {
+ 		}
+ 	}
+ 
++	if metaChannel.IsMeta(inbox.Channel) {
++		var cfg metaChannel.Config
++		if err := json.Unmarshal(inbox.Config, &cfg); err != nil {
++			return envelope.NewError(envelope.InputError, app.i18n.T("validation.invalidValue"), nil)
++		}
++		required := map[string]string{"page_id": cfg.PageID, "webhook_verify_token": cfg.WebhookVerifyToken}
++		// On edit secrets arrive masked/empty and the config merge restores them.
++		if !isUpdate {
++			required["access_token"], required["app_secret"] = cfg.AccessToken, cfg.AppSecret
++		}
++		for name, v := range required {
++			if strings.TrimSpace(v) == "" {
++				return envelope.NewError(envelope.InputError, app.i18n.Ts("globals.messages.required", "name", "`"+name+"`"), nil)
++			}
++		}
++	}
++
+ 	// Validate livechat-specific configuration
+ 	if inbox.Channel == livechat.ChannelLiveChat {
+ 		var config livechat.Config
+diff --git a/cmd/init.go b/cmd/init.go
+index bef93ab1..5762964f 100644
+--- a/cmd/init.go
++++ b/cmd/init.go
+@@ -34,6 +34,7 @@ import (
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/email"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat"
+ 	"github.com/abhinavxd/libredesk/internal/inbox/channel/livechat/proactive"
++	metaChannel "github.com/abhinavxd/libredesk/internal/inbox/channel/meta"
+ 	whatsappChannel "github.com/abhinavxd/libredesk/internal/inbox/channel/whatsapp"
+ 	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
+ 	"github.com/abhinavxd/libredesk/internal/macro"
+@@ -837,6 +838,16 @@ func makeInboxInitializer(mgr *inbox.Manager, signAvatarURL func(*null.String),
+ 			return initLiveChatInbox(inboxR, msgStore, usrStore, signAvatarURL)
+ 		case inbox.ChannelWhatsApp:
+ 			return initWhatsAppInbox(inboxR, msgStore, waClient, sourceUpdater)
++		case inbox.ChannelMessenger, inbox.ChannelInstagram:
++			var cfg metaChannel.Config
++			if err := json.Unmarshal(inboxR.Config, &cfg); err != nil {
++				return nil, fmt.Errorf("unmarshalling meta config for inbox %q: %w", inboxR.Name, err)
++			}
++			inb, err := metaChannel.New(inboxR.ID, inboxR.Name, inboxR.Channel, cfg, initLogger("meta_inbox"))
++			if err != nil {
++				return nil, err
++			}
++			return inb, nil
+ 		default:
+ 			return nil, fmt.Errorf("unknown inbox channel: %s", inboxR.Channel)
+ 		}
+diff --git a/cmd/meta_webhook.go b/cmd/meta_webhook.go
+new file mode 100644
+index 00000000..a90b7263
+--- /dev/null
++++ b/cmd/meta_webhook.go
+@@ -0,0 +1,273 @@
++package main
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/attachment"
++	cmodels "github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/envelope"
++	metaChannel "github.com/abhinavxd/libredesk/internal/inbox/channel/meta"
++	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
++	umodels "github.com/abhinavxd/libredesk/internal/user/models"
++	"github.com/abhinavxd/libredesk/internal/whatsapp"
++	"github.com/valyala/fasthttp"
++	"github.com/volatiletech/null/v9"
++	"github.com/zerodha/fastglue"
++)
++
++// Meta waits about 20 seconds for a webhook answer before it retries.
++const metaWebhookTimeout = 15 * time.Second
++
++type metaWebhookPayload struct {
++	Object string `json:"object"`
++	Entry  []struct {
++		ID        string           `json:"id"`
++		Messaging []metaMessaging `json:"messaging"`
++	} `json:"entry"`
++}
++
++type metaMessaging struct {
++	Sender    struct{ ID string } `json:"sender"`
++	Timestamp int64               `json:"timestamp"`
++	Message   *struct {
++		MID         string `json:"mid"`
++		Text        string `json:"text"`
++		IsEcho      bool   `json:"is_echo"`
++		IsDeleted   bool   `json:"is_deleted"`
++		Attachments []struct {
++			Type    string `json:"type"`
++			Payload struct {
++				URL string `json:"url"`
++			} `json:"payload"`
++		} `json:"attachments"`
++	} `json:"message"`
++}
++
++func handleMetaWebhookVerify(r *fastglue.Request) error {
++	app := r.Context.(*App)
++	inboxID, err := inboxIDFromPath(r)
++	if err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "invalid inbox id", nil, envelope.InputError)
++	}
++	args := r.RequestCtx.QueryArgs()
++	if string(args.Peek("hub.mode")) != "subscribe" {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "invalid hub.mode", nil, envelope.InputError)
++	}
++	_, cfg, err := metaInbox(app, inboxID)
++	if err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "inbox not found", nil, envelope.NotFoundError)
++	}
++	if cfg.WebhookVerifyToken == "" || string(args.Peek("hub.verify_token")) != cfg.WebhookVerifyToken {
++		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "verify token mismatch", nil, envelope.PermissionError)
++	}
++	r.RequestCtx.SetStatusCode(fasthttp.StatusOK)
++	r.RequestCtx.SetBody(args.Peek("hub.challenge"))
++	return nil
++}
++
++func handleMetaWebhookEvent(r *fastglue.Request) error {
++	app := r.Context.(*App)
++	inboxID, err := inboxIDFromPath(r)
++	if err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "invalid inbox id", nil, envelope.InputError)
++	}
++	rec, cfg, err := metaInbox(app, inboxID)
++	if err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "inbox not found", nil, envelope.NotFoundError)
++	}
++	body := r.RequestCtx.PostBody()
++	if cfg.AppSecret == "" || !whatsapp.VerifySignature(body, string(r.RequestCtx.Request.Header.Peek("X-Hub-Signature-256")), cfg.AppSecret) {
++		app.lo.Warn("meta webhook signature verification failed", "inbox_id", inboxID)
++		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "invalid signature", nil, envelope.PermissionError)
++	}
++	var payload metaWebhookPayload
++	if err := json.Unmarshal(body, &payload); err != nil {
++		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "invalid payload", nil, envelope.InputError)
++	}
++
++	ctx, cancel := context.WithTimeout(context.Background(), metaWebhookTimeout)
++	defer cancel()
++	// frugal: processed inline; WhatsApp's durable queue is the upgrade if Meta's retries are not enough.
++	var errs []error
++	for _, entry := range payload.Entry {
++		// One Meta app posts every Page's events to one URL, so the Page ID picks the inbox.
++		target := resolveMetaInbox(app, rec, entry.ID)
++		if target.ID == 0 {
++			app.lo.Warn("dropping meta event: no enabled inbox for page", "url_inbox_id", inboxID, "page_id", entry.ID)
++			continue
++		}
++		for _, ev := range entry.Messaging {
++			if ev.Message == nil || ev.Message.IsEcho || ev.Message.IsDeleted || ev.Message.MID == "" || ev.Sender.ID == "" {
++				continue
++			}
++			if err := ingestMetaMessage(ctx, app, target, ev); err != nil {
++				app.lo.Error("error ingesting meta message", "inbox_id", target.ID, "mid", ev.Message.MID, "error", err)
++				errs = append(errs, err)
++			}
++		}
++	}
++	if len(errs) > 0 {
++		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "retry", nil, envelope.GeneralError)
++	}
++	return r.SendEnvelope(map[string]string{"status": "ok"})
++}
++
++func ingestMetaMessage(ctx context.Context, app *App, rec imodels.Inbox, ev metaMessaging) error {
++	if exists, err := app.conversation.MessageExists(ev.Message.MID); err != nil {
++		return err
++	} else if exists {
++		return nil
++	}
++	inb, err := app.inbox.Get(rec.ID)
++	if err != nil {
++		return fmt.Errorf("getting inbox: %w", err)
++	}
++	ch, ok := inb.(*metaChannel.Meta)
++	if !ok {
++		return fmt.Errorf("inbox %d is not a meta inbox", rec.ID)
++	}
++
++	contactID, err := app.user.UpsertContactByChannelIdentity(rec.Channel, ev.Sender.ID, &umodels.User{Type: umodels.UserTypeContact, FirstName: whatsAppDefaultContactName})
++	if err != nil {
++		return fmt.Errorf("resolving contact: %w", err)
++	}
++	contact, err := app.user.GetContactOrVisitor(contactID, "")
++	if err != nil {
++		return fmt.Errorf("checking contact: %w", err)
++	}
++	if !contact.Enabled {
++		return nil
++	}
++	if contact.FirstName == whatsAppDefaultContactName && contact.LastName == "" {
++		if name := ch.Profile(ctx, ev.Sender.ID); name != "" {
++			first, last := splitName(name)
++			if err := app.user.UpdateContactNameIfDefault(contactID, first, last, whatsAppDefaultContactName); err != nil {
++				app.lo.Error("error updating meta contact name", "user_id", contactID, "error", err)
++			}
++		}
++	}
++
++	maxBytes := int64(app.consts.Load().(*constants).MaxFileUploadSizeMB) * 1024 * 1024
++	var atts attachment.Attachments
++	var placeholders []string
++	for _, a := range ev.Message.Attachments {
++		if a.Payload.URL == "" {
++			placeholders = append(placeholders, "["+a.Type+"]")
++			continue
++		}
++		data, ctype, err := ch.Download(ctx, a.Payload.URL, maxBytes)
++		if err != nil || len(data) == 0 {
++			app.lo.Warn("meta attachment not downloaded, inserting placeholder", "mid", ev.Message.MID, "error", err)
++			placeholders = append(placeholders, "["+a.Type+"]")
++			continue
++		}
++		atts = append(atts, attachment.Attachment{
++			Name:        defaultMediaFilename(a.Type, ctype),
++			ContentType: ctype,
++			Content:     data,
++			Size:        len(data),
++			Disposition: attachment.DispositionAttachment,
++		})
++	}
++	content := strings.TrimSpace(strings.Join(append([]string{ev.Message.Text}, placeholders...), " "))
++	if content == "" && len(atts) == 0 {
++		content = "[message]"
++	}
++
++	defer lockWhatsAppConversation(contactID, rec.ID)()
++	isNew := false
++	convID, convUUID, err := app.conversation.GetLatestOpenConversationForContact(contactID, rec.ID)
++	if errors.Is(err, sql.ErrNoRows) && rec.ReopenWindowHours > 0 {
++		convID, convUUID, err = app.conversation.GetReopenableConversationForContact(contactID, rec.ID, rec.ReopenWindowHours)
++	}
++	if errors.Is(err, sql.ErrNoRows) {
++		convID, convUUID, err = app.conversation.CreateConversation(contactID, rec.ID, content, time.Now(), "", false, nil, nil, 0, 0)
++		if err != nil {
++			return fmt.Errorf("creating conversation: %w", err)
++		}
++		isNew = true
++	} else if err != nil {
++		return fmt.Errorf("looking up conversation: %w", err)
++	}
++
++	at := time.Now()
++	if ev.Timestamp > 0 {
++		at = time.UnixMilli(ev.Timestamp)
++	}
++	msg := cmodels.Message{
++		Channel:          rec.Channel,
++		ConversationID:   convID,
++		ConversationUUID: convUUID,
++		SenderID:         contactID,
++		SenderType:       cmodels.SenderTypeContact,
++		Type:             cmodels.MessageIncoming,
++		Status:           cmodels.MessageStatusReceived,
++		InboxID:          rec.ID,
++		Content:          content,
++		ContentType:      cmodels.ContentTypeText,
++		SourceID:         null.StringFrom(ev.Message.MID),
++		Attachments:      atts,
++	}
++	if _, err := app.conversation.ProcessIncomingWhatsAppMessage(msg, isNew, at); err != nil {
++		return fmt.Errorf("processing meta message: %w", err)
++	}
++	return nil
++}
++
++// resolveMetaInbox returns the enabled inbox of the URL's channel whose Page ID matches, or the URL inbox when it matches. A zero ID means none.
++func resolveMetaInbox(app *App, urlRec imodels.Inbox, pageID string) imodels.Inbox {
++	if urlRec.Enabled && metaPageID(urlRec) == pageID {
++		return urlRec
++	}
++	inboxes, err := app.inbox.GetAll()
++	if err != nil {
++		app.lo.Error("error listing inboxes for meta routing", "error", err)
++		return imodels.Inbox{}
++	}
++	for _, rec := range inboxes {
++		if rec.Channel == urlRec.Channel && rec.Enabled && metaPageID(rec) == pageID {
++			return rec
++		}
++	}
++	return imodels.Inbox{}
++}
++
++func metaPageID(rec imodels.Inbox) string {
++	var cfg metaChannel.Config
++	_ = json.Unmarshal(rec.Config, &cfg)
++	return cfg.PageID
++}
++
++func metaInbox(app *App, inboxID int) (imodels.Inbox, metaChannel.Config, error) {
++	rec, err := app.inbox.GetDBRecord(inboxID)
++	if err != nil {
++		return rec, metaChannel.Config{}, err
++	}
++	if !metaChannel.IsMeta(rec.Channel) {
++		return rec, metaChannel.Config{}, fmt.Errorf("inbox %d is not a meta inbox", inboxID)
++	}
++	var cfg metaChannel.Config
++	if err := json.Unmarshal(rec.Config, &cfg); err != nil {
++		return rec, cfg, fmt.Errorf("decoding meta inbox config: %w", err)
++	}
++	return rec, cfg, nil
++}
++
++// subscribeMetaPage connects the inbox's Page to the app webhook after a save. Best-effort: the inbox works once the Page is subscribed by hand too.
++func subscribeMetaPage(app *App, inboxID int) {
++	inb, err := app.inbox.Get(inboxID)
++	if err != nil {
++		return
++	}
++	if ch, ok := inb.(*metaChannel.Meta); ok {
++		if err := ch.Subscribe(); err != nil {
++			app.lo.Warn("error subscribing facebook page to webhook", "inbox_id", inboxID, "error", err)
++		}
++	}
++}
+diff --git a/frontend/apps/main/src/components/icons/InstagramIcon.vue b/frontend/apps/main/src/components/icons/InstagramIcon.vue
+new file mode 100644
+index 00000000..173ca660
+--- /dev/null
++++ b/frontend/apps/main/src/components/icons/InstagramIcon.vue
+@@ -0,0 +1,15 @@
++<template>
++  <svg
++    xmlns="http://www.w3.org/2000/svg"
++    viewBox="0 0 24 24"
++    fill="currentColor"
++    width="24"
++    height="24"
++    role="img"
++    aria-label="Instagram"
++  >
++    <path
++      d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"
++    />
++  </svg>
++</template>
+diff --git a/frontend/apps/main/src/components/icons/MessengerIcon.vue b/frontend/apps/main/src/components/icons/MessengerIcon.vue
+new file mode 100644
+index 00000000..b2477f34
+--- /dev/null
++++ b/frontend/apps/main/src/components/icons/MessengerIcon.vue
+@@ -0,0 +1,15 @@
++<template>
++  <svg
++    xmlns="http://www.w3.org/2000/svg"
++    viewBox="0 0 24 24"
++    fill="currentColor"
++    width="24"
++    height="24"
++    role="img"
++    aria-label="Messenger"
++  >
++    <path
++      d="M12 0C5.24 0 0 4.952 0 11.64c0 3.499 1.434 6.521 3.769 8.61a.96.96 0 0 1 .323.683l.065 2.135a.96.96 0 0 0 1.347.85l2.381-1.053a.96.96 0 0 1 .641-.046A13 13 0 0 0 12 23.28c6.76 0 12-4.952 12-11.64S18.76 0 12 0m6.806 7.44c.522-.03.971.567.63 1.094l-4.178 6.457a.707.707 0 0 1-.977.208l-3.87-2.504a.44.44 0 0 0-.49.007l-4.363 3.01c-.637.438-1.415-.317-.995-.966l4.179-6.457a.706.706 0 0 1 .977-.21l3.87 2.505c.15.097.344.094.491-.007l4.362-3.008a.7.7 0 0 1 .364-.13"
++    />
++  </svg>
++</template>
+diff --git a/frontend/apps/main/src/constants/channelIcons.js b/frontend/apps/main/src/constants/channelIcons.js
+index 0f6e0f7e..f46dffc2 100644
+--- a/frontend/apps/main/src/constants/channelIcons.js
++++ b/frontend/apps/main/src/constants/channelIcons.js
+@@ -1,7 +1,11 @@
+ import { MessageSquare } from 'lucide-vue-next'
+ import WhatsAppIcon from '@main/components/icons/WhatsAppIcon.vue'
++import MessengerIcon from '@main/components/icons/MessengerIcon.vue'
++import InstagramIcon from '@main/components/icons/InstagramIcon.vue'
+ 
+ export const CHANNEL_ICONS = {
+   livechat: MessageSquare,
+-  whatsapp: WhatsAppIcon
++  whatsapp: WhatsAppIcon,
++  messenger: MessengerIcon,
++  instagram: InstagramIcon
+ }
+diff --git a/frontend/apps/main/src/features/admin/inbox/MetaInboxForm.vue b/frontend/apps/main/src/features/admin/inbox/MetaInboxForm.vue
+new file mode 100644
+index 00000000..caa2e6b2
+--- /dev/null
++++ b/frontend/apps/main/src/features/admin/inbox/MetaInboxForm.vue
+@@ -0,0 +1,260 @@
++<template>
++  <form @submit="onSubmit" class="space-y-6 w-full">
++    <FormField v-slot="{ componentField }" name="name">
++      <FormItem>
++        <FormLabel>{{ $t('globals.terms.name') }}</FormLabel>
++        <FormControl>
++          <Input type="text" placeholder="" v-bind="componentField" />
++        </FormControl>
++        <FormMessage />
++      </FormItem>
++    </FormField>
++
++    <FormField v-slot="{ componentField, handleChange }" name="enabled">
++      <FormItem>
++        <SwitchField
++          :title="$t('globals.terms.enabled')"
++          :checked="componentField.modelValue"
++          @update:checked="handleChange"
++        />
++      </FormItem>
++    </FormField>
++
++    <FormField v-slot="{ componentField, handleChange }" name="prompt_tags_on_reply">
++      <FormItem>
++        <SwitchField
++          :title="$t('admin.inbox.promptTagsOnReply')"
++          :description="$t('admin.inbox.promptTagsOnReply.description')"
++          :checked="componentField.modelValue"
++          @update:checked="handleChange"
++        />
++      </FormItem>
++    </FormField>
++
++    <div class="max-w-xl">
++      <FormField v-slot="{ componentField }" name="reopen_window_hours">
++        <FormItem>
++          <FormLabel>{{ $t('admin.inbox.whatsapp.reopenWindow') }}</FormLabel>
++          <FormControl>
++            <Input type="number" min="0" placeholder="48" v-bind="componentField" />
++          </FormControl>
++          <FormDescription>
++            {{ $t('admin.inbox.whatsapp.reopenWindow.description') }}
++          </FormDescription>
++          <FormMessage />
++        </FormItem>
++      </FormField>
++    </div>
++
++    <div class="box p-4 space-y-4">
++      <h3 class="ui-heading">{{ $t('admin.inbox.whatsapp.metaCredentials') }}</h3>
++      <div class="max-w-xl">
++        <FormField v-slot="{ componentField }" name="config.page_id">
++          <FormItem>
++            <FormLabel>
++              {{ channel === 'instagram' ? $t('kuraka.metaInstagramId') : $t('kuraka.metaPageId') }}
++            </FormLabel>
++            <FormControl>
++              <Input type="text" v-bind="componentField" />
++            </FormControl>
++            <FormDescription>
++              {{
++                channel === 'instagram'
++                  ? $t('kuraka.metaInstagramIdHelp')
++                  : $t('kuraka.metaPageIdHelp')
++              }}
++            </FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++      </div>
++
++      <FormGrid>
++        <FormField v-slot="{ componentField }" name="config.access_token">
++          <FormItem>
++            <FormLabel>{{ $t('globals.terms.accessToken') }}</FormLabel>
++            <FormControl>
++              <Input type="password" placeholder="••••••••" v-bind="componentField" />
++            </FormControl>
++            <FormDescription>
++              {{ $t('kuraka.metaAccessTokenHelp') }}
++            </FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++
++        <FormField v-slot="{ componentField }" name="config.app_secret">
++          <FormItem>
++            <FormLabel>{{ $t('globals.terms.appSecret') }}</FormLabel>
++            <FormControl>
++              <Input type="password" placeholder="••••••••" v-bind="componentField" />
++            </FormControl>
++            <FormDescription>
++              {{ $t('admin.inbox.whatsapp.appSecret.description') }}
++            </FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++      </FormGrid>
++
++      <div class="max-w-xl">
++        <FormField v-slot="{ componentField }" name="config.api_version">
++          <FormItem>
++            <FormLabel>{{ $t('globals.terms.apiVersion') }}</FormLabel>
++            <FormControl>
++              <Input type="text" placeholder="v26.0" v-bind="componentField" />
++            </FormControl>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++      </div>
++    </div>
++
++    <div class="box p-4 space-y-4">
++      <h3 class="ui-heading">{{ $t('globals.terms.webhook', 1) }}</h3>
++      <p v-if="webhookURL" class="ui-description flex items-start gap-1.5">
++        <Lightbulb class="size-4 mt-0.5 shrink-0" />
++        <span>{{ $t('kuraka.metaWebhookHelp') }}</span>
++      </p>
++
++      <div class="max-w-xl">
++        <FormField v-slot="{ componentField }" name="config.webhook_verify_token">
++          <FormItem>
++            <FormLabel>{{ $t('globals.terms.webhookVerifyToken') }}</FormLabel>
++            <FormControl>
++              <Input type="text" v-bind="componentField" />
++            </FormControl>
++            <FormDescription>
++              {{ $t('admin.inbox.whatsapp.verifyToken.description') }}
++            </FormDescription>
++            <FormMessage />
++          </FormItem>
++        </FormField>
++
++        <div v-if="webhookURL" class="space-y-2">
++          <Label class="text-muted-foreground">{{ $t('globals.terms.callbackURL') }}</Label>
++          <div class="flex items-center gap-2">
++            <Input :model-value="webhookURL" readonly class="font-mono text-xs" />
++            <CopyButton :text="webhookURL" />
++          </div>
++        </div>
++      </div>
++    </div>
++
++    <Button type="submit" :is-loading="isLoading" :disabled="isLoading">
++      {{ submitLabel }}
++    </Button>
++  </form>
++</template>
++
++<script setup>
++import FormGrid from '@shared-ui/components/FormGrid.vue'
++import { watch, computed } from 'vue'
++import { useForm } from 'vee-validate'
++import { toTypedSchema } from '@vee-validate/zod'
++import { createFormSchema } from './metaFormSchema.js'
++import {
++  FormControl,
++  FormField,
++  FormItem,
++  FormLabel,
++  FormMessage,
++  FormDescription
++} from '@shared-ui/components/ui/form/index.js'
++import { Input } from '@shared-ui/components/ui/input/index.js'
++import { Label } from '@shared-ui/components/ui/label'
++import SwitchField from '@shared-ui/components/SwitchField.vue'
++import { Button } from '@shared-ui/components/ui/button/index.js'
++import CopyButton from '@/components/button/CopyButton.vue'
++import { Lightbulb } from 'lucide-vue-next'
++import { useI18n } from 'vue-i18n'
++import { useAppSettingsStore } from '@/stores/appSettings'
++
++const props = defineProps({
++  channel: {
++    type: String,
++    required: true
++  },
++  initialValues: {
++    type: Object,
++    default: () => ({})
++  },
++  submitForm: {
++    type: Function,
++    required: true
++  },
++  submitLabel: {
++    type: String,
++    default: ''
++  },
++  isNewForm: {
++    type: Boolean,
++    default: false
++  },
++  isLoading: {
++    type: Boolean,
++    default: false
++  }
++})
++
++const { t } = useI18n()
++const appSettingsStore = useAppSettingsStore()
++
++// The backend only computes webhook_url for WhatsApp, so build the Meta one here once the inbox exists.
++const webhookURL = computed(() => {
++  if (props.initialValues?.webhook_url) return props.initialValues.webhook_url
++  if (!props.initialValues?.id) return ''
++  const root = (appSettingsStore.settings?.['app.root_url'] || window.location.origin).replace(
++    /\/$/,
++    ''
++  )
++  return `${root}/webhooks/meta/${props.initialValues.id}`
++})
++
++const submitLabel = computed(() => {
++  return (
++    props.submitLabel ||
++    (props.isNewForm ? t('globals.messages.create') : t('globals.messages.save'))
++  )
++})
++
++const form = useForm({
++  validationSchema: computed(() => toTypedSchema(createFormSchema(t))),
++  initialValues: {
++    name: '',
++    enabled: true,
++    prompt_tags_on_reply: false,
++    reopen_window_hours: 48,
++    config: {
++      page_id: '',
++      access_token: '',
++      app_secret: '',
++      webhook_verify_token: '',
++      api_version: 'v26.0'
++    }
++  }
++})
++
++const onSubmit = form.handleSubmit(async (values) => {
++  await props.submitForm(values)
++})
++
++watch(
++  () => props.initialValues,
++  (newValues) => {
++    if (Object.keys(newValues).length === 0) {
++      return
++    }
++    // An unset reopen window is off (0), not the new-inbox default of 48.
++    form.setValues(
++      {
++        ...newValues,
++        reopen_window_hours: newValues.reopen_window_hours ?? 0,
++        config: { ...(newValues.config || {}) }
++      },
++      false
++    )
++  },
++  { deep: true, immediate: true }
++)
++</script>
+diff --git a/frontend/apps/main/src/features/admin/inbox/metaFormSchema.js b/frontend/apps/main/src/features/admin/inbox/metaFormSchema.js
+new file mode 100644
+index 00000000..70f15724
+--- /dev/null
++++ b/frontend/apps/main/src/features/admin/inbox/metaFormSchema.js
+@@ -0,0 +1,16 @@
++import * as z from 'zod'
++
++export const createFormSchema = (t) =>
++  z.object({
++    name: z.string().min(1, t('globals.messages.required')),
++    enabled: z.boolean().optional(),
++    prompt_tags_on_reply: z.boolean().optional(),
++    reopen_window_hours: z.coerce.number().int().min(0).optional(),
++    config: z.object({
++      page_id: z.string().min(1, t('globals.messages.required')),
++      access_token: z.string().min(1, t('globals.messages.required')),
++      app_secret: z.string().min(1, t('globals.messages.required')),
++      webhook_verify_token: z.string().min(1, t('globals.messages.required')),
++      api_version: z.string().optional()
++    })
++  })
+diff --git a/frontend/apps/main/src/views/admin/inbox/EditInbox.vue b/frontend/apps/main/src/views/admin/inbox/EditInbox.vue
+index 79e45933..a431d74f 100644
+--- a/frontend/apps/main/src/views/admin/inbox/EditInbox.vue
++++ b/frontend/apps/main/src/views/admin/inbox/EditInbox.vue
+@@ -37,6 +37,13 @@
+         :isLoading="isLoading"
+         v-else-if="inbox.channel === 'whatsapp'"
+       />
++      <MetaInboxForm
++        :channel="inbox.channel"
++        :initialValues="inbox"
++        :submitForm="submitForm"
++        :isLoading="isLoading"
++        v-else-if="inbox.channel === 'messenger' || inbox.channel === 'instagram'"
++      />
+     </div>
+   </LoadingOverlay>
+ </template>
+@@ -47,6 +54,7 @@ import api from '@/api'
+ import EmailInboxForm from '@/features/admin/inbox/EmailInboxForm.vue'
+ import LivechatInboxForm from '@/features/admin/inbox/LivechatInboxForm.vue'
+ import WhatsAppInboxForm from '@/features/admin/inbox/WhatsAppInboxForm.vue'
++import MetaInboxForm from '@/features/admin/inbox/MetaInboxForm.vue'
+ import { CustomBreadcrumb } from '@shared-ui/components/ui/breadcrumb/index.js'
+ import CopyButton from '@/components/button/CopyButton.vue'
+ import LoadingOverlay from '@main/components/layout/LoadingOverlay.vue'
+@@ -140,6 +148,21 @@ const submitForm = (values) => {
+     if (payload.config.app_secret?.includes('•')) {
+       payload.config.app_secret = ''
+     }
++  } else if (inbox.value.channel === 'messenger' || inbox.value.channel === 'instagram') {
++    payload = {
++      name: values.name,
++      channel: inbox.value.channel,
++      enabled: values.enabled,
++      prompt_tags_on_reply: values.prompt_tags_on_reply,
++      reopen_window_hours: values.reopen_window_hours,
++      config: { ...values.config }
++    }
++    // Emptying a masked secret makes the backend keep the existing encrypted value. The masked verify token is kept as is, like WhatsApp's, since it is required.
++    for (const key of ['access_token', 'app_secret']) {
++      if (payload.config[key]?.includes('•')) {
++        payload.config[key] = ''
++      }
++    }
+   }
+ 
+   updateInbox(payload)
+diff --git a/frontend/apps/main/src/views/admin/inbox/InboxList.vue b/frontend/apps/main/src/views/admin/inbox/InboxList.vue
+index eef3a13b..4960ee2a 100644
+--- a/frontend/apps/main/src/views/admin/inbox/InboxList.vue
++++ b/frontend/apps/main/src/views/admin/inbox/InboxList.vue
+@@ -106,7 +106,9 @@ const getInboxes = async () => {
+ const CHANNEL_LABEL_KEYS = {
+   email: 'globals.terms.email',
+   livechat: 'globals.terms.liveChat',
+-  whatsapp: 'globals.terms.whatsapp'
++  whatsapp: 'globals.terms.whatsapp',
++  messenger: 'kuraka.messenger',
++  instagram: 'kuraka.instagram'
+ }
+ 
+ const columns = [
+diff --git a/frontend/apps/main/src/views/admin/inbox/InboxView.vue b/frontend/apps/main/src/views/admin/inbox/InboxView.vue
+index 25287014..1d3a4f66 100644
+--- a/frontend/apps/main/src/views/admin/inbox/InboxView.vue
++++ b/frontend/apps/main/src/views/admin/inbox/InboxView.vue
+@@ -75,6 +75,14 @@
+             {{ $t('globals.terms.learnMore') }}
+           </a>
+         </div>
++        <div class="space-y-1">
++          <p class="text-sm font-medium text-foreground">{{ $t('kuraka.messenger') }}</p>
++          <p class="ui-description">{{ $t('kuraka.messengerHelp') }}</p>
++        </div>
++        <div class="space-y-1">
++          <p class="text-sm font-medium text-foreground">{{ $t('kuraka.instagram') }}</p>
++          <p class="ui-description">{{ $t('kuraka.instagramHelp') }}</p>
++        </div>
+       </div>
+     </template>
+   </AdminSplitLayout>
+diff --git a/frontend/apps/main/src/views/admin/inbox/NewInbox.vue b/frontend/apps/main/src/views/admin/inbox/NewInbox.vue
+index 4dc6e818..17a05d99 100644
+--- a/frontend/apps/main/src/views/admin/inbox/NewInbox.vue
++++ b/frontend/apps/main/src/views/admin/inbox/NewInbox.vue
+@@ -46,6 +46,16 @@
+           :isNewForm="true"
+         />
+       </div>
++      <div v-else-if="selectedChannel === 'messenger' || selectedChannel === 'instagram'">
++        <MetaInboxForm
++          :key="selectedChannel"
++          :channel="selectedChannel"
++          :initial-values="{}"
++          :submitForm="submitMetaForm"
++          :isLoading="isLoading"
++          :isNewForm="true"
++        />
++      </div>
+     </div>
+   </div>
+ </template>
+@@ -57,11 +67,14 @@ import { useRouter } from 'vue-router'
+ import { CustomBreadcrumb } from '@shared-ui/components/ui/breadcrumb/index.js'
+ import { Mail, MessageCircle } from 'lucide-vue-next'
+ import WhatsAppIcon from '@main/components/icons/WhatsAppIcon.vue'
++import MessengerIcon from '@main/components/icons/MessengerIcon.vue'
++import InstagramIcon from '@main/components/icons/InstagramIcon.vue'
+ import MenuCard from '@main/components/layout/MenuCard.vue'
+ import FormGrid from '@shared-ui/components/FormGrid.vue'
+ import EmailInboxForm from '@/features/admin/inbox/EmailInboxForm.vue'
+ import LivechatInboxForm from '@/features/admin/inbox/LivechatInboxForm.vue'
+ import WhatsAppInboxForm from '@/features/admin/inbox/WhatsAppInboxForm.vue'
++import MetaInboxForm from '@/features/admin/inbox/MetaInboxForm.vue'
+ import api from '@/api'
+ import { EMITTER_EVENTS } from '@/constants/emitterEvents.js'
+ import { useEmitter } from '@/composables/useEmitter'
+@@ -116,6 +129,18 @@ const channels = [
+     onClick: selectWhatsAppChannel,
+     icon: WhatsAppIcon,
+     badge: t('globals.terms.beta')
++  },
++  {
++    title: t('kuraka.messenger'),
++    subTitle: t('kuraka.messengerHelp'),
++    onClick: () => selectChannel('messenger'),
++    icon: MessengerIcon
++  },
++  {
++    title: t('kuraka.instagram'),
++    subTitle: t('kuraka.instagramHelp'),
++    onClick: () => selectChannel('instagram'),
++    icon: InstagramIcon
+   }
+ ]
+ 
+@@ -182,6 +207,18 @@ const submitWhatsAppForm = (values) => {
+   createInbox(payload)
+ }
+ 
++const submitMetaForm = (values) => {
++  const payload = {
++    name: values.name,
++    channel: selectedChannel.value,
++    enabled: values.enabled ?? true,
++    prompt_tags_on_reply: values.prompt_tags_on_reply ?? false,
++    reopen_window_hours: values.reopen_window_hours ?? 0,
++    config: values.config
++  }
++  createInbox(payload)
++}
++
+ async function createInbox(payload) {
+   try {
+     isLoading.value = true
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index be55b7bd..32b293cc 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1587,9 +1587,21 @@
+   "kuraka.hour": "1 hour",
+   "kuraka.hoursSinceTagAdded": "Hours since tag added",
+   "kuraka.inboxesManagedInKuraka": "Kuraka creates and manages your mail inboxes. Change them in Kuraka; edits here can stop mail from arriving.",
++  "kuraka.instagram": "Instagram",
++  "kuraka.instagramHelp": "Direct messages to your Instagram professional account.",
++  "kuraka.instagramNoFiles": "Instagram replies can only be text for now. Remove the files and send again.",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
+   "kuraka.liveChatInvalidField": "Invalid live chat setting: {name}",
++  "kuraka.messenger": "Messenger",
++  "kuraka.messengerHelp": "Messages to your Facebook Page.",
++  "kuraka.metaAccessTokenHelp": "A Page access token with permission to manage the Page's messages.",
++  "kuraka.metaInstagramId": "Instagram account ID",
++  "kuraka.metaInstagramIdHelp": "The Instagram professional account linked to your Facebook Page.",
++  "kuraka.metaNoRecipient": "This person has not written to this Page yet. Meta only lets you reply to people who wrote first.",
++  "kuraka.metaPageId": "Facebook Page ID",
++  "kuraka.metaPageIdHelp": "In Meta Business Suite, Settings, Page info.",
++  "kuraka.metaWebhookHelp": "Paste this URL and the verify token into your Meta app under Webhooks, then subscribe to the messages field.",
+   "kuraka.minutes": "{n} minute | {n} minutes",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
+   "kuraka.seconds": "{n} seconds",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index 5055b22c..631bd7c1 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -853,9 +853,21 @@
+   "kuraka.hour": "1 hora",
+   "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+   "kuraka.inboxesManagedInKuraka": "Kuraka crea y administra tus buzones de correo. Cámbialos desde Kuraka; un cambio aquí puede hacer que el correo deje de llegar.",
++  "kuraka.instagram": "Instagram",
++  "kuraka.instagramHelp": "Mensajes directos de tu cuenta profesional de Instagram.",
++  "kuraka.instagramNoFiles": "Por ahora las respuestas de Instagram solo pueden ser texto. Quita los archivos y envía de nuevo.",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
+   "kuraka.liveChatInvalidField": "Ajuste del chat en vivo no válido: {name}",
++  "kuraka.messenger": "Messenger",
++  "kuraka.messengerHelp": "Mensajes de tu página de Facebook.",
++  "kuraka.metaAccessTokenHelp": "Un token de acceso de la página con permiso para administrar sus mensajes.",
++  "kuraka.metaInstagramId": "ID de la cuenta de Instagram",
++  "kuraka.metaInstagramIdHelp": "La cuenta profesional de Instagram vinculada a tu página de Facebook.",
++  "kuraka.metaNoRecipient": "Esta persona aún no le escribió a esta página. Meta solo deja responder a quien escribió primero.",
++  "kuraka.metaPageId": "ID de la página de Facebook",
++  "kuraka.metaPageIdHelp": "En Meta Business Suite, Configuración, Información de la página.",
++  "kuraka.metaWebhookHelp": "Pega esta URL y el token de verificación en los Webhooks de tu app de Meta y suscríbete al campo messages.",
+   "kuraka.minutes": "{n} minuto | {n} minutos",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
+   "kuraka.seconds": "{n} segundos",
+diff --git a/internal/conversation/message.go b/internal/conversation/message.go
+index 705e92ed..85203f96 100644
+--- a/internal/conversation/message.go
++++ b/internal/conversation/message.go
+@@ -327,7 +327,7 @@ func (m *Manager) RenderMessageInTemplate(channel string, message *models.Messag
+ 			m.lo.Error("could not render email content using template", "id", message.ID, "error", err)
+ 			return fmt.Errorf("could not render email content using template: %w", err)
+ 		}
+-	case inbox.ChannelLiveChat, inbox.ChannelWhatsApp:
++	case inbox.ChannelLiveChat, inbox.ChannelWhatsApp, inbox.ChannelMessenger, inbox.ChannelInstagram:
+ 		m.RenderArticleReferences(message)
+ 		return nil
+ 	default:
+@@ -707,6 +707,10 @@ func (m *Manager) QueueReply(media []mmodels.Media, inboxID, senderID, contactID
+ 			m.lo.Error("error generating source message id", "error", err)
+ 			return models.Message{}, envelope.NewError(envelope.GeneralError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
+ 		}
++	case inbox.ChannelMessenger, inbox.ChannelInstagram:
++		if err := m.prepareMetaOutbound(inboxRecord, conversationUUID, len(media) > 0, metaMap); err != nil {
++			return models.Message{}, err
++		}
+ 	case inbox.ChannelWhatsApp:
+ 		// Meta accepts one media per message, so a multi-attachment reply must be sent as separate messages.
+ 		if len(media) > 1 {
+diff --git a/internal/conversation/meta.go b/internal/conversation/meta.go
+new file mode 100644
+index 00000000..88b48d89
+--- /dev/null
++++ b/internal/conversation/meta.go
+@@ -0,0 +1,35 @@
++package conversation
++
++import (
++	"github.com/abhinavxd/libredesk/internal/envelope"
++	"github.com/abhinavxd/libredesk/internal/inbox"
++	imodels "github.com/abhinavxd/libredesk/internal/inbox/models"
++)
++
++// prepareMetaOutbound writes the Messenger or Instagram recipient into metaMap. Meta only lets a Page answer people who wrote first.
++func (m *Manager) prepareMetaOutbound(inboxRecord imodels.Inbox, conversationUUID string, hasAttachments bool, metaMap map[string]any) error {
++	// frugal: Instagram replies are text only; Messenger uploads files with the message.
++	if hasAttachments && inboxRecord.Channel == inbox.ChannelInstagram {
++		return envelope.NewError(envelope.InputError, m.i18n.T("kuraka.instagramNoFiles"), nil)
++	}
++	var conv struct {
++		InboxID   int `db:"inbox_id"`
++		ContactID int `db:"contact_id"`
++	}
++	if err := m.q.GetConversationInboxContact.Get(&conv, conversationUUID); err != nil {
++		m.lo.Error("error fetching conversation inbox and contact", "conversation_uuid", conversationUUID, "error", err)
++		return envelope.NewError(envelope.GeneralError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
++	}
++	if conv.InboxID != inboxRecord.ID {
++		return envelope.NewError(envelope.InputError, m.i18n.T("globals.messages.somethingWentWrong"), nil)
++	}
++	id, err := m.userStore.GetChannelIdentity(conv.ContactID, inboxRecord.Channel)
++	if err != nil {
++		return err
++	}
++	if id == "" {
++		return envelope.NewError(envelope.InputError, m.i18n.T("kuraka.metaNoRecipient"), nil)
++	}
++	metaMap["meta"] = map[string]string{"recipient_id": id}
++	return nil
++}
+diff --git a/internal/inbox/channel/meta/meta.go b/internal/inbox/channel/meta/meta.go
+new file mode 100644
+index 00000000..7753d499
+--- /dev/null
++++ b/internal/inbox/channel/meta/meta.go
+@@ -0,0 +1,322 @@
++// Package meta implements Facebook Messenger and Instagram Direct inboxes through a Facebook Page.
++package meta
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"mime/multipart"
++	"net/http"
++	"net/textproto"
++	"strings"
++	"time"
++
++	"github.com/abhinavxd/libredesk/internal/attachment"
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/inbox"
++	"github.com/abhinavxd/libredesk/internal/stringutil"
++	"github.com/abhinavxd/libredesk/internal/whatsapp"
++	"github.com/zerodha/logf"
++)
++
++const (
++	ChannelMessenger = inbox.ChannelMessenger
++	ChannelInstagram = inbox.ChannelInstagram
++
++	callTimeout       = 30 * time.Second
++	uploadTimeout     = 5 * time.Minute
++
++	// Meta rejects longer texts: 2000 characters on Messenger, 1000 on Instagram.
++	maxMessengerText = 2000
++	maxInstagramText = 1000
++)
++
++// BaseURL is the Graph API root. Tests point it at a stand-in server.
++var BaseURL = "https://graph.facebook.com"
++
++// IsMeta reports whether a channel is Messenger or Instagram.
++func IsMeta(channel string) bool {
++	return channel == ChannelMessenger || channel == ChannelInstagram
++}
++
++// Config is the per-inbox configuration, with tokens already decrypted. PageID is the Facebook Page, or the Instagram account linked to it.
++type Config struct {
++	PageID             string `json:"page_id"`
++	AccessToken        string `json:"access_token"`
++	AppSecret          string `json:"app_secret"`
++	WebhookVerifyToken string `json:"webhook_verify_token"`
++	APIVersion         string `json:"api_version"`
++}
++
++func (c Config) version() string {
++	if c.APIVersion != "" {
++		return c.APIVersion
++	}
++	return whatsapp.DefaultAPIVersion
++}
++
++// SendMeta is what message.meta carries under "meta" for an outbound message.
++type SendMeta struct {
++	RecipientID string `json:"recipient_id"`
++}
++
++type Meta struct {
++	id      int
++	name    string
++	channel string
++	config  Config
++	lo      *logf.Logger
++	http    *http.Client
++}
++
++func New(id int, name, channel string, cfg Config, lo *logf.Logger) (*Meta, error) {
++	if !IsMeta(channel) {
++		return nil, fmt.Errorf("unknown meta channel %q", channel)
++	}
++	if cfg.PageID == "" || cfg.AccessToken == "" {
++		return nil, fmt.Errorf("page_id and access_token are required")
++	}
++	return &Meta{id: id, name: name, channel: channel, config: cfg, lo: lo, http: &http.Client{}}, nil
++}
++
++func (m *Meta) Identifier() int          { return m.id }
++func (m *Meta) Config() Config           { return m.config }
++func (m *Meta) Channel() string          { return m.channel }
++func (m *Meta) Name() string             { return m.name }
++func (m *Meta) FromAddress() string      { return "" }
++func (m *Meta) ReplyToAddress() string   { return "" }
++func (m *Meta) FromNameTemplate() string { return "" }
++func (m *Meta) Close() error             { return nil }
++
++// Receive is a no-op. Inbound messages arrive via the webhook handler.
++func (m *Meta) Receive(ctx context.Context) error { return nil }
++
++func (m *Meta) Send(message models.OutboundMessage) error {
++	var env struct {
++		Meta SendMeta `json:"meta"`
++	}
++	if len(message.Meta) > 0 {
++		if err := json.Unmarshal(message.Meta, &env); err != nil {
++			return fmt.Errorf("parsing meta send meta: %w", err)
++		}
++	}
++	to := env.Meta.RecipientID
++	if to == "" {
++		return fmt.Errorf("missing recipient on outbound message")
++	}
++
++	text := strings.TrimSpace(TextBody(message))
++	if text == "" && len(message.Attachments) == 0 {
++		return fmt.Errorf("outbound message has no content")
++	}
++	limit := maxMessengerText
++	if m.channel == ChannelInstagram {
++		limit = maxInstagramText
++	}
++	for _, part := range splitText(text, limit) {
++		if err := m.post(to, map[string]any{"text": part}); err != nil {
++			return err
++		}
++	}
++	for _, att := range message.Attachments {
++		if err := m.sendAttachment(to, att); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func (m *Meta) post(to string, msg map[string]any) error {
++	body, err := json.Marshal(map[string]any{
++		"recipient":      map[string]string{"id": to},
++		"messaging_type": "RESPONSE",
++		"message":        msg,
++	})
++	if err != nil {
++		return err
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
++	defer cancel()
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.messagesURL(), bytes.NewReader(body))
++	if err != nil {
++		return err
++	}
++	req.Header.Set("Content-Type", "application/json")
++	return m.do(req, nil)
++}
++
++// sendAttachment uploads the file with the message, so Meta never needs to reach Libredesk.
++func (m *Meta) sendAttachment(to string, att attachment.Attachment) error {
++	var buf bytes.Buffer
++	w := multipart.NewWriter(&buf)
++	recipient, _ := json.Marshal(map[string]string{"id": to})
++	msg, _ := json.Marshal(map[string]any{"attachment": map[string]any{"type": AttachmentType(att.ContentType), "payload": map[string]bool{"is_reusable": false}}})
++	_ = w.WriteField("recipient", string(recipient))
++	_ = w.WriteField("messaging_type", "RESPONSE")
++	_ = w.WriteField("message", string(msg))
++	h := make(textproto.MIMEHeader)
++	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="filedata"; filename=%q`, att.Name))
++	h.Set("Content-Type", att.ContentType)
++	part, err := w.CreatePart(h)
++	if err != nil {
++		return err
++	}
++	if _, err := part.Write(att.Content); err != nil {
++		return err
++	}
++	if err := w.Close(); err != nil {
++		return err
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
++	defer cancel()
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.messagesURL(), &buf)
++	if err != nil {
++		return err
++	}
++	req.Header.Set("Content-Type", w.FormDataContentType())
++	if err := m.do(req, nil); err != nil {
++		return fmt.Errorf("sending %s: %w", att.Name, err)
++	}
++	return nil
++}
++
++// Subscribe connects the Facebook Page to the app's webhook so its messages reach Libredesk. Instagram is subscribed from the app dashboard.
++func (m *Meta) Subscribe() error {
++	if m.channel != ChannelMessenger {
++		return nil
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
++	defer cancel()
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/%s/%s/subscribed_apps", BaseURL, m.config.version(), m.config.PageID), strings.NewReader("subscribed_fields=messages"))
++	if err != nil {
++		return err
++	}
++	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
++	return m.do(req, nil)
++}
++
++// Profile returns the sender's display name, or "" when Meta does not share it.
++func (m *Meta) Profile(ctx context.Context, userID string) string {
++	fields := "first_name,last_name"
++	if m.channel == ChannelInstagram {
++		fields = "name,username"
++	}
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/%s?fields=%s", BaseURL, m.config.version(), userID, fields), nil)
++	if err != nil {
++		return ""
++	}
++	var p struct {
++		FirstName string `json:"first_name"`
++		LastName  string `json:"last_name"`
++		Name      string `json:"name"`
++		Username  string `json:"username"`
++	}
++	if err := m.do(req, &p); err != nil {
++		m.lo.Warn("error fetching meta profile", "inbox_id", m.id, "error", err)
++		return ""
++	}
++	if n := strings.TrimSpace(p.FirstName + " " + p.LastName); n != "" {
++		return n
++	}
++	if p.Name != "" {
++		return p.Name
++	}
++	return p.Username
++}
++
++// Download fetches an inbound attachment from Meta's CDN, up to maxBytes.
++func (m *Meta) Download(ctx context.Context, url string, maxBytes int64) ([]byte, string, error) {
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
++	if err != nil {
++		return nil, "", err
++	}
++	resp, err := m.http.Do(req)
++	if err != nil {
++		return nil, "", err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return nil, "", fmt.Errorf("downloading attachment: status %d", resp.StatusCode)
++	}
++	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
++	if err != nil {
++		return nil, "", err
++	}
++	if int64(len(body)) > maxBytes {
++		return nil, "", fmt.Errorf("attachment exceeds %d bytes", maxBytes)
++	}
++	return body, resp.Header.Get("Content-Type"), nil
++}
++
++func (m *Meta) messagesURL() string {
++	return fmt.Sprintf("%s/%s/me/messages", BaseURL, m.config.version())
++}
++
++func (m *Meta) do(req *http.Request, out any) error {
++	req.Header.Set("Authorization", "Bearer "+m.config.AccessToken)
++	resp, err := m.http.Do(req)
++	if err != nil {
++		return err
++	}
++	defer resp.Body.Close()
++	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
++	if resp.StatusCode >= 300 {
++		var e struct {
++			Error struct {
++				Message string `json:"message"`
++			} `json:"error"`
++		}
++		if json.Unmarshal(body, &e) == nil && e.Error.Message != "" {
++			return fmt.Errorf("meta: %s", e.Error.Message)
++		}
++		return fmt.Errorf("meta: status %d", resp.StatusCode)
++	}
++	if out != nil {
++		return json.Unmarshal(body, out)
++	}
++	return nil
++}
++
++// AttachmentType maps a MIME type to Meta's attachment types.
++func AttachmentType(contentType string) string {
++	switch {
++	case strings.HasPrefix(contentType, "image/"):
++		return "image"
++	case strings.HasPrefix(contentType, "video/"):
++		return "video"
++	case strings.HasPrefix(contentType, "audio/"):
++		return "audio"
++	}
++	return "file"
++}
++
++// TextBody returns the reply as plain text. Raw HTML must never reach Meta.
++func TextBody(m models.OutboundMessage) string {
++	if m.ContentType == models.ContentTypeHTML && m.Content != "" {
++		return stringutil.HTML2Text(m.Content)
++	}
++	if m.TextContent != "" {
++		return m.TextContent
++	}
++	return m.Content
++}
++
++// splitText cuts text into parts of at most limit characters, preferring line breaks and spaces.
++func splitText(text string, limit int) []string {
++	var parts []string
++	r := []rune(text)
++	for len(r) > limit {
++		cut := limit
++		if i := strings.LastIndexAny(string(r[:limit]), "\n "); i > 0 {
++			cut = len([]rune(string(r[:limit])[:i]))
++		}
++		parts = append(parts, strings.TrimSpace(string(r[:cut])))
++		r = []rune(strings.TrimLeft(string(r[cut:]), "\n "))
++	}
++	if s := strings.TrimSpace(string(r)); s != "" {
++		parts = append(parts, s)
++	}
++	return parts
++}
+diff --git a/internal/inbox/channel/meta/meta_test.go b/internal/inbox/channel/meta/meta_test.go
+new file mode 100644
+index 00000000..16b44999
+--- /dev/null
++++ b/internal/inbox/channel/meta/meta_test.go
+@@ -0,0 +1,62 @@
++package meta
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/abhinavxd/libredesk/internal/conversation/models"
++	"github.com/abhinavxd/libredesk/internal/whatsapp"
++	"github.com/zerodha/logf"
++)
++
++func TestSplitText(t *testing.T) {
++	if got := splitText("hola", 10); len(got) != 1 || got[0] != "hola" {
++		t.Fatalf("short text: %q", got)
++	}
++	got := splitText("uno dos tres cuatro", 8)
++	for _, p := range got {
++		if len([]rune(p)) > 8 {
++			t.Fatalf("part too long: %q", p)
++		}
++	}
++	if strings.Join(got, " ") != "uno dos tres cuatro" {
++		t.Fatalf("lost words: %q", got)
++	}
++	if got := splitText(strings.Repeat("ñ", 25), 10); len(got) != 3 {
++		t.Fatalf("no spaces: %q", got)
++	}
++}
++
++func TestSendText(t *testing.T) {
++	var body map[string]any
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/"+whatsapp.DefaultAPIVersion+"/me/messages" || r.Header.Get("Authorization") != "Bearer tok" {
++			t.Errorf("unexpected request %s %s", r.URL.Path, r.Header.Get("Authorization"))
++		}
++		raw, _ := io.ReadAll(r.Body)
++		_ = json.Unmarshal(raw, &body)
++		_, _ = w.Write([]byte(`{"recipient_id":"123","message_id":"m_1"}`))
++	}))
++	defer srv.Close()
++	BaseURL = srv.URL
++
++	lo := logf.New(logf.Opts{})
++	m, err := New(1, "Page", ChannelMessenger, Config{PageID: "p", AccessToken: "tok"}, &lo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	err = m.Send(models.OutboundMessage{Content: "<p>Hola</p>", ContentType: models.ContentTypeHTML, Meta: json.RawMessage(`{"meta":{"recipient_id":"123"}}`)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if body["recipient"].(map[string]any)["id"] != "123" || !strings.Contains(body["message"].(map[string]any)["text"].(string), "Hola") {
++		t.Fatalf("unexpected body: %v", body)
++	}
++	if err := m.Send(models.OutboundMessage{Content: "x"}); err == nil {
++		t.Fatal("expected an error without a recipient")
++	}
++}
+diff --git a/internal/inbox/inbox.go b/internal/inbox/inbox.go
+index 975866ea..1e8b794e 100644
+--- a/internal/inbox/inbox.go
++++ b/internal/inbox/inbox.go
+@@ -32,6 +32,9 @@ const (
+ 	ChannelEmail    = "email"
+ 	ChannelLiveChat = "livechat"
+ 	ChannelWhatsApp = "whatsapp"
++	// Kuraka: Facebook Messenger and Instagram Direct through a Facebook Page.
++	ChannelMessenger = "messenger"
++	ChannelInstagram = "instagram"
+ )
+ 
+ var (
+@@ -501,7 +504,7 @@ func (m *Manager) Update(id int, inbox imodels.Inbox) (imodels.Inbox, error) {
+ 			}
+ 			inbox.Secret = null.StringFrom(encryptedSecret)
+ 		}
+-	case ChannelWhatsApp:
++	case ChannelWhatsApp, ChannelMessenger, ChannelInstagram:
+ 		merged, err := m.MergeWhatsAppSecrets(current.Config, inbox.Config)
+ 		if err != nil {
+ 			return imodels.Inbox{}, err
+diff --git a/internal/inbox/models/models.go b/internal/inbox/models/models.go
+index 9f2a0e75..030f7ab9 100644
+--- a/internal/inbox/models/models.go
++++ b/internal/inbox/models/models.go
+@@ -188,7 +188,7 @@ func (m *Inbox) ClearPasswords() error {
+ 		if m.Secret.Valid && m.Secret.String != "" {
+ 			m.Secret = null.StringFrom(strings.Repeat(stringutil.PasswordDummy, 10))
+ 		}
+-	case "whatsapp":
++	case "whatsapp", "messenger", "instagram":
+ 		var cfg map[string]any
+ 		if err := json.Unmarshal(m.Config, &cfg); err != nil {
+ 			return err
+diff --git a/internal/kuraka/migrate.go b/internal/kuraka/migrate.go
+index b385a5d2..c407cfdb 100644
+--- a/internal/kuraka/migrate.go
++++ b/internal/kuraka/migrate.go
+@@ -5,6 +5,12 @@ import "github.com/jmoiron/sqlx"
+ 
+ // Migrate applies Kuraka's schema changes outside upstream's versioned migrations.
+ func Migrate(db *sqlx.DB) error {
++	// A new enum value cannot be used in the transaction that adds it, so these run first.
++	for _, ch := range []string{"messenger", "instagram"} {
++		if _, err := db.Exec(`ALTER TYPE channels ADD VALUE IF NOT EXISTS '` + ch + `'`); err != nil {
++			return err
++		}
++	}
+ 	tx, err := db.Beginx()
+ 	if err != nil {
+ 		return err
+diff --git a/schema.sql b/schema.sql
+index fe901652..c2174dcb 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -1,6 +1,6 @@
+ CREATE EXTENSION IF NOT EXISTS pg_trgm;
+ 
+-DROP TYPE IF EXISTS "channels" CASCADE; CREATE TYPE "channels" AS ENUM ('email', 'livechat', 'whatsapp');
++DROP TYPE IF EXISTS "channels" CASCADE; CREATE TYPE "channels" AS ENUM ('email', 'livechat', 'whatsapp', 'messenger', 'instagram');
+ DROP TYPE IF EXISTS "message_type" CASCADE; CREATE TYPE "message_type" AS ENUM ('incoming','outgoing','activity');
+ DROP TYPE IF EXISTS "message_sender_type" CASCADE; CREATE TYPE "message_sender_type" AS ENUM ('agent','contact');
+ DROP TYPE IF EXISTS "message_status" CASCADE; CREATE TYPE "message_status" AS ENUM ('received','sent','failed','pending');
