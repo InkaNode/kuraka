@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **Libredesk admin**: the **Channels** menu is hidden, because Kuraka creates and manages the inboxes. Its addresses open Admin instead.
+- **Libredesk admin**: the **Channels** menu (Inboxes, WhatsApp templates) and the **Set up** button for the first inbox are hidden, because Kuraka creates and manages the inboxes. The **Show all** switch in the user menu shows them again, with a note to change Kuraka's inboxes from Kuraka.
 - **Libredesk conversation**: activity events are smaller, and two or more in a row on the same day are grouped. Groups larger than the General setting start collapsed behind **Show N activity events**.
 - **Libredesk patches**: the tag colour, rule icon, activity setting, team inbox order, live chat **Waiting** status and automatic assignment patches change the database, so they are marked required. If a Libredesk update breaks one, checkout fails and nothing releases until it is fixed.
 - **Libredesk config**: `autoassign_interval` in `config.toml` is no longer used. The time is set in **Admin → General** and in each team.
