@@ -17,7 +17,7 @@ feat-automations-the-agent-who-did-the-action.patch
 feat-automations-hours-since-in-business-hours-and-since-a-t.patch
 feat-contacts-a-solid-colour-per-contact-on-avatars-without.patch
 feat-i18n-complete-the-Spanish-translation.patch
-feat-admin-hide-the-Channels-menu-Kuraka-manages-inboxes.patch
+feat-admin-hide-the-Channels-menu-behind-a-Show-all-switch.patch
 feat-teams-keep-the-assigned-agent-when-the-team-changes.patch
 feat-install-default-business-hours-08-00-to-17-00-set-in-Ge.patch
 feat-livechat-hide-agent-names-in-the-widget.patch

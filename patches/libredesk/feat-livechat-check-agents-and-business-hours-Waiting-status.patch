@@ -402,18 +402,18 @@ index 95794332..8efb5351 100644
      await props.submitForm(values)
    },
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index 24a2682d..fc66bd3e 100644
+index a3b15994..0224fd99 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
-@@ -1582,6 +1582,7 @@
-   "kuraka.hoursSinceTagAdded": "Hours since tag added",
+@@ -1583,6 +1583,7 @@
+   "kuraka.inboxesManagedInKuraka": "Kuraka creates and manages your mail inboxes. Change them in Kuraka; edits here can stop mail from arriving.",
    "kuraka.layoutGroups": "Groups",
    "kuraka.layoutList": "List",
 +  "kuraka.liveChatInvalidField": "Invalid live chat setting: {name}",
    "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
    "kuraka.selectConditionTag": "Select the tag for the condition",
-   "kuraka.sortManual": "My order (drag)",
-@@ -1892,6 +1893,7 @@
+   "kuraka.showAll": "Show all",
+@@ -1894,6 +1895,7 @@
    "widget.menu.waitForAgent": "Wait for an agent",
    "widget.ipBlocked": "Access denied",
    "widget.newCampaign": "New proactive message",
@@ -422,18 +422,18 @@ index 24a2682d..fc66bd3e 100644
    "widget.prechatForm.continueToHuman": "Continue to a human",
    "widget.prechatForm.startChat": "Start chat",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index f95158a6..fc45b37f 100644
+index 2b3276e4..310933c4 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
-@@ -848,6 +848,7 @@
-   "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+@@ -849,6 +849,7 @@
+   "kuraka.inboxesManagedInKuraka": "Kuraka crea y administra tus buzones de correo. Cámbialos desde Kuraka; un cambio aquí puede hacer que el correo deje de llegar.",
    "kuraka.layoutGroups": "Grupos",
    "kuraka.layoutList": "Lista",
 +  "kuraka.liveChatInvalidField": "Ajuste del chat en vivo no válido: {name}",
    "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
    "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
-   "kuraka.sortManual": "Mi orden (arrastrar)",
-@@ -1905,6 +1906,7 @@
+   "kuraka.showAll": "Mostrar todo",
+@@ -1907,6 +1908,7 @@
    "widget.menu.talkToAgent": "Hablar con un agente",
    "widget.menu.waitForAgent": "Esperar a un agente",
    "widget.newCampaign": "Nuevo mensaje proactivo",

@@ -376,7 +376,7 @@ index db6fd252..f5a27f98 100644
 +)
  </script>
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index bd4f0dbf..2774e0f0 100644
+index 358672c5..1bbb1a2c 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
 @@ -420,6 +420,8 @@
@@ -389,7 +389,7 @@ index bd4f0dbf..2774e0f0 100644
    "admin.inbox.livechat.tabs.appearance": "Appearance",
    "admin.inbox.livechat.tabs.installation": "Installation",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index 4ffe75ef..6d4a348b 100644
+index 595d4db3..08453fbe 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
 @@ -239,6 +239,8 @@

@@ -445,10 +445,10 @@ index 00000000..4fe393a6
 +  })
 +})
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index 2774e0f0..d721bc2c 100644
+index 1bbb1a2c..f4c74a7f 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
-@@ -1871,6 +1871,11 @@
+@@ -1873,6 +1873,11 @@
    "widget.campaignUrlLimit": "Add up to 20 page patterns.",
    "widget.campaignsHint": "Show a message on matching pages before the chat is opened. A conversation is created only when someone replies to it.",
    "widget.conversationClosed": "This conversation has been closed",
@@ -461,10 +461,10 @@ index 2774e0f0..d721bc2c 100644
    "widget.deletedCampaign": "Deleted message",
    "widget.dismissPreviews": "Dismiss all previews",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index 6d4a348b..c38c62f2 100644
+index 08453fbe..17198a12 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
-@@ -1053,6 +1053,11 @@
+@@ -1055,6 +1055,11 @@
    "webhook.sendTest": "Enviar prueba",
    "webhook.sentSuccessfully": "Webhook enviado correctamente",
    "widget.conversationClosed": "Esta conversación ha sido cerrada",

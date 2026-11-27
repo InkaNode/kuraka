@@ -166,7 +166,7 @@ index 1a54c29d..83fa6030 100644
  
    let original
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index 3d4e50ab..bd4f0dbf 100644
+index 83d3d94d..358672c5 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
 @@ -263,6 +263,12 @@
@@ -182,7 +182,7 @@ index 3d4e50ab..bd4f0dbf 100644
    "admin.general.allowedFileUploadExtensions": "Allowed file upload extensions",
    "admin.general.allowedFileUploadExtensions.description": "Use `*` to permit all file types. For example: `jpg, png, pdf`",
    "admin.general.businessHours.placeholder": "Select business hours",
-@@ -1580,6 +1586,8 @@
+@@ -1582,6 +1588,8 @@
    "kuraka.sortTeamInboxes": "Sort team inboxes",
    "kuraka.sortWeight": "By weight",
    "kuraka.switchInbox": "Switch inbox",
@@ -192,7 +192,7 @@ index 3d4e50ab..bd4f0dbf 100644
    "kuraka.teamWeightHelp": "When agents sort their team inboxes by weight, higher weights go first. Teams with the same weight stay together.",
    "kuraka.teamWeightRange": "Weight must be a whole number from 0 to 1000.",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index abdaaf5b..4ffe75ef 100644
+index 9cc43b37..595d4db3 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
 @@ -112,6 +112,12 @@
@@ -208,7 +208,7 @@ index abdaaf5b..4ffe75ef 100644
    "admin.general.allowedFileUploadExtensions": "Extensiones de carga de archivo permitidas",
    "admin.general.allowedFileUploadExtensions.description": "Usa `*` para permitir todos los tipos de archivo. Por ejemplo: `jpg, png, pdf`",
    "admin.general.businessHours.placeholder": "Seleccionar horario de atención",
-@@ -847,6 +853,8 @@
+@@ -849,6 +855,8 @@
    "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
    "kuraka.sortWeight": "Por peso",
    "kuraka.switchInbox": "Cambiar de buzón",

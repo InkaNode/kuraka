@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuraka <kuraka@localhost>
+Date: Mon, 23 Nov 2026 21:19:49 -0500
+Subject: [PATCH] feat(admin): hide the Channels menu behind a Show all switch
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Kuraka-Severity: normal
+Kuraka-Adds-En: The Channels menu (inboxes, WhatsApp templates) is hidden because Kuraka manages the mail inboxes. The Show all switch in the user menu brings it back, with a note to change Kuraka inboxes from Kuraka.
+Kuraka-Adds-Es: El menú Canales (buzones, plantillas de WhatsApp) está oculto porque Kuraka administra los buzones de correo. El interruptor Mostrar todo del menú de usuario lo vuelve a mostrar, con un aviso de cambiar los buzones de Kuraka desde Kuraka.
+Kuraka-Missing-En: Admin shows the Channels menu, where changes can break the inboxes Kuraka set up.
+Kuraka-Missing-Es: Admin muestra el menú Canales, donde un cambio puede romper los buzones que Kuraka configuró.
+---
+ .../src/components/sidebar/SidebarNavUser.vue |  8 ++++
+ .../apps/main/src/constants/navigation.js     | 46 +++++++++++--------
+ .../conversation/ConversationPlaceholder.vue  |  3 +-
+ frontend/apps/main/src/utils/kuraka.js        | 19 ++++++++
+ .../main/src/views/admin/inbox/InboxView.vue  |  1 +
+ i18n/en-US.json                               |  2 +
+ i18n/es-ES.json                               |  2 +
+ 7 files changed, 60 insertions(+), 21 deletions(-)
+ create mode 100644 frontend/apps/main/src/utils/kuraka.js
+
+diff --git a/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue b/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
+index 6040595b..65874ce0 100644
+--- a/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
++++ b/frontend/apps/main/src/components/sidebar/SidebarNavUser.vue
+@@ -53,6 +53,13 @@
+               @update:checked="(val) => (mode = val ? 'dark' : 'light')"
+             />
+           </div>
++          <div
++            v-if="userStore.can('inboxes:manage')"
++            class="flex items-center justify-between text-sm"
++          >
++            <span class="text-muted-foreground">{{ t('kuraka.showAll') }}</span>
++            <Switch :checked="showAll()" @update:checked="setShowAll" />
++          </div>
+ 
+           <div class="border-t border-border pt-3 space-y-3">
+             <!-- Away toggle -->
+@@ -189,6 +196,7 @@ import { useIsMobile } from '@shared-ui/composables'
+ import { useRouter } from 'vue-router'
+ import { useKeyboardShortcutsDialog } from '@main/composables/useKeyboardShortcutsDialog'
+ import { useLogout } from '@main/composables/useLogout'
++import { setShowAll, showAll } from '@main/utils/kuraka'
+ 
+ import { useColorMode } from '@vueuse/core'
+ import { ref } from 'vue'
+diff --git a/frontend/apps/main/src/constants/navigation.js b/frontend/apps/main/src/constants/navigation.js
+index 9b851242..1f36d73d 100644
+--- a/frontend/apps/main/src/constants/navigation.js
++++ b/frontend/apps/main/src/constants/navigation.js
+@@ -1,3 +1,5 @@
++import { showAll } from '@main/utils/kuraka'
++
+ export const reportsNavItems = [
+   {
+     titleKey: 'globals.terms.overview',
+@@ -97,26 +99,30 @@ export const adminNavItems = [
+       }
+     ]
+   },
+-  {
+-    titleKey: 'globals.terms.channel',
+-    isTitleKeyPlural: true,
+-    children: [
+-      {
+-        titleKey: 'globals.terms.inbox',
+-        href: '/admin/inboxes',
+-        createRouteName: 'new-inbox',
+-        permission: 'inboxes:manage',
+-        isTitleKeyPlural: true,
+-        icon: 'Inbox'
+-      },
+-      {
+-        titleKey: 'admin.whatsappTemplates.title',
+-        href: '/admin/whatsapp/templates',
+-        permission: 'inboxes:manage',
+-        icon: 'WhatsApp'
+-      }
+-    ]
+-  },
++  ...(showAll()
++    ? [
++        {
++          titleKey: 'globals.terms.channel',
++          isTitleKeyPlural: true,
++          children: [
++            {
++              titleKey: 'globals.terms.inbox',
++              href: '/admin/inboxes',
++              createRouteName: 'new-inbox',
++              permission: 'inboxes:manage',
++              isTitleKeyPlural: true,
++              icon: 'Inbox'
++            },
++            {
++              titleKey: 'admin.whatsappTemplates.title',
++              href: '/admin/whatsapp/templates',
++              permission: 'inboxes:manage',
++              icon: 'WhatsApp'
++            }
++          ]
++        }
++      ]
++    : []),
+   {
+     titleKey: 'globals.terms.conversation',
+     isTitleKeyPlural: true,
+diff --git a/frontend/apps/main/src/features/conversation/ConversationPlaceholder.vue b/frontend/apps/main/src/features/conversation/ConversationPlaceholder.vue
+index 4aed984e..7a7c5ac1 100644
+--- a/frontend/apps/main/src/features/conversation/ConversationPlaceholder.vue
++++ b/frontend/apps/main/src/features/conversation/ConversationPlaceholder.vue
+@@ -16,7 +16,7 @@
+                 {{ $t('setup.createFirstInbox') }}
+               </span>
+               <Button
+-                v-if="!hasInboxes"
++                v-if="!hasInboxes && showAll()"
+                 variant="ghost"
+                 size="sm"
+                 @click="router.push({ name: 'inbox-list' })"
+@@ -58,6 +58,7 @@ import { useRouter } from 'vue-router'
+ import { CheckCircle, Circle } from 'lucide-vue-next'
+ import { Button } from '@shared-ui/components/ui/button'
+ import { Spinner } from '@shared-ui/components/ui/spinner'
++import { showAll } from '@main/utils/kuraka'
+ import { useInboxStore } from '@/stores/inbox'
+ import { useUsersStore } from '@/stores/users'
+ 
+diff --git a/frontend/apps/main/src/utils/kuraka.js b/frontend/apps/main/src/utils/kuraka.js
+new file mode 100644
+index 00000000..947bb59f
+--- /dev/null
++++ b/frontend/apps/main/src/utils/kuraka.js
+@@ -0,0 +1,19 @@
++// Kuraka: Kuraka manages inboxes, so the Channels menu stays hidden until the user menu toggle is on. Visual only: routes and permissions are unchanged.
++const STORAGE_KEY = 'kuraka.showAll'
++
++export function showAll() {
++  try {
++    return localStorage.getItem(STORAGE_KEY) === 'true'
++  } catch {
++    return false
++  }
++}
++
++export function setShowAll(on) {
++  try {
++    localStorage.setItem(STORAGE_KEY, String(on))
++  } catch {
++    return
++  }
++  window.location.reload()
++}
+diff --git a/frontend/apps/main/src/views/admin/inbox/InboxView.vue b/frontend/apps/main/src/views/admin/inbox/InboxView.vue
+index 30690446..25287014 100644
+--- a/frontend/apps/main/src/views/admin/inbox/InboxView.vue
++++ b/frontend/apps/main/src/views/admin/inbox/InboxView.vue
+@@ -1,6 +1,7 @@
+ <template>
+   <AdminSplitLayout :fixed-help="!!livechatPreview">
+     <template #content>
++      <p class="ui-description mb-4">{{ $t('kuraka.inboxesManagedInKuraka') }}</p>
+       <router-view />
+     </template>
+ 
+diff --git a/i18n/en-US.json b/i18n/en-US.json
+index 3d4e50ab..83d3d94d 100644
+--- a/i18n/en-US.json
++++ b/i18n/en-US.json
+@@ -1571,10 +1571,12 @@
+   "kuraka.expandSidebar": "Expand sidebar",
+   "kuraka.groupByWeight": "Group by weight",
+   "kuraka.hoursSinceTagAdded": "Hours since tag added",
++  "kuraka.inboxesManagedInKuraka": "Kuraka creates and manages your mail inboxes. Change them in Kuraka; edits here can stop mail from arriving.",
+   "kuraka.layoutGroups": "Groups",
+   "kuraka.layoutList": "List",
+   "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
+   "kuraka.selectConditionTag": "Select the tag for the condition",
++  "kuraka.showAll": "Show all",
+   "kuraka.sortManual": "My order (drag)",
+   "kuraka.sortName": "Alphabetical",
+   "kuraka.sortTeamInboxes": "Sort team inboxes",
+diff --git a/i18n/es-ES.json b/i18n/es-ES.json
+index abdaaf5b..9cc43b37 100644
+--- a/i18n/es-ES.json
++++ b/i18n/es-ES.json
+@@ -838,10 +838,12 @@
+   "kuraka.expandSidebar": "Expandir barra",
+   "kuraka.groupByWeight": "Agrupar por peso",
+   "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
++  "kuraka.inboxesManagedInKuraka": "Kuraka crea y administra tus buzones de correo. Cámbialos desde Kuraka; un cambio aquí puede hacer que el correo deje de llegar.",
+   "kuraka.layoutGroups": "Grupos",
+   "kuraka.layoutList": "Lista",
+   "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
+   "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
++  "kuraka.showAll": "Mostrar todo",
+   "kuraka.sortManual": "Mi orden (arrastrar)",
+   "kuraka.sortName": "Alfabético",
+   "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",

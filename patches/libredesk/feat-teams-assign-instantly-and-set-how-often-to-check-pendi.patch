@@ -366,7 +366,7 @@ index 83fa6030..f7cba87a 100644
  
    let original
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index fc66bd3e..081bf213 100644
+index 0224fd99..be55b7bd 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
 @@ -271,6 +271,11 @@
@@ -381,12 +381,13 @@ index fc66bd3e..081bf213 100644
    "admin.general.businessHours.placeholder": "Select business hours",
    "admin.general.faviconURL": "Favicon URL",
    "admin.general.faviconURL.valid": "Favicon URL should be a valid URL",
-@@ -1579,17 +1584,27 @@
+@@ -1579,12 +1584,15 @@
    "kuraka.displayAs": "Display as",
    "kuraka.expandSidebar": "Expand sidebar",
    "kuraka.groupByWeight": "Group by weight",
 +  "kuraka.hour": "1 hour",
    "kuraka.hoursSinceTagAdded": "Hours since tag added",
+   "kuraka.inboxesManagedInKuraka": "Kuraka creates and manages your mail inboxes. Change them in Kuraka; edits here can stop mail from arriving.",
    "kuraka.layoutGroups": "Groups",
    "kuraka.layoutList": "List",
    "kuraka.liveChatInvalidField": "Invalid live chat setting: {name}",
@@ -394,8 +395,9 @@ index fc66bd3e..081bf213 100644
    "kuraka.onlyInbox": "This is your only inbox. To add another one, connect it from Kuraka.",
 +  "kuraka.seconds": "{n} seconds",
    "kuraka.selectConditionTag": "Select the tag for the condition",
+   "kuraka.showAll": "Show all",
    "kuraka.sortManual": "My order (drag)",
-   "kuraka.sortName": "Alphabetical",
+@@ -1592,6 +1600,13 @@
    "kuraka.sortTeamInboxes": "Sort team inboxes",
    "kuraka.sortWeight": "By weight",
    "kuraka.switchInbox": "Switch inbox",
@@ -410,7 +412,7 @@ index fc66bd3e..081bf213 100644
    "kuraka.teamKeepAssigneeHelp": "When a conversation moves to this team, its assigned agent stays. Admin → General sets whether the previous team must also have this on.",
    "kuraka.teamWeight": "Weight",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index fc45b37f..a480ca46 100644
+index 310933c4..5055b22c 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
 @@ -112,6 +112,11 @@
@@ -425,12 +427,13 @@ index fc45b37f..a480ca46 100644
    "admin.general.keepAssigneeOnTeamChange": "Mantener al agente asignado al cambiar de equipo",
    "admin.general.keepAssigneeOnTeamChange.bothTeams": "Cuando ambos equipos lo tienen activado",
    "admin.general.keepAssigneeOnTeamChange.description": "Activa Mantener al agente asignado en cada equipo que deba mantenerlo.",
-@@ -845,17 +850,27 @@
+@@ -845,12 +850,15 @@
    "kuraka.displayAs": "Mostrar como",
    "kuraka.expandSidebar": "Expandir barra",
    "kuraka.groupByWeight": "Agrupar por peso",
 +  "kuraka.hour": "1 hora",
    "kuraka.hoursSinceTagAdded": "Horas desde que se agregó la etiqueta",
+   "kuraka.inboxesManagedInKuraka": "Kuraka crea y administra tus buzones de correo. Cámbialos desde Kuraka; un cambio aquí puede hacer que el correo deje de llegar.",
    "kuraka.layoutGroups": "Grupos",
    "kuraka.layoutList": "Lista",
    "kuraka.liveChatInvalidField": "Ajuste del chat en vivo no válido: {name}",
@@ -438,8 +441,9 @@ index fc45b37f..a480ca46 100644
    "kuraka.onlyInbox": "Este es tu único buzón. Para agregar otro, conéctalo desde Kuraka.",
 +  "kuraka.seconds": "{n} segundos",
    "kuraka.selectConditionTag": "Elige la etiqueta de la condición",
+   "kuraka.showAll": "Mostrar todo",
    "kuraka.sortManual": "Mi orden (arrastrar)",
-   "kuraka.sortName": "Alfabético",
+@@ -858,6 +866,13 @@
    "kuraka.sortTeamInboxes": "Ordenar bandejas de equipo",
    "kuraka.sortWeight": "Por peso",
    "kuraka.switchInbox": "Cambiar de buzón",

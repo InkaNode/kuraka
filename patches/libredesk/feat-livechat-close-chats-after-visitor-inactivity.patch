@@ -49,7 +49,7 @@ index 3a43b63c..f705ba6a 100644
  	go webhook.Run(ctx)
  	go notifier.Run(ctx)
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index d721bc2c..f74ecdf2 100644
+index f4c74a7f..b949e50c 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
 @@ -406,6 +406,7 @@
@@ -61,10 +61,10 @@ index d721bc2c..f74ecdf2 100644
    "admin.inbox.livechat.quickReplies.limit": "Add up to 6 quick replies.",
    "admin.inbox.livechat.quickReplies.placeholder": "I have a question about billing\nHow do I reset my password?",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index c38c62f2..961c17da 100644
+index 17198a12..c39e5215 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
-@@ -1249,6 +1249,7 @@
+@@ -1251,6 +1251,7 @@
    "admin.inbox.livechat.prechatForm.handoffOnly.description": "Omite este formulario cuando se inicia un chat. Muéstralo cuando la IA necesite transferir la conversación a una persona.",
    "admin.inbox.livechat.preview.sampleAgentReply": "Con gusto te ayudo, ¿puedes compartir algunos detalles?",
    "admin.inbox.livechat.preview.sampleUserMessage": "¡Hola! ¿Cómo empiezo?",

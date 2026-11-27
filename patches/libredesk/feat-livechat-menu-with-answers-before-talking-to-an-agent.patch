@@ -391,10 +391,10 @@ index 61f34a0a..a492cbc9 100644
  }
  const hasPendingHandoffForm = computed(() => {
 diff --git a/i18n/en-US.json b/i18n/en-US.json
-index f74ecdf2..24a2682d 100644
+index b949e50c..a3b15994 100644
 --- a/i18n/en-US.json
 +++ b/i18n/en-US.json
-@@ -1886,6 +1886,10 @@
+@@ -1888,6 +1888,10 @@
    "widget.helpOnHomeHint": "To show help on the Home screen, add the help articles card under Home screen apps.",
    "widget.helpPlacement": "Where help appears",
    "widget.invitationExpired": "This invitation is no longer available. Start a new chat to contact us.",
@@ -406,10 +406,10 @@ index f74ecdf2..24a2682d 100644
    "widget.newCampaign": "New proactive message",
    "widget.noArticles": "No published articles yet.",
 diff --git a/i18n/es-ES.json b/i18n/es-ES.json
-index 961c17da..f95158a6 100644
+index c39e5215..2b3276e4 100644
 --- a/i18n/es-ES.json
 +++ b/i18n/es-ES.json
-@@ -1900,6 +1900,10 @@
+@@ -1902,6 +1902,10 @@
    "widget.helpOnHomeHint": "Para mostrar ayuda en la pantalla de inicio, agrega la tarjeta de artículos de ayuda en Apps de pantalla de inicio.",
    "widget.helpPlacement": "Dónde aparece la ayuda",
    "widget.invitationExpired": "Esta invitación ya no está disponible. Inicia un chat nuevo para contactarnos.",
