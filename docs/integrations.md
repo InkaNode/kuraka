@@ -65,6 +65,21 @@ Package `internal/libredesk`: `Ping`, `SystemAPIKey`, `ListInboxes`, `CreateEmai
 
 **Live chat embed code:** `widget.base_url` is the helpdesk's public address: `https://<name>` for a helpdesk provisioned by Kuraka, the Libredesk Root URL (`app.root_url`) for one connected by URL. If it is not a public HTTPS address (http, localhost, 127.0.0.1, ::1 or a host without a dot), the panel shows a warning instead of the code.
 
+## Meta app
+
+One Meta app per Kuraka installation lets every domain connect WhatsApp, Messenger and Instagram with a button. The superadmin sets it in **Integrations → Meta**: App ID, app secret (sealed in `settings` like other secrets, never returned), and two Facebook Login for Business configuration IDs: one for Pages and Instagram, one of the WhatsApp Embedded Signup type. Kuraka checks the app with `GET /{app-id}` and the app access token, then subscribes the app's `page`, `instagram` and `whatsapp_business_account` webhooks (field `messages`) to `KURAKA_PUBLIC_URL/webhooks/meta` with a generated verify token. Meta calls that URL during the subscription, so the settings are saved first; on a non-HTTPS public URL or a refusal, the card shows the URL and token to paste by hand. The admin also adds `KURAKA_PUBLIC_URL/meta/callback` as a valid OAuth redirect URI. Until Meta approves the app (business verification, App Review, and Tech Provider for Embedded Signup) it only works with accounts of the app's own team.
+
+**Connect with Meta** (domain page, Meta section):
+1. `POST /domains/{id}/meta/login {kind: "pages"|"whatsapp"}` returns Meta's login dialog URL with the matching `config_id`. The `state` is `<domain id>.<nonce>`; the nonce is kept in memory for 15 minutes with the domain and user.
+2. Meta sends the browser to `/meta/callback?code&state`. The SPA moves that to `#/meta/callback` and calls `POST /domains/{id}/meta/oauth`, which takes the nonce once, trades the code for a token (long-lived when Meta allows) and lists what it grants: `me/accounts` with each Page's token and linked Instagram account, or the WhatsApp Business Accounts in `debug_token`'s granular scopes and their `phone_numbers`. The token stays in memory for an hour under a grant id; the browser only gets the grant id.
+3. The user checks Pages (Messenger), Instagram accounts and numbers and a helpdesk. `POST /domains/{id}/meta/import` reads the assets from Meta again, so only granted ones connect, and for each one: subscribes the Page (`/{page}/subscribed_apps`, field `messages`, also for its Instagram account) or the WhatsApp account (`/{waba}/subscribed_apps`), registers a number not yet on the Cloud API with a random PIN, and creates the Libredesk inbox with the Page token or the business token and the app secret. An id already connected anywhere is skipped as `meta_exists`. Failures are returned per item; the rest still connect.
+
+A restart forgets logins in progress; the user presses Connect again.
+
+**Webhook relay:** `GET /webhooks/meta` answers Meta's verification with the stored verify token. `POST /webhooks/meta` (exempt from the origin check like addon reports) checks `X-Hub-Signature-256` with the app secret, finds the channels the body names (`entry[].id` for `page` and `instagram`, `changes[].value.metadata.phone_number_id` for `whatsapp_business_account`) by `meta_channels.external_id` (migration 0010), and posts the body unchanged with the same signature to one inbox per owning helpdesk: `/webhooks/meta/{inbox}` or `/webhooks/whatsapp/{inbox}`. Libredesk checks the signature again and routes by the ids inside, ignoring entries for channels it does not have. A helpdesk 5xx or network error answers 502 so Meta retries; Libredesk drops messages it already has. Libredesk itself may also point a WhatsApp account's webhook straight at the helpdesk (`override_callback_uri`) when the helpdesk has a public HTTPS root URL.
+
+The manual forms (each channel's **Advanced: by hand**) keep working with any Meta app; they also store `external_id`, so their events reach the helpdesk through the relay when they use the installation's app.
+
 ## Migration tool (Phase 5)
 
 Package `internal/migrate` copies one mailbox from any IMAP server into a Stalwart mailbox:
@@ -186,6 +201,12 @@ Stalwart blocks addresses that look like attacks, such as many failed logins or 
 | `GET/POST /domains/{id}/mailboxes/{mid}/helpdesk`, `DELETE .../helpdesk/{link}` | mailbox access + same-tenant helpdesk | connect and disconnect |
 | `GET/POST /domains/{id}/migrations`, `POST /domains/{id}/migrations/{mig}/cancel` | domain access | `{account_id, source_host, source_port, source_tls, source_user, source_password}` |
 | `GET /domains/{id}/helpdesks/{helpdesk}/teams` | domain access + same-tenant ready helpdesk | `[{id, name, conversation_assignment_type, members}]` for the live chat team select; see [livechat.md](livechat.md) |
+| `GET/PUT/DELETE /meta-app` | superadmin only | `{configured, app_id, pages_config_id, whatsapp_config_id, redirect_url, webhook: {url, verify_token}}`; PUT takes `{app_id, app_secret?, pages_config_id, whatsapp_config_id}`, `app_secret` empty keeps the stored one for the same app, returns `webhook_ok`; `422 meta_app_rejected` |
+| `GET /meta-app/status` | any user | `{pages, whatsapp}`: which Connect buttons work |
+| `POST /domains/{id}/meta/login` | domain access | `{kind}`; returns `{url}`; `409 meta_app_missing` |
+| `POST /domains/{id}/meta/oauth` | domain access, same user | `{code, state}`; returns `{kind, grant, pages: [{id, name, instagram}], phones: [{id, waba_id, number, name}]}`; `422 meta_expired` or `meta_rejected` |
+| `POST /domains/{id}/meta/import` | domain access, same user + same-tenant ready helpdesk | `{grant, helpdesk_id, messenger: [], instagram: [], whatsapp: []}`; returns `{created: [channel], failed: [{channel, name, code}]}` |
+| `GET/POST /webhooks/meta` (outside `/api/v1`) | Meta, signed | app webhook verification and relay |
 
 ## CI (Phase 3)
 
