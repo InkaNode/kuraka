@@ -5,6 +5,7 @@ import { loginView } from './views/login.js';
 import { setupView } from './views/setup.js';
 import { domainsView } from './views/domains.js';
 import { domainView } from './views/domain.js';
+import { metaCallbackView } from './views/domain-meta.js';
 import { onboardView } from './views/onboard.js';
 import { tenantsView } from './views/tenants.js';
 import { usersView } from './views/users.js';
@@ -22,6 +23,9 @@ route('/login', loginView, { auth: false, layout: false });
 route('/setup', setupView, { auth: false, layout: false });
 route('/domains', domainsView);
 route('/domains/:id', domainView);
+// Meta sends its login back to /meta/callback?code=…; the hash router reads it there.
+if (location.pathname === '/meta/callback') history.replaceState(null, '', `/#/meta/callback${location.search}`);
+route('/meta/callback', metaCallbackView);
 route('/onboard', onboardView, { superadmin: true });
 route('/tenants', tenantsView, { superadmin: true });
 route('/users', usersView, { superadmin: true });

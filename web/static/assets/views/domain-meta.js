@@ -1,7 +1,8 @@
 import { h, mount } from '../core/h.js';
 import { t } from '../core/i18n.js';
 import { api } from '../core/api.js';
-import { button, field, textInput, select, card, copyButton, errorBox, modal, confirmDialog, toast, formError, submitForm } from '../core/ui.js';
+import { button, field, textInput, select, card, checkbox, copyButton, errorBox, spinner, modal, confirmDialog, toast, formError, submitForm } from '../core/ui.js';
+import { navigate } from '../core/router.js';
 import { helpdeskError } from './domain-helpdesk.js';
 import { publicURL } from './domain-livechat.js';
 
@@ -16,6 +17,9 @@ const WEBHOOK_STEPS = {
 
 function metaError(err) {
   if (err?.code === 'meta_missing') return { message: t('meta.error.missing') };
+  if (err?.code === 'meta_app_missing') return { message: t('meta.error.app') };
+  if (err?.code === 'meta_expired') return { message: t('meta.error.expired') };
+  if (err?.code === 'meta_rejected') return { message: t('meta.error.login') };
   if (err?.code === 'whatsapp_rejected') return { message: t('meta.error.rejected') };
   return helpdeskError(err);
 }
@@ -92,17 +96,116 @@ async function channelDialog(view, kind, existing, notice, onSaved) {
     actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
 }
 
+// pending is a finished Meta login waiting for the domain page to show what
+// it granted.
+let pending = null;
+
+async function startLogin(view, kind, notice) {
+  mount(notice);
+  try { location.assign((await api('POST', `${view.base}/meta/login`, { kind })).url); }
+  catch (err) { mount(notice, errorBox(metaError(err))); notice.firstChild?.focus(); }
+}
+
+// metaCallbackView is where Meta sends the login back. It trades the code
+// for what was granted and returns to the domain to pick from it.
+export async function metaCallbackView(ctx) {
+  const state = ctx.query.get('state') || '';
+  const id = /^\d+\./.test(state) ? state.split('.')[0] : null;
+  const fail = message => h('div', { class: 'stack gap-2' }, errorBox({ message }),
+    button({ label: t('meta.connect.back'), onClick: () => navigate(id ? `/domains/${id}` : '/domains') }));
+  if (!id || !ctx.query.get('code')) return fail(t('meta.connect.cancelled'));
+  try {
+    const result = await api('POST', `/domains/${encodeURIComponent(id)}/meta/oauth`, { code: ctx.query.get('code'), state });
+    pending = { domain: Number(id), ...result };
+  } catch (err) { return fail(metaError(err).message); }
+  // Replace keeps the spent code out of the history.
+  location.replace(`#/domains/${id}`);
+  return spinner();
+}
+
+const FAILED = new Set(['meta_exists', 'meta_rejected', 'meta_missing']);
+
+// pickDialog lists what a Meta login granted; the checked ones become
+// helpdesk inboxes.
+async function pickDialog(view, grant, channels, notice, onSaved) {
+  let helpdesks;
+  try { helpdesks = (await api('GET', '/helpdesks')).filter(x => x.tenant_id === view.domain.tenant_id && x.status === 'ready').sort((a, b) => a.name.localeCompare(b.name)); }
+  catch (err) { mount(notice, errorBox(metaError(err))); notice.firstChild?.focus(); return; }
+  const items = [];
+  for (const page of grant.pages) {
+    items.push({ channel: 'messenger', id: page.id, label: page.name });
+    if (page.instagram) items.push({ channel: 'instagram', id: page.instagram.id, label: `@${page.instagram.username}` });
+  }
+  for (const phone of grant.phones) items.push({ channel: 'whatsapp', id: phone.id, label: phone.name && phone.number ? `${phone.name} (${phone.number})` : phone.name || phone.number });
+  const message = !helpdesks.length ? t('livechat.noHelpdesk') : !items.length ? t('meta.connect.none') : null;
+  if (message) {
+    const dialog = modal({ title: t('meta.connect.title'), body: h('p', {}, message), actions: [button({ label: t('close'), onClick: () => dialog.close() })] });
+    return;
+  }
+
+  const taken = new Set(channels.map(ch => `${ch.channel}:${ch.external_id}`));
+  const boxes = items.map(item => {
+    const done = taken.has(`${item.channel}:${item.id}`);
+    const el = checkbox({ label: done ? `${item.label} (${t('meta.connect.done')})` : item.label, checked: !done });
+    const input = el.querySelector('input');
+    input.disabled = done;
+    return { item, el, input };
+  });
+  const helpdesk = helpdesks.length > 1 ? select({ required: true, options: helpdesks.map(x => ({ value: String(x.id), label: x.name })) }) : null;
+  const form = h('form', { class: 'stack gap-2' },
+    helpdesk ? field({ label: t('helpdesk.select'), input: helpdesk }) : null,
+    Object.keys(LABELS).map(kind => {
+      const own = boxes.filter(b => b.item.channel === kind);
+      return own.length ? h('div', { class: 'stack gap-1', role: 'group', 'aria-label': LABELS[kind] }, h('h3', {}, LABELS[kind]), own.map(b => b.el)) : null;
+    }),
+    button({ label: t('meta.connect.submit'), variant: 'primary', type: 'submit' }));
+  submitForm(form, async () => {
+    const picked = boxes.filter(b => b.input.checked && !b.input.disabled).map(b => b.item);
+    if (!picked.length) { formError(form, { message: t('meta.connect.pick') }); return; }
+    const ids = kind => picked.filter(item => item.channel === kind).map(item => item.id);
+    const result = await api('POST', `${view.base}/meta/import`, { grant: grant.grant, helpdesk_id: Number(helpdesk?.value ?? helpdesks[0].id),
+      messenger: ids('messenger'), instagram: ids('instagram'), whatsapp: ids('whatsapp') });
+    dialog.close();
+    if (result.created.length) toast(t('meta.connect.created', { count: result.created.length }));
+    onSaved();
+    if (!result.failed.length) return;
+    const lines = result.failed.map(f => h('li', {}, t(`meta.connect.failed.${FAILED.has(f.code) ? f.code : 'other'}`, { name: f.name || '' })));
+    const report = modal({ title: t('meta.connect.failedTitle'), body: h('ul', { class: 'stack gap-1' }, lines),
+      actions: [button({ label: t('close'), onClick: () => report.close() })] });
+  }, { onError: err => formError(form, metaError(err)) });
+  const dialog = modal({ title: t('meta.connect.title'), body: form, actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
+}
+
 // metaSection lists the domain's Meta channels, one card each for WhatsApp,
 // Messenger and Instagram.
 export function metaSection(view, mine, notice) {
   const lists = { whatsapp: h('div', {}), messenger: h('div', {}), instagram: h('div', {}) };
+  const manual = { whatsapp: h('div', {}), messenger: h('div', {}), instagram: h('div', {}) };
+  const connect = h('div', { class: 'stack gap-1' });
   const reload = () => view.show();
   const node = h('section', { class: 'stack gap-1' },
     h('h2', {}, t('meta.title')),
     h('p', { class: 'muted' }, t('meta.intro')),
+    connect,
     h('div', { class: 'metric-grid' }, Object.keys(lists).map(kind =>
-      card(h('h3', {}, LABELS[kind]), h('p', { class: 'muted' }, t(`meta.${kind}.text`)), lists[kind],
-        button({ label: t(`meta.${kind}.connect`), icon: 'plus', onClick: () => channelDialog(view, kind, null, notice, reload) })))));
+      card(h('h3', {}, LABELS[kind]), h('p', { class: 'muted' }, t(`meta.${kind}.text`)), lists[kind], manual[kind]))));
+
+  // With the Meta app set up, the buttons connect through Meta and typing
+  // the details by hand becomes the advanced way.
+  function showButtons(status) {
+    const auto = status.pages || status.whatsapp;
+    for (const kind of Object.keys(manual)) {
+      mount(manual[kind], button({ label: t(auto ? 'meta.manual' : `meta.${kind}.connect`), icon: auto ? 'edit' : 'plus', variant: auto ? 'ghost' : undefined,
+        ariaLabel: auto ? `${t('meta.manual')}: ${LABELS[kind]}` : undefined, onClick: () => channelDialog(view, kind, null, notice, reload) }));
+    }
+    if (!auto) { mount(connect); return; }
+    mount(connect, h('div', { class: 'row gap-1' },
+      status.pages ? button({ label: t('meta.connect.pages'), icon: 'link', variant: 'primary', onClick: () => startLogin(view, 'pages', notice) }) : null,
+      status.whatsapp ? button({ label: t('meta.connect.whatsapp'), icon: 'link', variant: 'primary', onClick: () => startLogin(view, 'whatsapp', notice) }) : null),
+    h('p', { class: 'help' }, t('meta.connect.help')));
+  }
+  showButtons({});
+  api('GET', '/meta-app/status').then(status => { if (mine === view.current()) showButtons(status); }).catch(() => {});
 
   async function showWebhook(ch) {
     mount(notice);
@@ -122,6 +225,7 @@ export function metaSection(view, mine, notice) {
 
   api('GET', metaPath(view)).then(channels => {
     if (mine !== view.current()) return;
+    if (pending?.domain === view.domain.id) { const p = pending; pending = null; pickDialog(view, p, channels, notice, reload); }
     channels.sort((a, b) => a.name.localeCompare(b.name));
     for (const [kind, list] of Object.entries(lists)) {
       const own = channels.filter(ch => ch.channel === kind);

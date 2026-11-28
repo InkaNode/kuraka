@@ -131,6 +131,7 @@ type fakeHelpdesk struct {
 	whatsAppTokens                map[int64]string
 	whatsAppErr                   error
 	metaPages                     map[int64]libredesk.MetaPage
+	forwarded                     []string
 }
 
 func (f *fakeHelpdesk) ApplyBranding(_ context.Context, name, logo, favicon, root string) error {

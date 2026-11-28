@@ -2,13 +2,13 @@ import '../i18n/integrations.js';
 import { h, mount } from '../core/h.js';
 import { api, ApiError, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
-import { button, card, checkbox, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce } from '../core/ui.js';
+import { button, card, checkbox, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce, copyButton } from '../core/ui.js';
 
 export async function integrationsView(ctx) {
   const { me } = ctx;
   const admin = me.role === 'superadmin';
-  const [dns, helpdesks, tenants] = await Promise.all([
-    api('GET', '/dns-providers'), api('GET', '/helpdesks'), admin ? api('GET', '/tenants') : [],
+  const [dns, helpdesks, tenants, metaApp] = await Promise.all([
+    api('GET', '/dns-providers'), api('GET', '/helpdesks'), admin ? api('GET', '/tenants') : [], admin ? api('GET', '/meta-app') : null,
   ]);
   const rows = { dns, helpdesks };
   const paths = { dns: '/dns-providers', helpdesks: '/helpdesks' };
@@ -239,6 +239,67 @@ export async function integrationsView(ctx) {
     return form;
   }
 
+  // metaCard holds the installation's Meta app, which every domain's
+  // Connect with Meta button uses.
+  function metaCard() {
+    const body = h('div', { class: 'stack gap-2' });
+    let app = metaApp;
+    const copyRow = value => h('div', { class: 'row gap-1' }, textInput({ class: 'mono grow', readonly: true, value, spellcheck: 'false' }), copyButton(value));
+    function show() {
+      mount(body,
+        h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.meta')),
+          app.configured ? button({ label: t('delete'), icon: 'trash', variant: 'danger', onClick: remove }) : null,
+          button({ label: t(app.configured ? 'integrations.metaEdit' : 'integrations.metaConnect'), icon: app.configured ? 'edit' : 'plus', variant: 'primary', onClick: edit })),
+        h('p', { class: 'muted' }, t('integrations.metaHelp')),
+        app.configured ? h('p', { class: 'mono' }, t('integrations.metaApp', { id: app.app_id })) : h('p', {}, t('integrations.metaEmpty')),
+        h('p', {}, t('integrations.metaSetup')),
+        field({ label: t('integrations.metaRedirect'), input: copyRow(app.redirect_url), help: t('integrations.metaRedirectHelp') }),
+        app.configured ? field({ label: t('integrations.metaWebhook'), input: copyRow(app.webhook.url) }) : null,
+        app.configured ? field({ label: t('integrations.metaWebhookToken'), input: copyRow(app.webhook.verify_token), help: t('integrations.metaWebhookHelp') }) : null,
+        h('p', { class: 'help' }, t('integrations.metaReview')));
+    }
+    async function remove() {
+      if (!await confirmDialog({ title: t('integrations.deleteTitle'), message: t('integrations.metaDelete'), danger: true, confirmLabel: t('delete') })) return;
+      try {
+        await api('DELETE', '/meta-app');
+        app = await api('GET', '/meta-app'); show();
+        if (root.isConnected) toast(t('integrations.deleted'));
+      } catch (err) { if (root.isConnected) toast(errorMessage(err), 'danger'); }
+    }
+    function edit() {
+      const digits = (value, required = false) => textInput({ class: 'mono', required, inputmode: 'numeric', pattern: '[0-9]+', maxlength: 32, autocomplete: 'off', spellcheck: 'false', value });
+      const inputs = {
+        app_id: digits(app.app_id, true),
+        app_secret: h('input', { type: 'password', class: 'mono', required: !app.configured, maxlength: 2048, autocomplete: 'off', spellcheck: 'false' }),
+        pages_config_id: digits(app.pages_config_id), whatsapp_config_id: digits(app.whatsapp_config_id),
+      };
+      const submit = button({ label: t('save'), variant: 'primary', type: 'submit' });
+      let busy = false;
+      const form = h('form', { class: 'stack gap-2', onsubmit: async event => {
+        event.preventDefault();
+        if (busy || !form.reportValidity()) return;
+        busy = true; submit.disabled = true; form.setAttribute('aria-busy', 'true'); formError(form, null);
+        try {
+          app = await api('PUT', '/meta-app', Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value.trim()])));
+          dialog.close(); show();
+          if (root.isConnected) toast(t(app.webhook_ok ? 'integrations.metaSaved' : 'integrations.metaWebhookFailed'), app.webhook_ok ? 'ok' : 'warn');
+        } catch (err) {
+          formError(form, err.code === 'meta_app_rejected' ? new Error(t('integrations.metaRejected'))
+            : err.code === 'invalid_input' ? new Error(t('integrations.metaInvalid')) : err);
+        } finally { busy = false; submit.disabled = false; form.removeAttribute('aria-busy'); }
+      } },
+      field({ label: t('integrations.metaAppId'), input: inputs.app_id, help: t('integrations.metaAppIdHelp') }),
+      field({ label: t('integrations.metaSecret'), input: inputs.app_secret, help: t('integrations.metaSecretHelp') + (app.configured ? ` ${t('integrations.metaSecretKeep')}` : '') }),
+      field({ label: t('integrations.metaPages'), input: inputs.pages_config_id, help: t('integrations.metaPagesHelp') }),
+      field({ label: t('integrations.metaWhatsApp'), input: inputs.whatsapp_config_id, help: t('integrations.metaWhatsAppHelp') }),
+      submit);
+      const dialog = modal({ title: t(app.configured ? 'integrations.metaEdit' : 'integrations.metaConnect'), body: form,
+        onClose: () => { inputs.app_secret.value = ''; }, actions: [button({ label: t('cancel'), onClick: () => dialog.close() })] });
+    }
+    show();
+    return card(body);
+  }
+
   render();
   mount(root, pageHeader(t('nav.integrations')),
     card(h('div', { class: 'stack gap-2' },
@@ -248,7 +309,8 @@ export async function integrationsView(ctx) {
     card(h('div', { class: 'stack gap-2' },
       h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.helpdesk')),
         button({ label: t('integrations.connectHelpdesk'), icon: 'plus', variant: 'primary', onClick: () => connect('helpdesks') })),
-      h('p', { class: 'muted' }, t('integrations.helpdeskHelp')), helpdeskBody, admin ? bundleForm() : null)));
+      h('p', { class: 'muted' }, t('integrations.helpdeskHelp')), helpdeskBody, admin ? bundleForm() : null)),
+    admin ? metaCard() : null);
   rows.helpdesks.filter(row => row.status === 'pending').forEach(row => activate(row, true));
   return root;
 }

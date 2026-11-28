@@ -1,8 +1,10 @@
 package libredesk
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -61,4 +63,25 @@ func (c *Client) UpdateMetaPage(ctx context.Context, id int64, channel string, p
 	inbox["name"] = p.Name
 	applyMetaPage(config, p, verifyToken)
 	return c.do(ctx, http.MethodPut, "/api/v1/inboxes/"+strconv.FormatInt(id, 10), inbox, nil)
+}
+
+// ForwardWebhook posts a Meta webhook body to path unchanged, with Meta's
+// signature, for Libredesk to check and ingest.
+func (c *Client) ForwardWebhook(ctx context.Context, path string, body []byte, signature string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", signature)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBody))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &APIError{Status: resp.StatusCode, Message: http.StatusText(resp.StatusCode)}
+	}
+	return nil
 }

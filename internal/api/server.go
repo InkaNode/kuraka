@@ -75,6 +75,8 @@ type Server struct {
 	ui          fs.FS
 	newDNS      func(string) DNSAPI
 	newHelpdesk func(string, string, string) HelpdeskAPI
+	graphURL    string // Meta's Graph API; empty is the real one
+	metaFlows   metaFlows
 	resolver    dnsplan.Resolver
 	releases    *releases.Client
 	updates     updateState
@@ -179,6 +181,7 @@ func (s *Server) Handler() http.Handler {
 	s.integrationRoutes(route)
 	s.liveChatRoutes(route)
 	s.metaRoutes(route)
+	s.metaAppRoutes(route)
 	s.updateRoutes(route)
 	s.brandingRoutes(route)
 	s.securityRoutes(route)
@@ -186,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /branding/assets/{id}", s.brandingAsset)
 	mux.HandleFunc("GET /_kuraka/addon/{file}", s.addonFile)
 	mux.HandleFunc("POST /_kuraka/addon/{app}/report", s.addonReport)
+	mux.HandleFunc("GET /webhooks/meta", s.metaWebhookVerify)
+	mux.HandleFunc("POST /webhooks/meta", s.metaWebhookEvent)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/_kuraka/") ||
 			(r.Method != http.MethodGet && r.Method != http.MethodHead) {
@@ -201,10 +206,11 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", csp)
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		// Reports originate on the mail and desk hosts, carry no credentials,
-		// and validate their own bounded JSON body. All other writes keep CSRF.
+		// Reports originate on the mail and desk hosts, and Meta's webhook on
+		// Meta, carry no credentials, and validate their own bounded body
+		// (Meta's is signed). All other writes keep CSRF.
 		_, pattern := mux.Handler(r)
-		if mutating(r.Method) && pattern != "POST /_kuraka/addon/{app}/report" {
+		if mutating(r.Method) && pattern != "POST /_kuraka/addon/{app}/report" && pattern != "POST /webhooks/meta" {
 			origin := r.Header.Get("Origin")
 			valid := origin == s.cfg.PublicURL
 			if origin == "" {
