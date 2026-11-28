@@ -97,6 +97,8 @@ h3 { font-size: 1rem; line-height: 1.4; }
 .field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .label { font-size: .875rem; font-weight: 550; }
 .help { font-size: .8125rem; }
+.steps > summary { cursor: pointer; font-weight: 600; }
+.steps > ol { margin: 12px 0 0; padding-inline-start: 24px; }
 .error { color: var(--danger); }
 .error-box { border: 1px solid color-mix(in oklab, var(--danger) 40%, var(--border)); border-radius: var(--radius); padding: 12px 16px; background: color-mix(in oklab, var(--danger) 6%, var(--surface)); color: var(--danger); align-items: flex-start; }
 .error-box span { min-width: 0; flex: 1; overflow-wrap: anywhere; }

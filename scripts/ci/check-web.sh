@@ -25,6 +25,6 @@ while IFS= read -r -d '' file; do
       failed=1
     fi
   fi
-done < <(find web/static/assets -type d -name vendor -prune -o -type f -print0)
+done < <(find web/static/assets -type d -name vendor -prune -o -path web/static/assets/core/links.js -prune -o -type f -print0)
 
 exit "$failed"

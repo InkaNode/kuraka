@@ -2,6 +2,7 @@ import '../i18n/integrations.js';
 import { h, mount } from '../core/h.js';
 import { api, ApiError, errorMessage } from '../core/api.js';
 import { t, formatDate } from '../core/i18n.js';
+import { META_APPS, META_LOGIN_DOCS, META_SIGNUP_DOCS } from '../core/links.js';
 import { button, card, checkbox, field, textInput, select, pageHeader, table, emptyState, modal, confirmDialog, formError, toast, secretOnce, copyButton } from '../core/ui.js';
 
 export async function integrationsView(ctx) {
@@ -244,16 +245,25 @@ export async function integrationsView(ctx) {
   function metaCard() {
     const body = h('div', { class: 'stack gap-2' });
     let app = metaApp;
-    const copyRow = value => h('div', { class: 'row gap-1' }, textInput({ class: 'mono grow', readonly: true, value, spellcheck: 'false' }), copyButton(value));
+    const copyRow = (value, label) => h('div', { class: 'row gap-1' }, textInput({ class: 'mono grow', readonly: true, value, spellcheck: 'false', 'aria-label': label }), copyButton(value));
+    const link = (href, key) => h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, t(key));
+    const step = (key, extra) => h('li', { class: 'stack gap-1' }, h('span', {}, t(key)), extra);
     function show() {
       mount(body,
         h('div', { class: 'row gap-2' }, h('h2', { class: 'grow' }, t('integrations.meta')),
           app.configured ? button({ label: t('delete'), icon: 'trash', variant: 'danger', onClick: remove }) : null,
           button({ label: t(app.configured ? 'integrations.metaEdit' : 'integrations.metaConnect'), icon: app.configured ? 'edit' : 'plus', variant: 'primary', onClick: edit })),
         h('p', { class: 'muted' }, t('integrations.metaHelp')),
-        app.configured ? h('p', { class: 'mono' }, t('integrations.metaApp', { id: app.app_id })) : h('p', {}, t('integrations.metaEmpty')),
-        h('p', {}, t('integrations.metaSetup')),
-        field({ label: t('integrations.metaRedirect'), input: copyRow(app.redirect_url), help: t('integrations.metaRedirectHelp') }),
+        app.configured ? h('p', { class: 'mono' }, t('integrations.metaApp', { id: app.app_id })) : null,
+        // Open until the app is saved; afterwards the steps stay one click away.
+        h('details', { class: 'steps', open: !app.configured }, h('summary', {}, t('integrations.metaSteps')),
+          h('ol', { class: 'stack gap-2' },
+            step('integrations.metaStep1', link(META_APPS, 'integrations.metaOpen')),
+            step('integrations.metaStep2'),
+            step('integrations.metaStep3', copyRow(app.redirect_url, t('integrations.metaRedirect'))),
+            step('integrations.metaStep4', link(META_LOGIN_DOCS, 'integrations.metaGuide')),
+            step('integrations.metaStep5', link(META_SIGNUP_DOCS, 'integrations.metaGuide')),
+            step('integrations.metaStep6'))),
         app.configured ? field({ label: t('integrations.metaWebhook'), input: copyRow(app.webhook.url) }) : null,
         app.configured ? field({ label: t('integrations.metaWebhookToken'), input: copyRow(app.webhook.verify_token), help: t('integrations.metaWebhookHelp') }) : null,
         h('p', { class: 'help' }, t('integrations.metaReview')));
