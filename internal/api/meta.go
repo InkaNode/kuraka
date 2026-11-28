@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"net/http"
@@ -37,6 +38,14 @@ func metaSecret(v string) bool {
 type metaInput struct {
 	libredesk.WhatsApp
 	PageID string `json:"page_id"`
+}
+
+// externalID is the id Meta's webhook events name the channel by.
+func (in metaInput) externalID(channel string) string {
+	if channel == "whatsapp" {
+		return in.PhoneNumberID
+	}
+	return in.PageID
 }
 
 func (in metaInput) page() libredesk.MetaPage {
@@ -84,7 +93,7 @@ func metaFailure(message string, err error) error {
 }
 
 func metaJSON(mc store.MetaChannel) map[string]any {
-	return map[string]any{"id": mc.ID, "channel": mc.Channel, "helpdesk_id": mc.HelpdeskID, "name": mc.Name, "created_at": mc.CreatedAt}
+	return map[string]any{"id": mc.ID, "channel": mc.Channel, "helpdesk_id": mc.HelpdeskID, "name": mc.Name, "external_id": mc.ExternalID, "created_at": mc.CreatedAt}
 }
 
 // metaDetail adds the settings and what Meta's webhook setup needs.
@@ -174,24 +183,34 @@ func (s *Server) createMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 	if err != nil {
 		return nil, helpdeskFailure("Helpdesk URL is not available", err)
 	}
-	token := rand.Text()
-	var inboxID int64
-	if in.Channel == "whatsapp" {
-		inboxID, err = client.CreateWhatsApp(r.Context(), in.WhatsApp, token)
-	} else {
-		inboxID, err = client.CreateMetaPage(r.Context(), in.Channel, in.page(), token)
-	}
+	mc, err := s.addMetaChannel(r.Context(), d, in.HelpdeskID, client, in.Channel, in.metaInput)
 	if err != nil {
-		return nil, metaFailure("Meta channel creation failed", err)
-	}
-	mc, err := s.st.CreateMetaChannel(r.Context(), store.MetaChannel{DomainID: d.ID, HelpdeskID: in.HelpdeskID, Channel: in.Channel, InboxID: inboxID, Name: in.Name, VerifyToken: token})
-	if err != nil {
-		ctx, cancel := cleanupContext(r.Context())
-		defer cancel()
-		_ = client.DeleteInbox(ctx, inboxID)
 		return nil, err
 	}
 	return reply{201, metaDetail(mc, in.metaInput, root)}, nil
+}
+
+// addMetaChannel creates the channel's inbox in the helpdesk and records it.
+func (s *Server) addMetaChannel(ctx context.Context, d store.Domain, helpdeskID int64, client HelpdeskAPI, channel string, in metaInput) (store.MetaChannel, error) {
+	token := rand.Text()
+	var inboxID int64
+	var err error
+	if channel == "whatsapp" {
+		inboxID, err = client.CreateWhatsApp(ctx, in.WhatsApp, token)
+	} else {
+		inboxID, err = client.CreateMetaPage(ctx, channel, in.page(), token)
+	}
+	if err != nil {
+		return store.MetaChannel{}, metaFailure("Meta channel creation failed", err)
+	}
+	mc, err := s.st.CreateMetaChannel(ctx, store.MetaChannel{DomainID: d.ID, HelpdeskID: helpdeskID, Channel: channel, InboxID: inboxID,
+		Name: in.Name, VerifyToken: token, ExternalID: in.externalID(channel)})
+	if err != nil {
+		cleanup, cancel := cleanupContext(ctx)
+		defer cancel()
+		_ = client.DeleteInbox(cleanup, inboxID)
+	}
+	return mc, err
 }
 
 func (s *Server) metaChannel(_ http.ResponseWriter, r *http.Request) (any, error) {
@@ -234,10 +253,10 @@ func (s *Server) updateMetaChannel(_ http.ResponseWriter, r *http.Request) (any,
 	if err != nil {
 		return nil, metaFailure("Meta channel update failed", err)
 	}
-	if err := s.st.RenameMetaChannel(r.Context(), mc.ID, in.Name); err != nil {
+	mc.Name, mc.ExternalID = in.Name, in.externalID(mc.Channel)
+	if err := s.st.UpdateMetaChannel(r.Context(), mc.ID, mc.Name, mc.ExternalID); err != nil {
 		return nil, err
 	}
-	mc.Name = in.Name
 	return metaDetail(mc, in, root), nil
 }
 
