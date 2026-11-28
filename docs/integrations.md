@@ -78,7 +78,9 @@ A restart forgets logins in progress; the user presses Connect again.
 
 **Webhook relay:** `GET /webhooks/meta` answers Meta's verification with the stored verify token. `POST /webhooks/meta` (exempt from the origin check like addon reports) checks `X-Hub-Signature-256` with the app secret, finds the channels the body names (`entry[].id` for `page` and `instagram`, `changes[].value.metadata.phone_number_id` for `whatsapp_business_account`) by `meta_channels.external_id` (migration 0010), and posts the body unchanged with the same signature to one inbox per owning helpdesk: `/webhooks/meta/{inbox}` or `/webhooks/whatsapp/{inbox}`. Libredesk checks the signature again and routes by the ids inside, ignoring entries for channels it does not have. A helpdesk 5xx or network error answers 502 so Meta retries; Libredesk drops messages it already has. Libredesk itself may also point a WhatsApp account's webhook straight at the helpdesk (`override_callback_uri`) when the helpdesk has a public HTTPS root URL.
 
-The manual forms (each channel's **Advanced: by hand**) keep working with any Meta app; they also store `external_id`, so their events reach the helpdesk through the relay when they use the installation's app.
+The **Integrations → Meta** card lists the six setup steps with links to Meta (`web/static/assets/core/links.js`, the only file the web check lets hold external URLs); they start open until the app is saved. Without the app, or without one of its configurations, the domain's Meta section says which part is missing and where to add it.
+
+The manual forms (each channel's **Advanced: by hand**, always the advanced way) keep working with any Meta app; they also store `external_id`, so their events reach the helpdesk through the relay when they use the installation's app.
 
 ## Migration tool (Phase 5)
 

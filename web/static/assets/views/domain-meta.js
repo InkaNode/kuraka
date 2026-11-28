@@ -190,21 +190,20 @@ export function metaSection(view, mine, notice) {
     h('div', { class: 'metric-grid' }, Object.keys(lists).map(kind =>
       card(h('h3', {}, LABELS[kind]), h('p', { class: 'muted' }, t(`meta.${kind}.text`)), lists[kind], manual[kind]))));
 
-  // With the Meta app set up, the buttons connect through Meta and typing
-  // the details by hand becomes the advanced way.
+  // Connecting through Meta is the way; typing the details by hand is only
+  // the advanced one. Without the Meta app, the page says why.
+  for (const kind of Object.keys(manual)) {
+    mount(manual[kind], button({ label: t('meta.manual'), icon: 'edit', variant: 'ghost', ariaLabel: `${t('meta.manual')}: ${LABELS[kind]}`,
+      onClick: () => channelDialog(view, kind, null, notice, reload) }));
+  }
   function showButtons(status) {
-    const auto = status.pages || status.whatsapp;
-    for (const kind of Object.keys(manual)) {
-      mount(manual[kind], button({ label: t(auto ? 'meta.manual' : `meta.${kind}.connect`), icon: auto ? 'edit' : 'plus', variant: auto ? 'ghost' : undefined,
-        ariaLabel: auto ? `${t('meta.manual')}: ${LABELS[kind]}` : undefined, onClick: () => channelDialog(view, kind, null, notice, reload) }));
-    }
-    if (!auto) { mount(connect); return; }
+    if (!status.pages && !status.whatsapp) { mount(connect, h('p', { class: 'help' }, t('meta.unavailable'))); return; }
     mount(connect, h('div', { class: 'row gap-1' },
       status.pages ? button({ label: t('meta.connect.pages'), icon: 'link', variant: 'primary', onClick: () => startLogin(view, 'pages', notice) }) : null,
       status.whatsapp ? button({ label: t('meta.connect.whatsapp'), icon: 'link', variant: 'primary', onClick: () => startLogin(view, 'whatsapp', notice) }) : null),
-    h('p', { class: 'help' }, t('meta.connect.help')));
+    h('p', { class: 'help' }, t('meta.connect.help')),
+    status.pages && status.whatsapp ? null : h('p', { class: 'help' }, t(status.pages ? 'meta.unavailable.whatsapp' : 'meta.unavailable.pages')));
   }
-  showButtons({});
   api('GET', '/meta-app/status').then(status => { if (mine === view.current()) showButtons(status); }).catch(() => {});
 
   async function showWebhook(ch) {
